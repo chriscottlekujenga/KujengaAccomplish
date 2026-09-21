@@ -9,6 +9,7 @@ import {
   taskConfigSchema,
   permissionResponseSchema,
   resumeSessionSchema,
+  taskSendMessageSchema,
   validate,
   logger,
 } from '@accomplish_ai/agent-core';
@@ -97,6 +98,17 @@ export function registerRpcMethods(services: RouteServices): void {
     safeHandler((params) => {
       const validated = validate(taskIdSchema, params);
       return taskService.interruptTask(validated);
+    }),
+  );
+
+  // Mid-run user messaging: deliver a message to a running task so the agent
+  // interrupts its current turn, respawns with a redirect prompt, and
+  // re-plans around the new input.
+  rpc.registerMethod(
+    'task.send',
+    safeHandler((params) => {
+      const validated = validate(taskSendMessageSchema, params);
+      return taskService.sendUserMessage(validated);
     }),
   );
   rpc.registerMethod(

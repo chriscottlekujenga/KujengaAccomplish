@@ -422,6 +422,29 @@ export class TaskManager {
     await managedTask.adapter.sendResponse(response);
   }
 
+  /**
+   * Deliver a user message to a running task. The adapter queues the message,
+   * gracefully interrupts the current turn, and respawns the session with a
+   * redirect prompt so the agent re-plans around the new input.
+   *
+   * Returns false if the task is not actively running (completed, cancelled,
+   * or no live process) — the caller can then fall back to a normal
+   * follow-up (session resume) instead.
+   */
+  async sendUserMessage(taskId: string, message: string): Promise<boolean> {
+    const managedTask = this.activeTasks.get(taskId);
+    if (!managedTask) {
+      log.info(`[TaskManager] sendUserMessage: task ${taskId} not found or not active`);
+      return false;
+    }
+    if (!managedTask.adapter.running) {
+      log.info(`[TaskManager] sendUserMessage: task ${taskId} has no live process`);
+      return false;
+    }
+
+    return managedTask.adapter.queueUserMessage(message);
+  }
+
   getSessionId(taskId: string): string | null {
     const managedTask = this.activeTasks.get(taskId);
     return managedTask?.adapter.getSessionId() ?? null;

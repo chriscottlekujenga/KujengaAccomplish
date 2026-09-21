@@ -102,6 +102,25 @@ export function registerTaskHandlers(): void {
     await stopBrowserPreviewStream(taskId);
   });
 
+  // Mid-run user messaging: deliver a message to a RUNNING task. The daemon
+  // persists + broadcasts the message, then the agent interrupts its current
+  // turn and respawns with a redirect prompt containing the new input.
+  handle('task:send', async (event: IpcMainInvokeEvent, taskId?: string, message?: string) => {
+    assertTrustedWindow(BrowserWindow.fromWebContents(event.sender));
+    if (!taskId || !message) {
+      throw new Error('taskId and message are required');
+    }
+
+    const sanitizedTaskId = sanitizeString(taskId, 'taskId', 128);
+    const sanitizedMessage = sanitizeString(message, 'message');
+
+    const client = getDaemonClient();
+    await client.call('task.send', {
+      taskId: sanitizedTaskId,
+      message: sanitizedMessage,
+    });
+  });
+
   // ─── Task reads (proxied to daemon) ──────────────────────────────────────────
   // The daemon is the single source of truth for task runtime state.
 

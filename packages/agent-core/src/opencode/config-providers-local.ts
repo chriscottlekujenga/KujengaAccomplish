@@ -14,14 +14,19 @@ export async function buildOllamaConfig(ctx: ProviderBuildContext): Promise<Prov
     ollamaProvider.credentials.type === 'ollama' &&
     ollamaProvider.selectedModelId
   ) {
-    const modelId = ollamaProvider.selectedModelId.replace(/^ollama\//, '');
-    const ollamaModelInfo = ollamaProvider.availableModels?.find(
-      (m) => m.id === ollamaProvider.selectedModelId || m.id === modelId,
-    );
-    const toolSupport = (ollamaModelInfo as { toolSupport?: string } | undefined)?.toolSupport;
-    const ollamaSupportsTools = toolSupport === 'supported' || toolSupport === undefined;
+    const models: Record<string, ProviderModelConfig> = {};
+    const availableModels = ollamaProvider.availableModels?.length
+      ? ollamaProvider.availableModels
+      : [{ id: ollamaProvider.selectedModelId, name: ollamaProvider.selectedModelId }];
+    for (const model of availableModels) {
+      const modelId = model.id.replace(/^ollama\//, '');
+      const toolSupport = (model as { toolSupport?: string }).toolSupport;
+      const supportsTools = toolSupport === 'supported' || toolSupport === undefined;
+      models[modelId] = { name: model.name, tools: supportsTools };
+      models[`ollama/${modelId}`] = { name: model.name, tools: supportsTools };
+    }
     log.info(
-      `[OpenCode Config Builder] Ollama configured: ${modelId} (tools: ${ollamaSupportsTools})`,
+      `[OpenCode Config Builder] Ollama configured: ${Object.keys(models).join(', ')}`,
     );
     return {
       configs: [
@@ -30,10 +35,7 @@ export async function buildOllamaConfig(ctx: ProviderBuildContext): Promise<Prov
           npm: '@ai-sdk/openai-compatible',
           name: 'Ollama (local)',
           options: { baseURL: `${ollamaProvider.credentials.serverUrl}/v1` },
-          models: {
-            [modelId]: { name: modelId, tools: ollamaSupportsTools },
-            [`ollama/${modelId}`]: { name: modelId, tools: ollamaSupportsTools },
-          },
+          models,
         },
       ],
       enableToAdd: [],

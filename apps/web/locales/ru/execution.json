@@ -33,6 +33,8 @@
     "noSessionPlaceholder": "Отправьте новую инструкцию для повтора...",
     "completedPlaceholder": "Дайте новые инструкции...",
     "defaultPlaceholder": "Попросите что-нибудь...",
+    "runningPlaceholder": "Отправьте сообщение, чтобы перенаправить агента...",
+    "send": "Отправить сообщение",
     "dropFilesToAttach": "Перетащите файлы для прикрепления"
   },
   "taskStatus": "Задача {{status}}",

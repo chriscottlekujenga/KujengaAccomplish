@@ -30,6 +30,8 @@
     "noSessionPlaceholder": "发送新指令重试...",
     "completedPlaceholder": "输入新指令...",
     "defaultPlaceholder": "输入内容...",
+    "runningPlaceholder": "发送消息以重定向智能体...",
+    "send": "发送消息",
     "dropFilesToAttach": "拖放文件以附加"
   },
   "questionPrompt": {

@@ -37,6 +37,8 @@ vi.mock('@accomplish_ai/agent-core', async (importOriginal) => {
       cancelTask: vi.fn(),
       interruptTask: vi.fn(),
       sendResponse: vi.fn(),
+      sendUserMessage: vi.fn(() => Promise.resolve(true)),
+      isTaskRunning: vi.fn(() => false),
       dispose: vi.fn(),
     })),
     validateTaskConfig: vi.fn((config: TaskConfig) => config),

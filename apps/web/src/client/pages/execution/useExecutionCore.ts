@@ -65,6 +65,7 @@ export function useExecutionCore() {
     permissionRequests,
     respondToPermission,
     sendFollowUp,
+    sendMessageToRunningTask,
     interruptTask,
     setupProgress,
     setupProgressTaskId,
@@ -173,6 +174,10 @@ export function useExecutionCore() {
   const isAuthPause = currentTask?.result?.pauseReason === 'auth';
   const pauseAction = currentTask?.result?.pauseAction;
   const canFollowUp = isComplete && (hasSession || currentTask?.status === 'interrupted');
+  /** Mid-run messaging: the input stays usable while the agent is working so
+   *  the user can redirect it with new instructions. Hidden during permission
+   *  prompts (the permission UI takes over). */
+  const canSendMidRun = currentTask?.status === 'running' && !permissionRequest;
   const isConnectorAuthPause =
     currentTask?.status === 'completed' && isAuthPause && pauseAction?.type === 'oauth-connect';
   let taskActionLabel: string;
@@ -235,6 +240,7 @@ export function useExecutionCore() {
     permissionRequests,
     respondToPermission,
     sendFollowUp,
+    sendMessageToRunningTask,
     interruptTask,
     setupProgress,
     setupProgressTaskId,
@@ -255,6 +261,7 @@ export function useExecutionCore() {
     isAuthPause,
     pauseAction,
     canFollowUp,
+    canSendMidRun,
     isConnectorAuthPause,
     taskActionLabel,
     taskActionPendingLabel,

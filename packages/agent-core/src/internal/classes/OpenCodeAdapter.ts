@@ -10,6 +10,7 @@ import { classifyProcessError } from '../utils/process-error-classifier.js';
 import {
   CompletionEnforcer,
   CompletionEnforcerCallbacks,
+  getRedirectPrompt,
 } from '../../opencode/completion/index.js';
 import type { TaskConfig, Task, TaskMessage, TaskResult } from '../../common/types/task.js';
 import type { OpenCodeMessage } from '../../common/types/opencode.js';
@@ -133,6 +134,14 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private hasCompleted: boolean = false;
   private isDisposed: boolean = false;
   private wasInterrupted: boolean = false;
+  /** User messages sent while the task is running; drained into a redirect
+   *  respawn so the agent re-plans around them at the next turn boundary. */
+  private pendingUserMessages: string[] = [];
+  /** True once a mid-run user message has been queued and the current turn
+   *  should be interrupted and respawned with the redirect prompt. */
+  private redirectPending: boolean = false;
+  /** Original prompt of the current task — included in redirect context. */
+  private lastPrompt: string | undefined;
   private completionEnforcer: CompletionEnforcer;
   private lastWorkingDirectory: string | undefined;
   private currentModelId: string | null = null;
@@ -291,6 +300,9 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     this.streamParser.reset();
     this.hasCompleted = false;
     this.wasInterrupted = false;
+    this.pendingUserMessages = [];
+    this.redirectPending = false;
+    this.lastPrompt = config.prompt;
     this.completionEnforcer.reset();
     this.lastWorkingDirectory = config.workingDirectory;
     this.hasReceivedFirstTool = false;
@@ -445,7 +457,50 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     log.info('[OpenCode CLI] Response sent via PTY');
   }
 
+  /**
+   * Queue a user message sent while the task is actively running.
+   *
+   * The live `opencode run` process takes its prompt as a CLI argument, so a
+   * new user message cannot be delivered to it directly. Instead the message
+   * is queued, the current turn is gracefully interrupted (Ctrl+C), and when
+   * the process exits the session is respawned with `--session <id>` and a
+   * redirect prompt containing the user's message(s). The agent keeps all
+   * prior context and re-plans around the new input.
+   *
+   * Returns false when there is no live process to interrupt (e.g. the task
+   * completed between the UI call and this invocation).
+   */
+  async queueUserMessage(message: string): Promise<boolean> {
+    if (this.isDisposed || this.hasCompleted) {
+      return false;
+    }
+    if (!this.ptyProcess) {
+      return false;
+    }
+
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    this.pendingUserMessages.push(trimmed);
+    this.redirectPending = true;
+    log.info(
+      `[OpenCode CLI] Mid-run user message queued (${this.pendingUserMessages.length} pending) - ` +
+        `interrupting current turn for redirect`,
+    );
+    this.emit('debug', { type: 'info', message: 'User message received mid-run - redirecting' });
+
+    // Gracefully interrupt the current turn; handleProcessExit performs the
+    // redirect respawn once the process exits.
+    await this.interruptTask();
+    return true;
+  }
+
   async cancelTask(): Promise<void> {
+    // A cancelled task must not respawn for a pending redirect.
+    this.redirectPending = false;
+    this.pendingUserMessages = [];
     if (this.ptyProcess) {
       this.ptyProcess.kill();
       this.ptyProcess = null;
@@ -453,19 +508,39 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   }
 
   async interruptTask(): Promise<void> {
+    // An explicit user stop overrides any pending redirect — do not respawn.
+    if (this.redirectPending) {
+      log.info('[OpenCode CLI] User stop cancels pending redirect');
+      this.redirectPending = false;
+      this.pendingUserMessages = [];
+    }
     if (!this.ptyProcess) {
       log.info('[OpenCode CLI] No active process to interrupt');
       return;
     }
 
     this.wasInterrupted = true;
+    this.sendInterruptSignal();
+  }
+
+  /**
+   * Send the Ctrl+C interrupt signal to the live PTY process.
+   * On Windows, opencode may prompt "Terminate batch job (Y/N)?" — follow up
+   * with 'Y' after a short delay. The timer captures the process reference so
+   * the confirmation never lands in a respawned process.
+   */
+  private sendInterruptSignal(): void {
+    if (!this.ptyProcess) {
+      return;
+    }
 
     this.ptyProcess.write('\x03');
     log.info('[OpenCode CLI] Sent Ctrl+C interrupt signal');
 
     if (this.options.platform === 'win32') {
+      const interruptedProcess = this.ptyProcess;
       setTimeout(() => {
-        if (this.ptyProcess) {
+        if (this.ptyProcess && this.ptyProcess === interruptedProcess) {
           this.ptyProcess.write('Y\n');
           log.info('[OpenCode CLI] Sent Y to confirm batch termination');
         }
@@ -520,6 +595,8 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     this.currentModelId = null;
     this.hasReceivedFirstTool = false;
     this.startTaskCalled = false;
+    this.pendingUserMessages = [];
+    this.redirectPending = false;
 
     if (this.waitingTransitionTimer) {
       clearTimeout(this.waitingTransitionTimer);
@@ -841,6 +918,57 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
   private handleProcessExit(code: number | null): void {
     this.ptyProcess = null;
+
+    // Mid-run user message redirect: the current turn was interrupted because
+    // the user sent new instructions. Respawn the session with a redirect
+    // prompt so the agent re-plans around the queued message(s). This must be
+    // checked before the wasInterrupted branch because a redirect also sets
+    // wasInterrupted.
+    if (this.redirectPending && !this.hasCompleted && !this.isDisposed) {
+      const userMessages = this.pendingUserMessages;
+      if (
+        isNormalExit(code, this.options.platform) &&
+        userMessages.length > 0 &&
+        this.currentSessionId
+      ) {
+        this.redirectPending = false;
+        this.pendingUserMessages = [];
+        this.wasInterrupted = false;
+
+        log.info(
+          `[OpenCode CLI] Redirecting task ${this.currentTaskId} with ${userMessages.length} ` +
+            `mid-run user message(s)`,
+        );
+        this.completionEnforcer.beginRedirect();
+        this.emit('progress', {
+          stage: 'loading',
+          message: 'Redirecting with your new message...',
+        });
+
+        void this
+          .spawnSessionResumption(getRedirectPrompt(userMessages))
+          .catch((error) => {
+            log.error(`[OpenCode Adapter] Redirect respawn failed: ${error}`);
+            this.hasCompleted = true;
+            this.emit('complete', {
+              status: 'error',
+              sessionId: this.currentSessionId || undefined,
+              error: `Failed to redirect after mid-run message: ${error.message}`,
+            });
+          });
+        return;
+      }
+
+      // Redirect requested but the process died without a usable session —
+      // surface the failure to the user instead of losing their message.
+      log.error(
+        `[OpenCode CLI] Redirect requested but cannot respawn ` +
+          `(normalExit=${isNormalExit(code, this.options.platform)}, ` +
+          `messages=${userMessages.length}, sessionId=${this.currentSessionId ?? 'none'})`,
+      );
+      this.redirectPending = false;
+      this.pendingUserMessages = [];
+    }
 
     if (this.wasInterrupted && isNormalExit(code, this.options.platform) && !this.hasCompleted) {
       log.info('[OpenCode CLI] Task was interrupted by user');

@@ -36,6 +36,51 @@ import type {
   BrowserStatusPayload,
   BrowserNavigatePayload,
 } from '@accomplish_ai/agent-core';
+
+export interface ProjectSubtaskStatus {
+  subtaskId: string;
+  title: string;
+  modelId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  output?: string;
+}
+
+export interface ProjectPlan {
+  summary: string;
+  subtasks: Array<{
+    id: string;
+    title: string;
+    description: string;
+    dependsOn: string[];
+    fileEdits: boolean;
+    assignedModel?: string;
+  }>;
+}
+
+export interface ProjectStatus {
+  taskId: string;
+  goal: string;
+  plan?: ProjectPlan;
+  subtasks: ProjectSubtaskStatus[];
+  stopped: boolean;
+  synthesis?: string;
+  unfinished: string[];
+}
+
+export interface ProjectStatusEvent {
+  taskId: string;
+  status: ProjectStatus;
+}
+
+export interface ProjectPlanEvent {
+  taskId: string;
+  plan: ProjectPlan;
+}
+
+export interface ProjectCompleteEvent {
+  taskId: string;
+  status: ProjectStatus;
+}
 import type {
   CloudBrowserConfig,
   MessagingConnectionStatus,
@@ -55,6 +100,9 @@ interface AccomplishAPI {
   startTask(config: TaskConfig): Promise<Task>;
   cancelTask(taskId: string): Promise<void>;
   interruptTask(taskId: string): Promise<void>;
+  /** Send a message to a RUNNING task - the agent interrupts its current
+   *  turn and redirects around the new input. */
+  sendTaskMessage(taskId: string, message: string): Promise<void>;
   getTask(taskId: string): Promise<Task | null>;
   listTasks(): Promise<Task[]>;
   deleteTask(taskId: string): Promise<void>;
@@ -455,6 +503,9 @@ interface AccomplishAPI {
   onTaskSummary?(callback: (data: { taskId: string; summary: string }) => void): () => void;
   onTodoUpdate?(callback: (data: { taskId: string; todos: TodoItem[] }) => void): () => void;
   onAuthError?(callback: (data: { providerId: string; message: string }) => void): () => void;
+  onProjectPlan?(callback: (event: ProjectPlanEvent) => void): () => void;
+  onProjectStatus?(callback: (event: ProjectStatusEvent) => void): () => void;
+  onProjectComplete?(callback: (event: ProjectCompleteEvent) => void): () => void;
 
   // Browser Preview (ENG-695)
   onBrowserFrame?(callback: (event: BrowserFramePayload & { taskId: string }) => void): () => void;

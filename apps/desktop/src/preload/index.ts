@@ -37,6 +37,8 @@ const accomplishAPI = {
     ipcRenderer.invoke('task:start', config),
   cancelTask: (taskId: string): Promise<void> => ipcRenderer.invoke('task:cancel', taskId),
   interruptTask: (taskId: string): Promise<void> => ipcRenderer.invoke('task:interrupt', taskId),
+  sendTaskMessage: (taskId: string, message: string): Promise<void> =>
+    ipcRenderer.invoke('task:send', taskId, message),
   getTask: (taskId: string): Promise<unknown> => ipcRenderer.invoke('task:get', taskId),
   listTasks: (): Promise<unknown[]> => ipcRenderer.invoke('task:list'),
   deleteTask: (taskId: string): Promise<void> => ipcRenderer.invoke('task:delete', taskId),

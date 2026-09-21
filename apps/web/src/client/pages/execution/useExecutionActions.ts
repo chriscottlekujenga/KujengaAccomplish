@@ -57,6 +57,12 @@ export function useExecutionActions(s: CoreState) {
         !s.showSettingsDialog
       ) {
         e.preventDefault();
+        // If the user typed a mid-run message, Escape clears the draft
+        // instead of stopping the task - a second Escape stops it.
+        if (s.followUp.trim()) {
+          s.setFollowUp('');
+          return;
+        }
         s.interruptTask();
       }
     };
@@ -88,6 +94,24 @@ export function useExecutionActions(s: CoreState) {
       s.sendFollowUp,
     ],
   );
+
+  /**
+   * Send a mid-run message to the running task. The agent interrupts its
+   * current turn and redirects around the new input. No provider check is
+   * needed - the provider is already active (the task is running).
+   */
+  const handleSendMessage = useCallback(async () => {
+    if (!s.followUp.trim()) {
+      return;
+    }
+    if (s.isFollowUpOverLimit) {
+      return;
+    }
+    const ok = await s.sendMessageToRunningTask(s.followUp);
+    if (ok) {
+      s.setFollowUp('');
+    }
+  }, [s]);
 
   const handleFollowUp = useCallback(async () => {
     if (!s.followUp.trim() && s.attachments.length === 0) {
@@ -276,6 +300,7 @@ export function useExecutionActions(s: CoreState) {
 
   return {
     handleFollowUp,
+    handleSendMessage,
     handleSettingsDialogClose,
     handleApiKeySaved,
     handleContinue,

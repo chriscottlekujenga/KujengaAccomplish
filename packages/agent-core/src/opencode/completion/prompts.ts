@@ -12,6 +12,41 @@ Do NOT call complete_task until you have actually completed the user's request.
 Keep working if there's more to do.`;
 }
 
+/**
+ * Prompt injected when the user sends a new message while the task is still running.
+ * The current turn is interrupted and the session is respawned with this prompt, so
+ * the agent keeps its prior context (via --session) but re-plans around the new input.
+ */
+export function getRedirectPrompt(userMessages: string[]): string {
+  const messages = userMessages.map((message) => `- "${message}"`).join('\n');
+  return `The user interrupted your current work to send a new message while you were still working.
+
+## New Message(s) From User
+${messages}
+
+## What To Do Now
+
+1. **Review your progress so far** - Use the session context to see what you had already completed
+2. **Create a TODO list** showing what's done and what remains:
+   - Keep items that are still valid from your previous plan
+   - Add new items required by the user's message above
+   - Cancel items the new message makes obsolete
+
+3. **Re-plan and continue working** - Incorporate the user's new message into the task:
+   - If the message changes the goal, redirect your work accordingly
+   - If the message adds requirements, extend your work to cover them
+   - If the message is a question or clarification, address it directly, then continue
+
+## IMPORTANT RULES
+
+- Build on your existing work - do NOT start over from scratch unless the user's message requires it
+- Do NOT call complete_task until you have handled the new message AND finished all remaining work
+- Call complete_task with status "success" only when the original request (as adjusted by the new message) is fully complete
+- If you hit a real technical blocker, call complete_task with status "blocked"
+
+Now re-plan with todowrite and resume working with the user's new message in mind.`;
+}
+
 export function getPartialContinuationPrompt(
   remainingWork: string,
   originalRequest: string,

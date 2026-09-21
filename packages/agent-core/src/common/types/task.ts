@@ -27,6 +27,12 @@ export interface TaskConfig {
    * the host filesystem at submission time and are not persisted with the task.
    */
   files?: FileAttachmentInfo[];
+  /**
+   * When true, run this task in Multi-model project mode: the prompt is treated as a
+   * large project goal, a coordinator model produces a plan, subtasks are routed to
+   * the best available model, and results are synthesized into a single answer.
+   */
+  projectMode?: boolean;
 }
 
 /** Metadata for a user-attached file in a task. */

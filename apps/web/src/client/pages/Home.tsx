@@ -16,6 +16,7 @@ export function HomePage() {
   const {
     prompt,
     setPrompt,
+    modelSuggestion,
     showAllFavorites,
     setShowAllFavorites,
     attachments,
@@ -99,6 +100,11 @@ export function HomePage() {
                   />
                 }
               />
+              {modelSuggestion && (
+                <div className="mt-2 text-xs text-muted-foreground" data-testid="model-suggestion">
+                  Suggested: <span className="font-medium text-foreground">{modelSuggestion.label}</span> · {modelSuggestion.reason}
+                </div>
+              )}
               {workingDirectory && (
                 <div className="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground">
                   <span className="truncate max-w-[400px]" title={workingDirectory}>

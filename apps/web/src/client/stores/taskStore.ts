@@ -10,6 +10,7 @@ import {
   type TodoItem,
 } from '@accomplish_ai/agent-core/common';
 import type { StoredFavorite } from '@accomplish_ai/agent-core';
+import type { ProjectStatus } from '../lib/accomplish';
 import { createTaskExecutionActions } from './task-execution-actions';
 import { createTaskHistoryActions } from './task-history-actions';
 import { createTaskSetupActions } from './task-setup-actions';
@@ -50,9 +51,13 @@ export interface TaskState {
   authError: { providerId: string; message: string } | null;
   isLauncherOpen: boolean;
   launcherInitialPrompt: string | null;
+  projectModeEnabled: boolean;
+  projectStatuses: Record<string, ProjectStatus>;
   openLauncher: () => void;
   openLauncherWithPrompt: (prompt: string) => void;
   closeLauncher: () => void;
+  setProjectModeEnabled: (enabled: boolean) => void;
+  setProjectStatus: (taskId: string, status: ProjectStatus) => void;
   startTask: (config: TaskConfig) => Promise<Task | null>;
   setSetupProgress: (taskId: string | null, message: string | null) => void;
   setStartupStage: (
@@ -67,6 +72,9 @@ export interface TaskState {
     message: string,
     attachments?: import('@accomplish_ai/agent-core/common').FileAttachmentInfo[],
   ) => Promise<boolean>;
+  /** Send a message to a RUNNING task - the agent interrupts its current
+   *  turn and redirects around the new input. */
+  sendMessageToRunningTask: (message: string) => Promise<boolean>;
   cancelTask: () => Promise<void>;
   interruptTask: () => Promise<void>;
   setPermissionRequest: (request: PermissionRequest) => void;
@@ -106,6 +114,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   authError: null,
   isLauncherOpen: false,
   launcherInitialPrompt: null,
+  projectModeEnabled: false,
+  projectStatuses: {},
+  setProjectModeEnabled: (enabled: boolean) => set({ projectModeEnabled: enabled }),
+  setProjectStatus: (taskId: string, status: ProjectStatus) =>
+    set((state) => ({
+      projectStatuses: { ...state.projectStatuses, [taskId]: status },
+    })),
 
   ...createTaskExecutionActions(set, get),
   ...createTaskHistoryActions(set, get),

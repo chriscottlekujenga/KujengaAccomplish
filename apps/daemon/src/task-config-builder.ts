@@ -103,8 +103,22 @@ export async function buildCliArgs(config: TaskConfig, storage: StorageAPI): Pro
     selectedModel = activeModel || storage.getSelectedModel();
   }
 
+  // Debug Mode is the persistent, user-controlled detailed activity setting.
+  // Ask for useful status messages, without asking the model to disclose hidden reasoning.
+  const progressInstruction = storage.getDebugMode()
+    ? [
+        'Detailed activity mode is enabled for this task.',
+        'Give a short visible plan before starting.',
+        'At meaningful points, give concise progress updates that say what you checked, the key result, and what comes next.',
+        'Keep these updates practical and do not reveal private chain-of-thought or hidden reasoning.',
+      ].join(' ')
+    : '';
+  const prompt = progressInstruction
+    ? `${progressInstruction}\n\nUser task:\n${config.prompt}`
+    : config.prompt;
+
   return coreBuildCliArgs({
-    prompt: config.prompt,
+    prompt,
     sessionId: config.sessionId,
     selectedModel: selectedModel
       ? { provider: selectedModel.provider, model: selectedModel.model }

@@ -515,6 +515,7 @@ export {
   taskConfigSchema,
   permissionResponseSchema,
   resumeSessionSchema,
+  taskSendMessageSchema,
   validate,
 } from './common/schemas/validation.js';
 

@@ -120,15 +120,21 @@ export function createTaskUpdateActions(set: SetFn, _get: GetFn) {
     },
 
     updateTaskStatus: (taskId: string, status: TaskStatus) => {
-      set((state) => ({
+      set((state) => {
+        const isTerminal = ['completed', 'failed', 'cancelled', 'interrupted'].includes(status);
+        const isCurrentTask = state.currentTask?.id === taskId;
+        let currentTask = state.currentTask;
+        if (currentTask?.id === taskId) {
+          currentTask = { ...currentTask, status };
+        }
+        return {
         tasks: state.tasks.map((task) =>
           task.id === taskId ? { ...task, status, updatedAt: new Date().toISOString() } : task,
         ),
-        currentTask:
-          state.currentTask?.id === taskId
-            ? { ...state.currentTask, status, updatedAt: new Date().toISOString() }
-            : state.currentTask,
-      }));
+        currentTask,
+        ...(isCurrentTask && isTerminal ? { isLoading: false } : {}),
+        };
+      });
     },
 
     setTaskSummary: (taskId: string, summary: string) => {

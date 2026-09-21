@@ -9,6 +9,7 @@ interface TodoRow {
   status: string;
   priority: string;
   sort_order: number;
+  model?: string | null;
 }
 
 export function getTodosForTask(taskId: string): TodoItem[] {
@@ -23,6 +24,7 @@ export function getTodosForTask(taskId: string): TodoItem[] {
     content: row.content,
     status: row.status as TodoItem['status'],
     priority: row.priority as TodoItem['priority'],
+    ...(row.model ? { model: row.model } : {}),
   }));
 }
 
@@ -33,12 +35,12 @@ export function saveTodosForTask(taskId: string, todos: TodoItem[]): void {
     db.prepare('DELETE FROM task_todos WHERE task_id = ?').run(taskId);
 
     const insert = db.prepare(
-      `INSERT INTO task_todos (task_id, todo_id, content, status, priority, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO task_todos (task_id, todo_id, content, status, priority, sort_order, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
 
     todos.forEach((todo, index) => {
-      insert.run(taskId, todo.id, todo.content, todo.status, todo.priority, index);
+      insert.run(taskId, todo.id, todo.content, todo.status, todo.priority, index, todo.model ?? null);
     });
   })();
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getContinuationPrompt,
   getPartialContinuationPrompt,
+  getRedirectPrompt,
 } from '../../../../src/opencode/completion/prompts.js';
 
 describe('Completion Prompts', () => {
@@ -116,6 +117,37 @@ describe('Completion Prompts', () => {
 
       expect(prompt).not.toContain('rejected');
       expect(prompt).toContain('## REQUIRED: Create a Continuation Plan');
+    });
+  });
+
+  describe('getRedirectPrompt', () => {
+    it('should include the user message in quotes', () => {
+      const prompt = getRedirectPrompt(['Focus on the login page instead']);
+
+      expect(prompt).toContain('- "Focus on the login page instead"');
+    });
+
+    it('should list multiple user messages', () => {
+      const prompt = getRedirectPrompt(['First message', 'Second message']);
+
+      expect(prompt).toContain('- "First message"');
+      expect(prompt).toContain('- "Second message"');
+    });
+
+    it('should instruct the agent to re-plan with todos and keep prior work', () => {
+      const prompt = getRedirectPrompt(['Change of plans']);
+
+      expect(prompt).toContain('Create a TODO list');
+      expect(prompt).toContain('Build on your existing work');
+      expect(prompt).toContain('re-plan');
+    });
+
+    it('should preserve complete_task discipline', () => {
+      const prompt = getRedirectPrompt(['Change of plans']);
+
+      expect(prompt).toContain('complete_task');
+      expect(prompt).toContain('"success"');
+      expect(prompt).toContain('"blocked"');
     });
   });
 });

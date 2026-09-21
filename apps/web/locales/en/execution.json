@@ -33,6 +33,8 @@
     "noSessionPlaceholder": "Send a new instruction to retry...",
     "completedPlaceholder": "Give new instructions...",
     "defaultPlaceholder": "Ask for something...",
+    "runningPlaceholder": "Send a message to redirect the agent...",
+    "send": "Send message",
     "dropFilesToAttach": "Drop files to attach"
   },
   "questionPrompt": {

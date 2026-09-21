@@ -496,6 +496,41 @@ describe('CompletionEnforcer', () => {
     });
   });
 
+  describe('beginRedirect (mid-run user message)', () => {
+    it('should clear inContinuation so redirected output is visible', () => {
+      enforcer.markToolsUsed(true);
+      enforcer.handleStepFinish('stop');
+      // simulate continuation path
+      enforcer.markToolsUsed(true);
+      enforcer.beginRedirect();
+
+      expect(enforcer.isInContinuation()).toBe(false);
+    });
+
+    it('should preserve taskRequiresCompletion so redirect turns are not conversational', () => {
+      enforcer.markToolsUsed(true);
+      enforcer.updateTodos([{ id: '1', content: 'Task', status: 'pending', priority: 'high' }]);
+      enforcer.markTaskRequiresCompletion();
+
+      enforcer.beginRedirect();
+
+      // Fresh turn after redirect: tools were used + requires completion →
+      // still not conversational, completion discipline continues
+      expect(enforcer.handleStepFinish('stop')).not.toBe('complete');
+    });
+
+    it('should reset completion state so the redirected turn can schedule continuations again', async () => {
+      enforcer.markToolsUsed(true);
+      enforcer.handleStepFinish('stop');
+      await enforcer.handleProcessExit(0);
+
+      enforcer.beginRedirect();
+
+      // State was reset - a new stop should be able to schedule a new continuation
+      expect(enforcer.getContinuationAttempts()).toBe(0);
+    });
+  });
+
   describe('updateTodos interaction with conversational detection', () => {
     it('should set taskRequiresCompletion when todos are non-empty', () => {
       enforcer.updateTodos([

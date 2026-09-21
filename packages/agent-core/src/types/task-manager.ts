@@ -162,6 +162,20 @@ export interface TaskManagerAPI {
   sendResponse(taskId: string, response: string): Promise<void>;
 
   /**
+   * Send a user message to a running task mid-execution.
+   *
+   * The current turn is interrupted and the session is respawned with a
+   * redirect prompt containing the user's message, so the agent re-plans
+   * its remaining work around the new input while keeping prior context.
+   *
+   * @param taskId - ID of the running task
+   * @param message - The user's new message
+   * @returns true if the message was queued for delivery; false if the task
+   *   is not actively running (caller may fall back to a normal follow-up)
+   */
+  sendUserMessage(taskId: string, message: string): Promise<boolean>;
+
+  /**
    * Get the session ID for a task
    * @param taskId - ID of the task
    * @returns Session ID or null if not found

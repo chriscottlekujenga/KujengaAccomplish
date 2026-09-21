@@ -76,14 +76,24 @@ function TodoListItem({ todo }: { todo: TodoItem }) {
       )}
     >
       <StatusIcon status={todo.status} />
-      <span
-        className={cn(
-          'text-xs text-foreground leading-snug tracking-[0.18px]',
-          todo.status === 'cancelled' && 'line-through text-muted-foreground',
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span
+          className={cn(
+            'text-xs text-foreground leading-snug tracking-[0.18px]',
+            todo.status === 'cancelled' && 'line-through text-muted-foreground',
+          )}
+        >
+          {todo.content}
+        </span>
+        {todo.model && (
+          <span
+            className="max-w-full truncate rounded-sm bg-muted px-1.5 py-px text-[10px] leading-tight text-muted-foreground"
+            title={todo.model}
+          >
+            {todo.model}
+          </span>
         )}
-      >
-        {todo.content}
-      </span>
+      </div>
     </li>
   );
 }

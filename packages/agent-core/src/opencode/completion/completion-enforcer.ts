@@ -197,6 +197,26 @@ export class CompletionEnforcer {
     this.inContinuation = false;
   }
 
+  /**
+   * Prepare the enforcer for a mid-run user redirect: the current turn was
+   * interrupted because the user sent a new message, and the session will be
+   * respawned with updated instructions.
+   *
+   * Resets per-turn state (a fresh turn begins) while preserving cross-turn
+   * flags — todos, the completion requirement, and prior tool usage — so
+   * completion discipline continues to apply to the redirected work.
+   * Clears `inContinuation` so redirected-turn output is visible to the UI.
+   */
+  beginRedirect(): void {
+    this.state.reset();
+    this.taskToolsWereUsed = false;
+    this.inContinuation = false;
+    this.callbacks.onDebug(
+      'redirect',
+      'Mid-run user message received - resetting completion state for redirect',
+    );
+  }
+
   isInContinuation(): boolean {
     return this.inContinuation;
   }

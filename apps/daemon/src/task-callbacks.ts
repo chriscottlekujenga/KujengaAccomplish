@@ -35,7 +35,7 @@ export function createTaskCallbacks(
       emitter.emit('permission', request);
     },
     onComplete: (result: TaskResult) => {
-      emitter.emit('complete', { taskId });
+      emitter.emit('complete', { taskId, result });
       const taskStatus = mapResultToStatus(result);
       storage.updateTaskStatus(taskId, taskStatus, new Date().toISOString());
       const sessionId = result.sessionId || taskManager.getSessionId(taskId);
@@ -56,6 +56,7 @@ export function createTaskCallbacks(
     },
     onTodoUpdate: (todos) => {
       storage.saveTodosForTask(taskId, todos);
+      emitter.emit('todoUpdate', { taskId, todos });
     },
   };
 }

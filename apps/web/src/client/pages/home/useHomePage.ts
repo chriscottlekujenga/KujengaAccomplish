@@ -8,6 +8,7 @@ import { hasAnyReadyProvider } from '@accomplish_ai/agent-core/common';
 import { USE_CASE_KEYS, FAVORITES_PREVIEW_COUNT } from './homeConstants';
 import { usePromptAttachments } from './usePromptAttachments';
 import { useHomePageSettings } from './useHomePageSettings';
+import { suggestModelForPrompt } from '@/lib/modelRouting';
 
 export { FAVORITES_PREVIEW_COUNT } from './homeConstants';
 
@@ -33,6 +34,8 @@ export function useHomePage() {
   const setPermissionRequest = useTaskStore((state) => state.setPermissionRequest);
 
   const accomplish = useMemo(() => getAccomplish(), []);
+  const modelSuggestion = useMemo(() => suggestModelForPrompt(prompt), [prompt]);
+  const projectModeEnabled = useTaskStore((state) => state.projectModeEnabled);
 
   const useCaseExamples = useMemo(
     () =>
@@ -52,6 +55,8 @@ export function useHomePage() {
     }
   }, [location.pathname, loadFavorites]);
 
+  const setProjectStatus = useTaskStore((state) => state.setProjectStatus);
+
   useEffect(() => {
     const unsubscribeTask = accomplish.onTaskUpdate((event) => {
       addTaskUpdate(event);
@@ -59,11 +64,15 @@ export function useHomePage() {
     const unsubscribePermission = accomplish.onPermissionRequest((request) => {
       setPermissionRequest(request);
     });
+    const unsubscribeProjectStatus = accomplish.onProjectStatus?.((event) => {
+      setProjectStatus(event.taskId, event.status);
+    });
     return () => {
       unsubscribeTask();
       unsubscribePermission();
+      unsubscribeProjectStatus?.();
     };
-  }, [addTaskUpdate, setPermissionRequest, accomplish]);
+  }, [addTaskUpdate, setPermissionRequest, setProjectStatus, accomplish]);
 
   const {
     attachments,
@@ -88,6 +97,7 @@ export function useHomePage() {
       taskId,
       files: attachments,
       workingDirectory,
+      projectMode: projectModeEnabled,
     });
     if (task) {
       setAttachments([]);
@@ -100,6 +110,7 @@ export function useHomePage() {
     workingDirectory,
     isLoading,
     startTask,
+    projectModeEnabled,
     setAttachments,
     navigate,
     buildPromptWithAttachments,
@@ -161,6 +172,7 @@ export function useHomePage() {
   return {
     prompt,
     setPrompt,
+    modelSuggestion,
     showAllFavorites,
     setShowAllFavorites,
     attachments,

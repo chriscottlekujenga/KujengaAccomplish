@@ -160,6 +160,65 @@ export function createTaskExecutionActions(set: SetFn, get: GetFn) {
       }
     },
 
+    /**
+     * Send a message to a RUNNING task mid-execution. The daemon persists +
+     * broadcasts the message (so it appears in the conversation via the
+     * task.message notification - no optimistic append needed here), and the
+     * agent interrupts its current turn and redirects around the new input.
+     *
+     * If the task completes between the UI check and delivery, falls back to
+     * a normal follow-up (session resume) so the message is never lost.
+     */
+    sendMessageToRunningTask: async (message: string): Promise<boolean> => {
+      const accomplish = getAccomplish();
+      const { currentTask, sendFollowUp } = get();
+      if (!currentTask) {
+        set({ error: 'No active task to send a message to' });
+        void accomplish.logEvent({
+          level: 'warn',
+          message: 'UI mid-run send failed: no active task',
+        });
+        return false;
+      }
+      if (currentTask.status !== 'running') {
+        // Task already finished - treat as a normal follow-up.
+        void accomplish.logEvent({
+          level: 'info',
+          message: 'UI mid-run send redirected to follow-up (task not running)',
+          context: { taskId: currentTask.id, status: currentTask.status },
+        });
+        return sendFollowUp(message);
+      }
+      try {
+        void accomplish.logEvent({
+          level: 'info',
+          message: 'UI mid-run message sent',
+          context: { taskId: currentTask.id, message },
+        });
+        await accomplish.sendTaskMessage(currentTask.id, message);
+        return true;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        // The task may have finished while the user was typing - fall back
+        // to a normal follow-up so the message still reaches the session.
+        if (/not running|stopped before/i.test(errorMessage)) {
+          void accomplish.logEvent({
+            level: 'info',
+            message: 'UI mid-run send fell back to follow-up',
+            context: { taskId: currentTask.id, reason: errorMessage },
+          });
+          return sendFollowUp(message);
+        }
+        set({ error: 'Failed to send message' });
+        void accomplish.logEvent({
+          level: 'error',
+          message: 'UI mid-run send failed',
+          context: { taskId: currentTask.id, error: errorMessage },
+        });
+        return false;
+      }
+    },
+
     ...createTaskLifecycleActions(set, get),
     ...createTaskPermissionActions(set, get),
     ...createTaskUpdateActions(set, get),

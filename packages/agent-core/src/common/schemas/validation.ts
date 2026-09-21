@@ -22,6 +22,7 @@ export const taskConfigSchema = z.object({
   attachments: z.array(fileAttachmentSchema).optional(),
   modelId: z.string().optional(),
   provider: z.string().optional(),
+  projectMode: z.boolean().optional(),
 });
 
 export const permissionResponseSchema = z.object({
@@ -40,6 +41,11 @@ export const resumeSessionSchema = z.object({
   chrome: z.boolean().optional(),
   workspaceId: z.string().optional(),
   attachments: z.array(fileAttachmentSchema).optional(),
+});
+
+export const taskSendMessageSchema = z.object({
+  taskId: z.string().min(1, 'Task ID is required'),
+  message: z.string().min(1, 'Message is required'),
 });
 
 export function validate<TSchema extends z.ZodTypeAny>(

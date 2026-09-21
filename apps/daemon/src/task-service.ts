@@ -27,6 +27,8 @@ import {
 } from './task-config-builder.js';
 
 import { type TaskServiceEvents, type TaskServiceOptions } from './task-service-events.js';
+import { recommendModelForPrompt } from './prompt-model-router.js';
+import { ProjectOrchestrator, projectStatusToTodos } from './project-orchestrator.js';
 
 export type { TaskServiceEvents, TaskServiceOptions };
 
@@ -34,6 +36,7 @@ export class TaskService extends EventEmitter {
   private taskManager: TaskManagerAPI;
   private storage: StorageAPI;
   private opts: TaskConfigBuilderOptions;
+  private projectOrchestrators: Map<string, ProjectOrchestrator> = new Map();
 
   constructor(storage: StorageAPI, options: TaskServiceOptions) {
     super();
@@ -73,20 +76,62 @@ export class TaskService extends EventEmitter {
     sessionId?: string;
     workingDirectory?: string;
     workspaceId?: string;
+    projectMode?: boolean;
   }): Promise<Task> {
     const taskId = params.taskId || createTaskId();
+
+    if (params.projectMode) {
+      const orchestrator = new ProjectOrchestrator({
+        taskManager: this.taskManager,
+        storage: this.storage,
+        service: this,
+        runSubtask: (subtaskTaskId, subtaskConfig, subtaskCallbacks) =>
+          this.taskManager.startTask(subtaskTaskId, subtaskConfig, subtaskCallbacks),
+      });
+      this.projectOrchestrators.set(taskId, orchestrator);
+
+      orchestrator.on('plan', ({ plan }) => {
+        this.emit('project-plan', { taskId, plan });
+      });
+      orchestrator.on('status', (status) => {
+        this.emit('project-status', { taskId, status });
+        // Keep the task panel's subtask list (todo sidebar) in sync, including
+        // each subtask's assigned model.
+        const todos = projectStatusToTodos(status);
+        this.storage.saveTodosForTask(taskId, todos);
+        this.emit('todoUpdate', { taskId, todos });
+      });
+      orchestrator.on('progress', (progress) => {
+        this.emit('progress', { taskId, ...progress });
+      });
+      orchestrator.on('subtask-complete', ({ subtaskTaskId, modelName, result }) => {
+        this.emit('subtask-complete', { taskId, subtaskTaskId, modelName, result });
+      });
+      orchestrator.on('complete', ({ status }) => {
+        this.emit('project-complete', { taskId, status });
+      });
+
+      // Run the orchestrator without awaiting it so the HTTP call returns immediately.
+      orchestrator
+        .run({ goal: params.prompt, taskId, workingDirectory: params.workingDirectory, sessionId: params.sessionId })
+        .catch((error) => {
+          this.emit('error', { taskId, error: error instanceof Error ? error.message : String(error) });
+        });
+    }
+
     const config: TaskConfig = {
       prompt: params.prompt,
       taskId,
       modelId: params.modelId,
       sessionId: params.sessionId,
       workingDirectory: params.workingDirectory,
+      projectMode: params.projectMode,
     };
     const validatedConfig = validateTaskConfig(config);
     const activeModel = this.storage.getActiveProviderModel();
     const selectedModel = activeModel || this.storage.getSelectedModel();
     if (selectedModel?.model && !validatedConfig.modelId) {
-      validatedConfig.modelId = selectedModel.model;
+      validatedConfig.modelId = recommendModelForPrompt(validatedConfig.prompt).modelId;
     }
 
     const task = await this._runTask(taskId, validatedConfig);
@@ -109,6 +154,12 @@ export class TaskService extends EventEmitter {
 
   async stopTask(params: { taskId: string }): Promise<void> {
     const { taskId } = params;
+
+    const orchestrator = this.projectOrchestrators.get(taskId);
+    if (orchestrator) {
+      orchestrator.stop();
+    }
+
     if (this.taskManager.isTaskQueued(taskId)) {
       this.taskManager.cancelQueuedTask(taskId);
       this.storage.updateTaskStatus(taskId, 'cancelled', new Date().toISOString());
@@ -147,11 +198,12 @@ export class TaskService extends EventEmitter {
 
     const activeModel = this.storage.getActiveProviderModel();
     const selectedModel = activeModel || this.storage.getSelectedModel();
+    const recommendation = recommendModelForPrompt(prompt);
     const task = await this._runTask(taskId, {
       prompt,
       sessionId,
       taskId,
-      modelId: selectedModel?.model,
+      modelId: recommendation.modelId || selectedModel?.model,
     });
 
     if (existingTaskId) {
@@ -196,6 +248,58 @@ export class TaskService extends EventEmitter {
 
   async sendResponse(taskId: string, response: string): Promise<void> {
     await this.taskManager.sendResponse(taskId, response);
+  }
+
+  /**
+   * Deliver a user message to a running task mid-execution.
+   *
+   * The message is persisted into the task conversation and broadcast to the
+   * UI immediately (via the 'message' event → task.message notification), so
+   * the user sees their message appear right away. The agent then picks it
+   * up: the current turn is interrupted and the session is respawned with a
+   * redirect prompt so the agent re-plans around the new input.
+   *
+   * @throws when the task is not actively running — the UI falls back to a
+   *   normal follow-up (session resume) in that case.
+   */
+  async sendUserMessage(params: { taskId: string; message: string }): Promise<void> {
+    const taskId = params.taskId;
+    const message = params.message.trim();
+    if (!message) {
+      throw new Error('Message cannot be empty');
+    }
+
+    // Refuse delivery to tasks that are not running so the UI can fall back
+    // to a normal follow-up (session.resume) instead of losing the message.
+    if (!this.taskManager.hasActiveTask(taskId) || !this.taskManager.isTaskRunning(taskId)) {
+      throw new Error(
+        `Task ${taskId} is not running - send a follow-up via session.resume instead`,
+      );
+    }
+
+    // Queue the message with the adapter first - it interrupts the current
+    // turn and respawns the session with a redirect prompt on process exit.
+    const queued = await this.taskManager.sendUserMessage(taskId, message);
+    if (!queued) {
+      // The task finished between our check and the adapter call. Nothing was
+      // persisted - surface the miss so the UI can fall back to a follow-up.
+      throw new Error(
+        `Task ${taskId} stopped before the mid-run message could be delivered - ` +
+          `send a follow-up instead`,
+      );
+    }
+
+    // Delivered - persist the user message into the conversation and
+    // broadcast it to the UI immediately (mirrors how resumeSession records
+    // its user message).
+    const userMessage: TaskMessage = {
+      id: createMessageId(),
+      type: 'user',
+      content: message,
+      timestamp: new Date().toISOString(),
+    };
+    this.storage.addTaskMessage(taskId, userMessage);
+    this.emit('message', { taskId, messages: [userMessage] });
   }
   dispose(): void {
     this.taskManager.dispose();

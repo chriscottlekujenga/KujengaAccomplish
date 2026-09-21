@@ -139,16 +139,47 @@ export default function ExecutionPage() {
           />
         )}
 
-        {/* Running — stop button */}
+        {/* Running — mid-run redirect input + stop button */}
         {s.currentTask.status === 'running' && !s.permissionRequest && (
           <div className="flex-shrink-0 border-t border-border bg-card/50 px-6 py-4">
             <div className="max-w-4xl mx-auto">
               <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2.5">
                 <input
-                  placeholder={t('agentWorking')}
-                  disabled
-                  className="flex-1 bg-transparent text-sm text-muted-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed"
+                  value={s.followUp}
+                  onChange={(e) => s.setFollowUp(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      void s.handleSendMessage();
+                    }
+                  }}
+                  placeholder={t('followUp.runningPlaceholder')}
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                  data-testid="execution-midrun-input"
                 />
+                {s.followUp.trim() && (
+                  <button
+                    onClick={() => void s.handleSendMessage()}
+                    title={t('followUp.send')}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
+                    data-testid="execution-midrun-send"
+                    aria-label={t('followUp.send')}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 19V5" />
+                      <path d="M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                )}
                 <ModelIndicator isRunning={true} onOpenSettings={s.handleOpenModelSettings} />
                 <div className="w-px h-6 bg-border flex-shrink-0" />
                 <button

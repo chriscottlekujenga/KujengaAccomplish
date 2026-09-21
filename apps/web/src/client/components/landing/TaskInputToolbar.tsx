@@ -6,6 +6,7 @@ import { SpeechInputButton } from '@/components/ui/SpeechInputButton';
 import { ModelIndicator } from '@/components/ui/ModelIndicator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { getAccomplish } from '@/lib/accomplish';
+import { useTaskStore } from '@/stores/taskStore';
 
 interface TaskInputToolbarProps {
   toolbarLeft?: ReactNode;
@@ -22,6 +23,32 @@ interface TaskInputToolbarProps {
   value: string;
   isOverLimit: boolean;
   attachmentsCount: number;
+}
+
+function ProjectModeToggle() {
+  const projectModeEnabled = useTaskStore((state) => state.projectModeEnabled);
+  const setProjectModeEnabled = useTaskStore((state) => state.setProjectModeEnabled);
+  const { t } = useTranslation('common');
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+          <input
+            type="checkbox"
+            className="accent-primary h-3.5 w-3.5"
+            checked={projectModeEnabled}
+            onChange={(e) => setProjectModeEnabled(e.target.checked)}
+            aria-label={t('projectMode.toggleLabel', 'Multi-model project mode')}
+          />
+          {t('projectMode.label', 'Project')}
+        </label>
+      </TooltipTrigger>
+      <TooltipContent>
+        <span>{t('projectMode.tooltip', 'Plan large tasks into subtasks and assign each to the best model')}</span>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 export function TaskInputToolbar({
@@ -70,6 +97,8 @@ export function TaskInputToolbar({
             hideWhenNoModel={hideModelWhenNoModel}
           />
         )}
+
+        <ProjectModeToggle />
 
         <SpeechInputButton
           isRecording={speechInput.isRecording}

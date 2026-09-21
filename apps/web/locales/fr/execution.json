@@ -33,6 +33,8 @@
     "noSessionPlaceholder": "Envoyez une nouvelle instruction pour réessayer...",
     "completedPlaceholder": "Donnez de nouvelles instructions...",
     "defaultPlaceholder": "Demandez quelque chose...",
+    "runningPlaceholder": "Envoyez un message pour rediriger l'agent...",
+    "send": "Envoyer le message",
     "dropFilesToAttach": "Déposer des fichiers à joindre"
   },
   "taskStatus": "Tâche {{status}}",

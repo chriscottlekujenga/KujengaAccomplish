@@ -104,6 +104,12 @@ export interface TaskSendResponseParams {
   response: string;
 }
 
+/** Parameters for task.send — a mid-run user message delivered to a running task */
+export interface TaskSendMessageParams {
+  taskId: string;
+  message: string;
+}
+
 /** Parameters for permission.respond */
 /** Flat permission response — matches permissionResponseSchema validation. */
 export type PermissionRespondParams = PermissionResponse;
@@ -216,6 +222,9 @@ export interface DaemonMethodMap {
 
   // Session
   'session.resume': { params: SessionResumeParams; result: Task };
+
+  // Mid-run user messaging
+  'task.send': { params: TaskSendMessageParams; result: void };
 
   // Permission
   'permission.respond': { params: PermissionRespondParams; result: void };
