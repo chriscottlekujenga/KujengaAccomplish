@@ -491,9 +491,11 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     );
     this.emit('debug', { type: 'info', message: 'User message received mid-run - redirecting' });
 
-    // Gracefully interrupt the current turn; handleProcessExit performs the
-    // redirect respawn once the process exits.
-    await this.interruptTask();
+    // Interrupt this turn without using interruptTask(): that method is the
+    // explicit Stop action and deliberately clears pending redirects.
+    // handleProcessExit will respawn the session with these queued messages.
+    this.wasInterrupted = true;
+    this.sendInterruptSignal();
     return true;
   }
 
