@@ -34,6 +34,15 @@ The adapter sends Ctrl+C to end the current OpenCode turn, then respawns the sav
 
 ## Windows ARM64 requirement
 
+## Hardware preflight (required before installation)
+
+Before selecting or packaging a Windows build, verify the target computer's actual CPU architecture and operating-system bitness. Do not infer ARM64 from the project name, prior deployment notes, or a Windows version alone.
+
+- On Windows, check `PROCESSOR_ARCHITECTURE`, `PROCESSOR_IDENTIFIER`, and the system type. Common values are `AMD64` / x64 and `ARM64`.
+- Use the normal Windows x64 package on an AMD64/x64 computer.
+- Apply the ARM64 OpenCode replacement below only on a confirmed Windows ARM64 computer.
+- Record the detected architecture in the installation handoff and use it to select the matching packaged application and OpenCode binary.
+
 The upstream packaged application uses `opencode-windows-x64-baseline`, which crashes on this ARM64 Windows system. After each Windows package build, replace this installed file with an ARM64 OpenCode executable:
 
 `resources/app.asar.unpacked/node_modules/opencode-windows-x64-baseline/bin/opencode.exe`
