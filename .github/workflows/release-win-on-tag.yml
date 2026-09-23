@@ -20,7 +20,7 @@ jobs:
       should_build: ${{ steps.guard.outputs.should_build }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -52,15 +52,15 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'pnpm'
@@ -98,7 +98,7 @@ jobs:
           Copy-Item $exe.FullName "apps/desktop/release/Accomplish-latest-win-amd64.exe" -Force
 
       - name: Upload GitHub release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           draft: false
