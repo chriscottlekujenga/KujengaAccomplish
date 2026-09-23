@@ -1,6 +1,6 @@
 {
   "name": "@accomplish/desktop",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "private": true,
   "type": "module",
   "description": "Accomplish Desktop App",
@@ -21,6 +21,7 @@
     "build:unpack": "pnpm build:base && pnpm -F @accomplish/daemon build && pnpm build:mcp-tools:package && node scripts/package.cjs --dir",
     "package": "pnpm download:nodejs && pnpm build:base && pnpm -F @accomplish/daemon build && pnpm build:mcp-tools:package && node scripts/package.cjs --mac --publish never && npx electron-rebuild -f",
     "package:mac": "pnpm download:nodejs && pnpm build:base && pnpm -F @accomplish/daemon build && pnpm build:mcp-tools:package && node scripts/package.cjs --mac --publish never && npx electron-rebuild -f",
+    "package:mac:universal": "pnpm download:nodejs && pnpm build:base && pnpm -F @accomplish/daemon build && pnpm build:mcp-tools:package && node scripts/package.cjs --mac --universal --publish never && npx electron-rebuild -f",
     "package:win": "pnpm download:nodejs && pnpm build:base && pnpm -F @accomplish/daemon build && pnpm build:mcp-tools:package && node scripts/package.cjs --win --x64 --publish never",
     "package:linux": "pnpm download:nodejs && pnpm build:base && pnpm -F @accomplish/daemon build && ACCOMPLISH_BUNDLED_MCP=1 pnpm build:mcp-tools:package && node scripts/package.cjs --linux --x64 --arm64 --publish never",
     "preview": "vite preview",
@@ -53,6 +54,7 @@
     "@huggingface/transformers": "^3.8.1",
     "better-sqlite3": "catalog:",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.6.2",
     "electron-store": "^8.2.0",
     "gray-matter": "^4.0.3",
     "node-pty": "catalog:",
@@ -198,8 +200,8 @@
     "afterPack": "./scripts/after-pack.cjs",
     "publish": {
       "provider": "github",
-      "owner": "accomplish-ai",
-      "repo": "accomplish"
+      "owner": "chriscottlekujenga",
+      "repo": "KujengaAccomplish"
     },
     "mac": {
       "category": "public.app-category.productivity",

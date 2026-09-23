@@ -23,6 +23,7 @@ import {
   handleSecondInstanceProtocolUrl,
 } from './protocol-handlers';
 import { createMainWindow } from './app-window';
+import { startAutoUpdater } from './app-updater';
 
 function logMain(level: 'INFO' | 'WARN' | 'ERROR', msg: string, data?: Record<string, unknown>) {
   try {
@@ -133,6 +134,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     await startApp(createWindow, () => mainWindow, isQuittingRef);
+    startAutoUpdater();
   });
 }
 

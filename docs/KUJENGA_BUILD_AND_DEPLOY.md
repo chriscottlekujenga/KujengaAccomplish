@@ -2,6 +2,14 @@
 
 Repository: https://github.com/chriscottlekujenga/KujengaAccomplish
 
+## Automatic application updates
+
+Packaged builds check the [KujengaAccomplish releases](https://github.com/chriscottlekujenga/KujengaAccomplish/releases) shortly after startup. When a newer release exists for that operating system, Accomplish downloads it in the background and installs it when the person quits the app.
+
+To publish a shared Windows/macOS update, bump the desktop version, merge the change to `main`, and push a tag such as `v0.3.9`. The `Publish Kujenga Accomplish release` workflow builds the Windows installer and macOS disk image, then attaches the updater metadata to the same GitHub release.
+
+Windows releases can update automatically from the installer. macOS automatic updates require a signed and notarized release: configure `MAC_CERTIFICATE`, `MAC_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID` as repository secrets before publishing a production Mac release. Unsigned Mac artifacts remain usable after Gatekeeper approval but cannot be relied on for automatic in-place updating.
+
 ## Prerequisites
 
 - Node.js 20 or newer

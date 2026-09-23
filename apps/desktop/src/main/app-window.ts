@@ -4,7 +4,7 @@
  */
 import { app, BrowserWindow, shell, nativeImage, nativeTheme, Menu } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { getLogCollector } from './logging';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +87,23 @@ export function createMainWindow(opts: {
       shell.openExternal(url);
     }
     return { action: 'deny' };
+  });
+
+  // Keep a malformed or external link inside a task response from replacing
+  // the application UI with a missing local file (for example `web-ui/link`).
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const isAppRoute = opts.ROUTER_URL
+      ? url.startsWith(opts.ROUTER_URL)
+      : url === pathToFileURL(path.join(opts.WEB_DIST, 'index.html')).toString();
+    if (isAppRoute) {
+      return;
+    }
+    event.preventDefault();
+    if (url.startsWith('https:') || url.startsWith('http:')) {
+      void shell.openExternal(url);
+    } else {
+      logMain('WARN', `[Main] Blocked unexpected navigation: ${url}`);
+    }
   });
 
   mainWindow.maximize();
