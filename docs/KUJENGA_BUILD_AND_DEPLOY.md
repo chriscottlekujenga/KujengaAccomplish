@@ -11,6 +11,15 @@ Repository: https://github.com/chriscottlekujenga/KujengaAccomplish
 - Windows: Visual Studio build tools may be required for native dependencies
 - macOS: Xcode command-line tools; Apple signing/notarization credentials are needed for a trusted public distribution
 
+## Hardware preflight (required before installation)
+
+Verify the target machine architecture before choosing an artifact or modifying a packaged OpenCode executable. On Windows, confirm `PROCESSOR_ARCHITECTURE`, `PROCESSOR_IDENTIFIER`, and system type:
+
+- `AMD64` / x64: install the normal Windows x64 package. Do not apply the ARM64 OpenCode replacement.
+- `ARM64`: use the Windows package compatible with the device and follow the ARM64 OpenCode replacement instructions below after packaging.
+
+Do not infer the processor architecture from Windows edition, a previous machine, or this repository's ARM64 deployment notes.
+
 ## Install from source
 
 ```bash
