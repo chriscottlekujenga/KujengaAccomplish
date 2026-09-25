@@ -110,6 +110,12 @@ export interface TaskSendMessageParams {
   message: string;
 }
 
+/** Parameters for task.rename. The title is stored in the task summary field. */
+export interface TaskRenameParams {
+  taskId: string;
+  summary: string;
+}
+
 /** Parameters for permission.respond */
 /** Flat permission response — matches permissionResponseSchema validation. */
 export type PermissionRespondParams = PermissionResponse;
@@ -225,6 +231,7 @@ export interface DaemonMethodMap {
 
   // Mid-run user messaging
   'task.send': { params: TaskSendMessageParams; result: void };
+  'task.rename': { params: TaskRenameParams; result: void };
 
   // Permission
   'permission.respond': { params: PermissionRespondParams; result: void };

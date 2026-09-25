@@ -23,6 +23,7 @@ import type { StorageService } from './storage-service.js';
 import type { SchedulerService } from './scheduler-service.js';
 
 const taskIdSchema = z.object({ taskId: z.string().min(1) });
+const taskRenameSchema = z.object({ taskId: z.string().min(1), summary: z.string().trim().min(1).max(200) });
 // taskConfigSchema already includes modelId — no extension needed
 const taskStartSchema = taskConfigSchema;
 
@@ -116,6 +117,17 @@ export function registerRpcMethods(services: RouteServices): void {
     safeHandler((params) => {
       const validated = validate(taskIdSchema, params);
       return Promise.resolve(storage.getTask(validated.taskId) || null);
+    }),
+  );
+  rpc.registerMethod(
+    'task.rename',
+    safeHandler((params) => {
+      const validated = validate(taskRenameSchema, params);
+      if (!storage.getTask(validated.taskId)) {
+        throw new Error('Task not found');
+      }
+      storage.updateTaskSummary(validated.taskId, validated.summary);
+      return Promise.resolve();
     }),
   );
   rpc.registerMethod(

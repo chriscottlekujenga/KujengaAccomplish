@@ -86,6 +86,7 @@ export interface TaskState {
   setTaskSummary: (taskId: string, summary: string) => void;
   loadTasks: () => Promise<void>;
   loadTaskById: (taskId: string) => Promise<void>;
+  renameTask: (taskId: string, summary: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   clearHistory: () => Promise<void>;
   reset: () => void;

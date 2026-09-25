@@ -46,6 +46,20 @@ export function createTaskHistoryActions(set: SetFn, get: GetFn) {
       set({ currentTask: task, error: task ? null : 'Task not found' });
     },
 
+    renameTask: async (taskId: string, summary: string) => {
+      const title = summary.trim();
+      if (!title) return;
+      const accomplish = getAccomplish();
+      await accomplish.renameTask(taskId, title);
+      set((state) => ({
+        tasks: state.tasks.map((task) => (task.id === taskId ? { ...task, summary: title } : task)),
+        currentTask:
+          state.currentTask?.id === taskId
+            ? { ...state.currentTask, summary: title }
+            : state.currentTask,
+      }));
+    },
+
     deleteTask: async (taskId: string) => {
       const accomplish = getAccomplish();
       await accomplish.deleteTask(taskId);

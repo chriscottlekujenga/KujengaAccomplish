@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import type { Task } from '@accomplish_ai/agent-core/common';
 import { cn } from '@/lib/utils';
-import { X, Star, SpinnerGap } from '@phosphor-icons/react';
+import { X, Star, SpinnerGap, PencilSimple } from '@phosphor-icons/react';
 import { useTaskStore } from '@/stores/taskStore';
 import { STATUS_COLORS, FAVORITABLE_STATUSES, extractDomains } from '@/lib/task-utils';
 import { getFaviconUrl } from '@/components/landing/IntegrationIcons';
@@ -18,6 +18,7 @@ export function ConversationListItem({ task }: ConversationListItemProps) {
   const { t } = useTranslation('sidebar');
   const isActive = location.pathname === `/execution/${task.id}`;
   const deleteTask = useTaskStore((state) => state.deleteTask);
+  const renameTask = useTaskStore((state) => state.renameTask);
   const domains = useMemo(() => extractDomains(task), [task]);
   const { favorites, addFavorite, removeFavorite } = useTaskStore();
   const favoritesList = Array.isArray(favorites) ? favorites : [];
@@ -41,6 +42,14 @@ export function ConversationListItem({ task }: ConversationListItemProps) {
 
     if (isActive) {
       navigate('/');
+    }
+  };
+
+  const handleRename = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const title = window.prompt('Task name', task.summary || task.prompt);
+    if (title?.trim() && title.trim() !== task.summary) {
+      await renameTask(task.id, title);
     }
   };
 
@@ -123,6 +132,14 @@ export function ConversationListItem({ task }: ConversationListItemProps) {
             <Star className={cn('h-3 w-3', isFavorited && 'fill-current')} />
           </button>
         )}
+        <button
+          onClick={handleRename}
+          title="Rename task"
+          aria-label="Rename task"
+          className="absolute right-12 top-1/2 -translate-y-1/2 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity p-1 rounded hover:bg-accent shrink-0"
+        >
+          <PencilSimple className="h-3 w-3" />
+        </button>
         <button
           onClick={handleDelete}
           title={t('deleteTask')}

@@ -136,6 +136,14 @@ export function registerTaskHandlers(): void {
     });
   });
 
+  handle('task:rename', async (_event: IpcMainInvokeEvent, taskId: string, summary: string) => {
+    const client = getDaemonClient();
+    await client.call('task.rename', {
+      taskId: sanitizeString(taskId, 'taskId', 128),
+      summary: sanitizeString(summary, 'summary', 200).trim(),
+    });
+  });
+
   handle('task:delete', async (_event: IpcMainInvokeEvent, taskId: string) => {
     const client = getDaemonClient();
     await client.call('task.delete', { taskId });

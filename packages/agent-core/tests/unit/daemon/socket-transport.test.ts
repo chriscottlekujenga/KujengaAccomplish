@@ -135,4 +135,20 @@ describe('createSocketTransport', () => {
 
     client.close();
   });
+
+  it('accepts a task-sized response larger than 1 MB', async () => {
+    const socketPath = createTempSocketPath();
+    server = new DaemonRpcServer({ socketPath });
+    const transcript = 'x'.repeat(2 * 1024 * 1024);
+    server.registerMethod('task.list', () => ({ transcript }));
+    await server.start();
+
+    const transport = await createSocketTransport({ socketPath });
+    const client = new DaemonClient({ transport });
+
+    const result = await client.call('task.list' as never);
+    expect((result as { transcript: string }).transcript).toHaveLength(transcript.length);
+
+    client.close();
+  });
 });

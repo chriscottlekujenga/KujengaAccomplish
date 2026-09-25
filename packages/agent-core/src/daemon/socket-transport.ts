@@ -12,7 +12,10 @@ import { connect, type Socket } from 'node:net';
 import type { DaemonTransport, JsonRpcMessage } from '../common/types/daemon.js';
 import { getSocketPath } from './socket-path.js';
 
-const MAX_BUFFER_BYTES = 1 * 1024 * 1024; // 1 MB — matches DaemonRpcServer
+// Task-list responses include the task transcript. A busy workspace can
+// legitimately exceed 1 MB, so keep enough room for an entire response while
+// retaining a guard against a peer that never sends a JSON-line delimiter.
+const MAX_BUFFER_BYTES = 32 * 1024 * 1024; // 32 MB
 
 type MessageHandler = (message: JsonRpcMessage) => void;
 type DisconnectHandler = () => void;

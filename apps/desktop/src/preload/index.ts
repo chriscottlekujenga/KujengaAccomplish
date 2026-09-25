@@ -41,6 +41,8 @@ const accomplishAPI = {
     ipcRenderer.invoke('task:send', taskId, message),
   getTask: (taskId: string): Promise<unknown> => ipcRenderer.invoke('task:get', taskId),
   listTasks: (): Promise<unknown[]> => ipcRenderer.invoke('task:list'),
+  renameTask: (taskId: string, summary: string): Promise<void> =>
+    ipcRenderer.invoke('task:rename', taskId, summary),
   deleteTask: (taskId: string): Promise<void> => ipcRenderer.invoke('task:delete', taskId),
   clearTaskHistory: (): Promise<void> => ipcRenderer.invoke('task:clear-history'),
   getTodosForTask: (taskId: string): Promise<TodoItem[]> =>

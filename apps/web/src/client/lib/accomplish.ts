@@ -105,6 +105,7 @@ interface AccomplishAPI {
   sendTaskMessage(taskId: string, message: string): Promise<void>;
   getTask(taskId: string): Promise<Task | null>;
   listTasks(): Promise<Task[]>;
+  renameTask(taskId: string, summary: string): Promise<void>;
   deleteTask(taskId: string): Promise<void>;
   clearTaskHistory(): Promise<void>;
 
