@@ -2,11 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildDependencyBatches } from '../../src/project-scheduler.js';
 import type { ProjectSubtask } from '../../src/project-plan-parser.js';
 
-function st(
-  id: string,
-  deps: string[] = [],
-  fileEdits = false,
-): ProjectSubtask {
+function st(id: string, deps: string[] = [], fileEdits = false): ProjectSubtask {
   return {
     id,
     title: id,
@@ -17,6 +13,14 @@ function st(
 }
 
 describe('buildDependencyBatches', () => {
+  it('runs a ready decision gate before other ready work', () => {
+    const gate = { ...st('research'), decisionGate: true };
+    const batches = buildDependencyBatches([st('implementation'), gate]);
+    expect(batches.map((b) => b.subtasks.map((s) => s.id))).toEqual([
+      ['research'],
+      ['implementation'],
+    ]);
+  });
   it('puts independent non-file subtasks in one parallel batch', () => {
     const batches = buildDependencyBatches([st('a'), st('b'), st('c')]);
     expect(batches).toHaveLength(1);
@@ -46,12 +50,7 @@ describe('buildDependencyBatches', () => {
   });
 
   it('keeps parallel-safe subtasks together when some have dependencies', () => {
-    const batches = buildDependencyBatches([
-      st('a'),
-      st('b'),
-      st('c', ['a', 'b']),
-      st('d', ['c']),
-    ]);
+    const batches = buildDependencyBatches([st('a'), st('b'), st('c', ['a', 'b']), st('d', ['c'])]);
     expect(batches[0].subtasks.map((s) => s.id).sort()).toEqual(['a', 'b']);
     expect(batches[1].subtasks.map((s) => s.id)).toEqual(['c']);
     expect(batches[2].subtasks.map((s) => s.id)).toEqual(['d']);

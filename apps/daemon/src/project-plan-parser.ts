@@ -5,6 +5,7 @@ export interface ProjectSubtask {
   dependsOn: string[];
   fileEdits: boolean;
   assignedModel?: string;
+  decisionGate?: boolean;
 }
 
 export interface ProjectPlan {
@@ -62,14 +63,13 @@ export function parseProjectPlan(raw: string, goal: string): ProjectPlan {
     const fileEdits = s.fileEdits === true || String(s.fileEdits).toLowerCase() === 'true';
     const assignedModel = typeof s.assignedModel === 'string' ? s.assignedModel : undefined;
 
-    return { id: rawId, title, description, dependsOn, fileEdits, assignedModel };
+    const decisionGate = s.decisionGate === true;
+    return { id: rawId, title, description, dependsOn, fileEdits, assignedModel, decisionGate };
   });
 
   if (subtasks.length === 0) {
     throw new ProjectPlanParseError('Plan contains no subtasks.');
   }
-
-
 
   validateDependencies(subtasks);
 
@@ -81,9 +81,7 @@ function validateDependencies(subtasks: ProjectSubtask[]): void {
   for (const s of subtasks) {
     for (const dep of s.dependsOn) {
       if (!ids.has(dep)) {
-        throw new ProjectPlanParseError(
-          `Subtask "${s.id}" depends on unknown subtask "${dep}".`,
-        );
+        throw new ProjectPlanParseError(`Subtask "${s.id}" depends on unknown subtask "${dep}".`);
       }
       if (dep === s.id) {
         throw new ProjectPlanParseError(`Subtask "${s.id}" depends on itself.`);

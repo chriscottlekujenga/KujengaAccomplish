@@ -1,9 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { ProjectOrchestrator, type ProjectOrchestratorOptions } from '../../src/project-orchestrator.js';
-import type { Task, TaskCallbacks, TaskConfig, TaskManagerAPI, StorageAPI } from '@accomplish_ai/agent-core';
+import {
+  ProjectOrchestrator,
+  type ProjectOrchestratorOptions,
+} from '../../src/project-orchestrator.js';
+import type {
+  Task,
+  TaskCallbacks,
+  TaskConfig,
+  TaskManagerAPI,
+  StorageAPI,
+} from '@accomplish_ai/agent-core';
 
 const coordinatorModel = 'glm-5.3:cloud';
+
+vi.mock('../../src/task-config-builder.js', () => ({
+  createTaskCallbacks: () => ({ onComplete: vi.fn() }),
+}));
 
 function makeTask(id: string, content: string, status: Task['status'] = 'completed'): Task {
   return {
@@ -126,9 +139,30 @@ describe('ProjectOrchestrator', () => {
           JSON.stringify({
             summary: 'Plan',
             subtasks: [
-              { id: 'a', title: 'A', description: 'A', assignedModel: 'fast', fileEdits: false, dependsOn: [] },
-              { id: 'b', title: 'B', description: 'B', assignedModel: 'fast', fileEdits: false, dependsOn: [] },
-              { id: 'c', title: 'C', description: 'C', assignedModel: 'fast', fileEdits: false, dependsOn: ['a', 'b'] },
+              {
+                id: 'a',
+                title: 'A',
+                description: 'A',
+                assignedModel: 'fast',
+                fileEdits: false,
+                dependsOn: [],
+              },
+              {
+                id: 'b',
+                title: 'B',
+                description: 'B',
+                assignedModel: 'fast',
+                fileEdits: false,
+                dependsOn: [],
+              },
+              {
+                id: 'c',
+                title: 'C',
+                description: 'C',
+                assignedModel: 'fast',
+                fileEdits: false,
+                dependsOn: ['a', 'b'],
+              },
             ],
           }),
         );
@@ -160,7 +194,9 @@ describe('ProjectOrchestrator', () => {
     await runPromise;
     const status = orchestrator.getStatus();
     expect(status?.stopped).toBe(true);
-    expect(status?.subtasks.filter((s) => s.status === 'cancelled').length).toBeGreaterThanOrEqual(1);
+    expect(status?.subtasks.filter((s) => s.status === 'cancelled').length).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 
   it('preserves context handoff between subtasks', async () => {
@@ -212,5 +248,134 @@ describe('ProjectOrchestrator', () => {
     expect(codeCall?.[1].prompt).toContain('Project goal:');
     expect(codeCall?.[1].prompt).toContain('Research');
     expect(codeCall?.[1].prompt).toContain('src/research.ts');
+  });
+
+  it('reviews research before execution and replaces pending work when findings change the plan', async () => {
+    runSubtaskMock.mockImplementation(async (taskId: string, config: TaskConfig) => {
+      if (taskId.endsWith('-plan')) {
+        return makeTask(
+          taskId,
+          JSON.stringify({
+            summary: 'Fix login',
+            subtasks: [
+              {
+                id: 'diagnose',
+                title: 'Diagnose login',
+                description: 'Find cause',
+                fileEdits: false,
+                dependsOn: [],
+                decisionGate: true,
+              },
+              {
+                id: 'code-fix',
+                title: 'Edit login code',
+                description: 'Fix presumed bug',
+                fileEdits: true,
+                dependsOn: ['diagnose'],
+              },
+            ],
+          }),
+        );
+      }
+      if (taskId.includes('-gate-')) {
+        expect(config.prompt).toContain('Configuration error');
+        return makeTask(
+          taskId,
+          JSON.stringify({
+            replan: true,
+            summary: 'Fix configuration instead',
+            subtasks: [
+              {
+                id: 'config-fix',
+                title: 'Correct configuration',
+                description: 'Fix setting',
+                fileEdits: true,
+                dependsOn: [],
+              },
+            ],
+          }),
+        );
+      }
+      if (taskId.endsWith('-synthesis')) {
+        return makeTask(
+          taskId,
+          JSON.stringify({
+            synthesis: 'Fixed.',
+            unfinished: [],
+            needsMoreSubtasks: false,
+            followUpSubtasks: [],
+          }),
+        );
+      }
+      return makeTask(taskId, 'Configuration error');
+    });
+
+    const status = await new ProjectOrchestrator(opts).run({ goal: 'Fix login', taskId: 'login' });
+    expect(runSubtaskMock.mock.calls.map((call) => call[0])).toEqual([
+      'login-plan',
+      'login-diagnose',
+      'login-gate-1',
+      'login-config-fix',
+      'login-synthesis',
+    ]);
+    expect(status.subtasks.find((s) => s.subtaskId === 'code-fix')?.status).toBe('cancelled');
+    expect(status.subtasks.find((s) => s.subtaskId === 'config-fix')?.status).toBe('completed');
+  });
+
+  it('keeps the original plan when a decision gate confirms it', async () => {
+    runSubtaskMock.mockImplementation(async (taskId: string) => {
+      if (taskId.endsWith('-plan')) {
+        return makeTask(
+          taskId,
+          JSON.stringify({
+            summary: 'Plan',
+            subtasks: [
+              {
+                id: 'research',
+                title: 'Research',
+                description: 'Investigate',
+                fileEdits: false,
+                dependsOn: [],
+                decisionGate: true,
+              },
+              {
+                id: 'implement',
+                title: 'Implement',
+                description: 'Do work',
+                fileEdits: true,
+                dependsOn: ['research'],
+              },
+            ],
+          }),
+        );
+      }
+      if (taskId.includes('-gate-')) {
+        return makeTask(
+          taskId,
+          JSON.stringify({ replan: false, summary: 'Still valid', subtasks: [] }),
+        );
+      }
+      if (taskId.endsWith('-synthesis')) {
+        return makeTask(
+          taskId,
+          JSON.stringify({
+            synthesis: 'Done',
+            unfinished: [],
+            needsMoreSubtasks: false,
+            followUpSubtasks: [],
+          }),
+        );
+      }
+      return makeTask(taskId, 'Expected result');
+    });
+    const status = await new ProjectOrchestrator(opts).run({ goal: 'Do work', taskId: 'work' });
+    expect(status.subtasks.map((s) => s.status)).toEqual(['completed', 'completed']);
+    expect(runSubtaskMock.mock.calls.map((call) => call[0])).toEqual([
+      'work-plan',
+      'work-research',
+      'work-gate-1',
+      'work-implement',
+      'work-synthesis',
+    ]);
   });
 });
