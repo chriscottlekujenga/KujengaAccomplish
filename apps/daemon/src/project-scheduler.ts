@@ -39,6 +39,14 @@ export function buildDependencyBatches(subtasks: ProjectSubtask[]): ScheduledBat
     }
 
     // Emit file-editing work as sequential batches first, then parallel-safe ready subtasks together.
+    const gates = ready.filter((s) => s.decisionGate);
+    if (gates.length > 0) {
+      const gate = gates[0];
+      batches.push({ subtasks: [gate], sequential: true });
+      remaining.delete(gate.id);
+      completed.add(gate.id);
+      continue;
+    }
     const fileEditors = ready.filter((s) => s.fileEdits);
     for (const s of fileEditors) {
       batches.push({ subtasks: [s], sequential: true });

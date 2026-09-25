@@ -20,11 +20,7 @@ export interface ProjectOrchestratorOptions {
   taskManager: TaskManagerAPI;
   storage: StorageAPI;
   service: EventEmitter;
-  runSubtask: (
-    taskId: string,
-    config: TaskConfig,
-    callbacks: TaskCallbacks,
-  ) => Promise<Task>;
+  runSubtask: (taskId: string, config: TaskConfig, callbacks: TaskCallbacks) => Promise<Task>;
   projectMode?: boolean;
   workingDirectory?: string;
   sessionId?: string;
@@ -54,6 +50,7 @@ export interface ProjectStatus {
 }
 
 const MAX_FOLLOW_UP_ROUNDS = 2;
+const MAX_PLAN_REVISIONS = 3;
 
 export class ProjectOrchestrator extends EventEmitter {
   private taskManager: TaskManagerAPI;
@@ -66,6 +63,7 @@ export class ProjectOrchestrator extends EventEmitter {
   ) => Promise<Task>;
   private context: ProjectContext | null = null;
   private status: ProjectStatus | null = null;
+  private gateReviewCount = 0;
 
   constructor(opts: ProjectOrchestratorOptions) {
     super();
@@ -91,6 +89,7 @@ export class ProjectOrchestrator extends EventEmitter {
 
   async run(params: ProjectOrchestratorRunParams): Promise<ProjectStatus> {
     const { goal, taskId, workingDirectory, sessionId } = params;
+    this.gateReviewCount = 0;
 
     this.context = new ProjectContext(goal, { summary: goal, subtasks: [] });
     this.status = {
@@ -103,7 +102,7 @@ export class ProjectOrchestrator extends EventEmitter {
 
     // Step 1: ask coordinator (GLM 5.3 Cloud) to produce a plan.
     this.emit('progress', { taskId, stage: 'planning', message: 'Generating project plan…' });
-    const plan = await this.generatePlan(taskId, goal, workingDirectory, sessionId);
+    let plan = await this.generatePlan(taskId, goal, workingDirectory, sessionId);
     this.context.plan = plan;
     this.status.plan = plan;
     this.status.subtasks = plan.subtasks.map((s) => {
@@ -119,7 +118,7 @@ export class ProjectOrchestrator extends EventEmitter {
     this.emit('plan', { taskId, plan });
 
     // Step 2: schedule and execute subtasks.
-    await this.executePlan(taskId, plan, workingDirectory, sessionId);
+    plan = await this.executePlan(taskId, plan, workingDirectory, sessionId);
 
     if (this.context.isStopped()) {
       this.status.synthesis = this.context.isStopped()
@@ -155,6 +154,7 @@ export class ProjectOrchestrator extends EventEmitter {
           dependsOn: s.dependsOn ?? [],
           fileEdits: s.fileEdits ?? false,
           assignedModel: s.assignedModel,
+          decisionGate: s.decisionGate ?? false,
         })),
       };
       this.context.plan = followUpPlan;
@@ -241,23 +241,37 @@ export class ProjectOrchestrator extends EventEmitter {
     plan: ProjectPlan,
     workingDirectory?: string,
     sessionId?: string,
-  ): Promise<void> {
-    const batches = buildDependencyBatches(plan.subtasks);
-    for (const batch of batches) {
+  ): Promise<ProjectPlan> {
+    let currentPlan = plan;
+    let revisions = 0;
+    while (true) {
       if (!this.context || !this.status) {
-        return;
+        return currentPlan;
       }
       if (this.context.isStopped()) {
-        this.markRemainingCancelled(plan);
+        this.markRemainingCancelled(currentPlan);
         this.emit('status', this.status);
         break;
       }
+      const pending = currentPlan.subtasks.filter(
+        (s) =>
+          this.status?.subtasks.find((entry) => entry.subtaskId === s.id)?.status === 'pending',
+      );
+      if (pending.length === 0) {
+        break;
+      }
+      const pendingIds = new Set(pending.map((s) => s.id));
+      const schedulable = pending.map((s) => ({
+        ...s,
+        dependsOn: s.dependsOn.filter((id) => pendingIds.has(id)),
+      }));
+      const batch = buildDependencyBatches(schedulable)[0];
 
       if (batch.sequential) {
         // Run each file-editing subtask one at a time.
         for (const subtask of batch.subtasks) {
           if (this.context.isStopped()) {
-            this.markRemainingCancelled(plan);
+            this.markRemainingCancelled(currentPlan);
             this.emit('status', this.status);
             break;
           }
@@ -266,10 +280,24 @@ export class ProjectOrchestrator extends EventEmitter {
             continue;
           }
           await this.runSubtaskStep(projectTaskId, subtask, workingDirectory, sessionId);
+          if (subtask.decisionGate && !this.context.isStopped()) {
+            const revised = await this.reviewDecisionGate(
+              projectTaskId,
+              currentPlan,
+              subtask,
+              revisions + 1,
+              workingDirectory,
+              sessionId,
+            );
+            if (revised) {
+              currentPlan = revised;
+              revisions++;
+            }
+          }
         }
       } else {
         if (this.context.isStopped()) {
-          this.markRemainingCancelled(plan);
+          this.markRemainingCancelled(currentPlan);
           this.emit('status', this.status);
           break;
         }
@@ -278,10 +306,108 @@ export class ProjectOrchestrator extends EventEmitter {
           const entry = this.status?.subtasks.find((x) => x.subtaskId === s.id);
           return entry?.status === 'pending';
         });
-        const promises = notStarted.map((subtask) => this.runSubtaskStep(projectTaskId, subtask, workingDirectory, sessionId));
+        const promises = notStarted.map((subtask) =>
+          this.runSubtaskStep(projectTaskId, subtask, workingDirectory, sessionId),
+        );
         await Promise.all(promises);
       }
     }
+    return currentPlan;
+  }
+
+  private async reviewDecisionGate(
+    projectTaskId: string,
+    plan: ProjectPlan,
+    gate: ProjectSubtask,
+    revision: number,
+    workingDirectory?: string,
+    sessionId?: string,
+  ): Promise<ProjectPlan | null> {
+    if (!this.context || !this.status) {
+      return null;
+    }
+    const result = this.context.getResult(gate.id);
+    if (!result || result.status !== 'completed') {
+      throw new Error(`Decision gate ${gate.id} did not complete; pending work was not started.`);
+    }
+    const pending = plan.subtasks.filter(
+      (s) => this.status?.subtasks.find((entry) => entry.subtaskId === s.id)?.status === 'pending',
+    );
+    if (pending.length === 0) {
+      return null;
+    }
+    this.emit('progress', {
+      taskId: projectTaskId,
+      stage: 'planning',
+      message: `Reviewing findings from ${gate.title}…`,
+    });
+    const prompt = [
+      'You are the project coordinator. Review this decision gate before any pending work starts.',
+      `Goal: ${this.context.goal}`,
+      `Current plan: ${JSON.stringify(plan)}`,
+      `Gate result: ${JSON.stringify(result)}`,
+      `Pending tasks: ${JSON.stringify(pending)}`,
+      'If the findings change the method, scope, or need for pending tasks, replace the ENTIRE pending task list.',
+      'Keep independent pending work when still useful. Never repeat completed work.',
+      'Return ONLY JSON: {"replan": boolean, "summary": string, "subtasks": [{"id": string, "title": string, "description": string, "assignedModel": "fast" | "careful" | "code" | "coordinator", "fileEdits": boolean, "dependsOn": string[], "decisionGate": boolean}]}.',
+      'If replan is false, return subtasks: []. If true, use new unique ids, dependencies only among the replacement tasks, and mark new information-generating tasks as decisionGate.',
+    ].join('\n');
+    const taskId = `${projectTaskId}-gate-${++this.gateReviewCount}`;
+    const task = await this.runSubtask(
+      taskId,
+      {
+        prompt,
+        taskId,
+        modelId: getCoordinatorModel().modelId,
+        sessionId,
+        workingDirectory,
+      },
+      this.createSubtaskCallbacks(taskId, getCoordinatorModel().modelId),
+    );
+    const raw = this.extractTextOutput(task);
+    const candidate = raw.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? raw.trim();
+    const decision: unknown = JSON.parse(candidate);
+    if (
+      !decision ||
+      typeof decision !== 'object' ||
+      typeof (decision as { replan?: unknown }).replan !== 'boolean'
+    ) {
+      throw new Error('Decision gate returned an invalid review; pending work was not started.');
+    }
+    if (!(decision as { replan: boolean }).replan) {
+      return null;
+    }
+    if (revision > MAX_PLAN_REVISIONS) {
+      throw new Error(
+        'Project reached the plan revision limit at a decision gate. Remaining work was not started.',
+      );
+    }
+    const replacement = parseProjectPlan(candidate, this.context.goal);
+    const usedIds = new Set(this.status.subtasks.map((s) => s.subtaskId));
+    for (const subtask of replacement.subtasks) {
+      if (usedIds.has(subtask.id)) {
+        throw new Error(
+          `Decision gate reused task id ${subtask.id}; pending work was not started.`,
+        );
+      }
+      usedIds.add(subtask.id);
+    }
+    for (const old of pending) {
+      this.updateSubtaskStatus(old.id, 'cancelled', 'Replaced after decision gate.');
+    }
+    this.status.subtasks.push(
+      ...replacement.subtasks.map((s) => ({
+        subtaskId: s.id,
+        title: s.title,
+        modelId: this.resolveAssignment(s).modelId,
+        status: 'pending' as const,
+      })),
+    );
+    this.context.plan = replacement;
+    this.status.plan = replacement;
+    this.emit('plan', { taskId: projectTaskId, plan: replacement });
+    this.emit('status', this.status);
+    return replacement;
   }
 
   private async runSubtaskStep(
@@ -334,7 +460,8 @@ export class ProjectOrchestrator extends EventEmitter {
       result = {
         subtaskId: subtask.id,
         title: subtask.title,
-        status: task.status === 'cancelled' || task.status === 'interrupted' ? 'cancelled' : 'completed',
+        status:
+          task.status === 'cancelled' || task.status === 'interrupted' ? 'cancelled' : 'completed',
         modelId: assignment.modelId,
         output,
         changedFiles,
@@ -403,6 +530,7 @@ export class ProjectOrchestrator extends EventEmitter {
       assignedModel?: string;
       fileEdits?: boolean;
       dependsOn?: string[];
+      decisionGate?: boolean;
     }>;
   }> {
     if (!this.context) {
@@ -437,6 +565,7 @@ export class ProjectOrchestrator extends EventEmitter {
       assignedModel?: string;
       fileEdits?: boolean;
       dependsOn?: string[];
+      decisionGate?: boolean;
     }>;
   } {
     const candidate = raw.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? raw.trim();
@@ -444,7 +573,9 @@ export class ProjectOrchestrator extends EventEmitter {
       const parsed = JSON.parse(candidate);
       return {
         synthesis: typeof parsed.synthesis === 'string' ? parsed.synthesis : raw,
-        unfinished: Array.isArray(parsed.unfinished) ? parsed.unfinished.filter((u: unknown) => typeof u === 'string') : [],
+        unfinished: Array.isArray(parsed.unfinished)
+          ? parsed.unfinished.filter((u: unknown) => typeof u === 'string')
+          : [],
         needsMoreSubtasks: parsed.needsMoreSubtasks === true,
         followUpSubtasks: Array.isArray(parsed.followUpSubtasks) ? parsed.followUpSubtasks : [],
       };
@@ -475,6 +606,7 @@ export class ProjectOrchestrator extends EventEmitter {
       '      "assignedModel": "fast" | "careful" | "code" | "coordinator",',
       '      "fileEdits": true | false,',
       '      "dependsOn": ["other-id"]',
+      '      "decisionGate": true | false',
       '    }',
       '  ]',
       '}',
@@ -484,6 +616,8 @@ export class ProjectOrchestrator extends EventEmitter {
       '- Mark fileEdits=true for any subtask that edits, renames, migrates, or deletes files.',
       '- fileEdits=true subtasks will run sequentially; others may run in parallel.',
       '- dependsOn references other subtask ids; avoid cycles.',
+      '- Mark research, diagnosis, and other tasks as decisionGate=true when their findings could change later work.',
+      '- Put decision gates before affected work; affected tasks depend on the gate.',
     ].join('\n');
   }
 
@@ -491,7 +625,9 @@ export class ProjectOrchestrator extends EventEmitter {
     if (task.result?.error) {
       return `Error: ${task.result.error}`;
     }
-    const assistantMessages = task.messages.filter((m) => m.type === 'assistant' || m.type === 'tool');
+    const assistantMessages = task.messages.filter(
+      (m) => m.type === 'assistant' || m.type === 'tool',
+    );
     if (assistantMessages.length === 0) {
       return '';
     }
@@ -502,7 +638,9 @@ export class ProjectOrchestrator extends EventEmitter {
           text +=
             '\n' +
             m.attachments
-              .map((a) => (a.type === 'json' ? `[json: ${a.data}]` : `[attachment: ${a.label ?? a.type}]`))
+              .map((a) =>
+                a.type === 'json' ? `[json: ${a.data}]` : `[attachment: ${a.label ?? a.type}]`,
+              )
               .join('\n');
         }
         return text;
@@ -512,7 +650,8 @@ export class ProjectOrchestrator extends EventEmitter {
 
   private extractChangedFiles(output: string): string[] {
     const changed: string[] = [];
-    const regex = /(?:changed|modified|created|deleted|wrote)\s+(?:file\s+)?[`'"]?([a-zA-Z0-9_./\\~\-]+[.][a-zA-Z0-9]+)/gi;
+    const regex =
+      /(?:changed|modified|created|deleted|wrote)\s+(?:file\s+)?[`'"]?([a-zA-Z0-9_./\\~\-]+[.][a-zA-Z0-9]+)/gi;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(output)) !== null) {
       changed.push(match[1]);
@@ -536,9 +675,13 @@ export class ProjectOrchestrator extends EventEmitter {
  * each subtask's assigned model. Failed/cancelled subtasks are surfaced as
  * 'cancelled' in the todo list; authoritative state stays in ProjectStatus.
  */
-export function projectStatusToTodos(
-  status: ProjectStatus,
-): Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled'; priority: 'high' | 'medium' | 'low'; model: string }> {
+export function projectStatusToTodos(status: ProjectStatus): Array<{
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  priority: 'high' | 'medium' | 'low';
+  model: string;
+}> {
   return status.subtasks.map((subtask) => ({
     id: subtask.subtaskId,
     content: subtask.title,

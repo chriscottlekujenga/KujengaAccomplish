@@ -99,7 +99,7 @@ export class ProjectContext {
         ? `\nFiles changed so far:\n${[...this.changedFiles].map((f) => `- ${f}`).join('\n')}`
         : '',
       '\nSynthesize these results into a final answer for the project goal. Then list any unfinished work and whether more subtasks are needed.',
-      'Return JSON: { "synthesis": string, "unfinished": string[], "needsMoreSubtasks": boolean, "followUpSubtasks": [{ "title": string, "description": string, "assignedModel": "fast" | "careful" | "code" | "coordinator", "fileEdits": boolean, "dependsOn": string[] }] }',
+      'Return JSON: { "synthesis": string, "unfinished": string[], "needsMoreSubtasks": boolean, "followUpSubtasks": [{ "title": string, "description": string, "assignedModel": "fast" | "careful" | "code" | "coordinator", "fileEdits": boolean, "dependsOn": string[], "decisionGate": boolean }] }',
     ].join('\n');
   }
 
