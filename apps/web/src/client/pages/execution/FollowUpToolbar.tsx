@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ModelIndicator } from '../../components/ui/ModelIndicator';
 import { SpeechInputButton } from '../../components/ui/SpeechInputButton';
 import { PlusMenu } from '../../components/landing/PlusMenu';
+import { ProjectModeToggle } from '../../components/landing/TaskInputToolbar';
 import type { FileAttachmentInfo } from '@accomplish_ai/agent-core/common';
 import type { useSpeechInput } from '../../hooks/useSpeechInput';
 
@@ -50,6 +51,7 @@ export function FollowUpToolbar({
         disabled={isLoading || speechInput.isRecording}
       />
       <div className="flex items-center gap-2">
+        <ProjectModeToggle />
         <ModelIndicator isRunning={false} onOpenSettings={onOpenModelSettings} />
         <div className="w-px h-6 bg-border flex-shrink-0" />
         <SpeechInputButton

@@ -58,8 +58,9 @@ const accomplishAPI = {
     prompt: string,
     taskId?: string,
     attachments?: unknown[],
+    projectMode?: boolean,
   ): Promise<unknown> =>
-    ipcRenderer.invoke('session:resume', sessionId, prompt, taskId, attachments),
+    ipcRenderer.invoke('session:resume', sessionId, prompt, taskId, attachments, projectMode),
 
   // Settings
   getApiKeys: (): Promise<unknown[]> => ipcRenderer.invoke('settings:api-keys'),

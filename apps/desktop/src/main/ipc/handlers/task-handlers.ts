@@ -70,6 +70,7 @@ export function registerTaskHandlers(): void {
       systemPromptAppend: config.systemPromptAppend,
       outputSchema: config.outputSchema,
       sessionId: config.sessionId,
+      projectMode: config.projectMode,
       attachments: sanitizedAttachments,
     });
 
@@ -199,6 +200,7 @@ export function registerTaskHandlers(): void {
       prompt: string,
       existingTaskId?: string,
       attachments?: FileAttachmentInfo[],
+      projectMode?: boolean,
     ) => {
       assertTrustedWindow(BrowserWindow.fromWebContents(event.sender));
 
@@ -224,6 +226,7 @@ export function registerTaskHandlers(): void {
         existingTaskId: validatedExistingTaskId,
         workspaceId: workspaceManager.getActiveWorkspace() ?? undefined,
         attachments: sanitizedAttachments,
+        projectMode: projectMode === true,
       });
 
       return task;

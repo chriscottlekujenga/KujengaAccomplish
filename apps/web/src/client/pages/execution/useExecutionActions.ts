@@ -83,7 +83,7 @@ export function useExecutionActions(s: CoreState) {
           return false;
         }
       }
-      await s.sendFollowUp(message, []);
+      await s.sendFollowUp(message, [], s.projectModeEnabled);
       return true;
     },
     [
@@ -130,7 +130,7 @@ export function useExecutionActions(s: CoreState) {
         return;
       }
     }
-    const ok = await s.sendFollowUp(s.followUp, s.attachments);
+    const ok = await s.sendFollowUp(s.followUp, s.attachments, s.projectModeEnabled);
     if (ok) {
       s.setFollowUp('');
       s.setAttachments([]);
@@ -163,7 +163,7 @@ export function useExecutionActions(s: CoreState) {
   const handleApiKeySaved = async () => {
     s.setShowSettingsDialog(false);
     if (s.pendingFollowUp) {
-      const ok = await s.sendFollowUp(s.pendingFollowUp, s.attachments);
+      const ok = await s.sendFollowUp(s.pendingFollowUp, s.attachments, s.projectModeEnabled);
       if (ok) {
         s.setFollowUp('');
         s.setPendingFollowUp(null);

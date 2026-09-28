@@ -86,6 +86,7 @@ export interface TaskStartParams {
   allowedTools?: string[];
   systemPromptAppend?: string;
   outputSchema?: object;
+  projectMode?: boolean;
 }
 
 /** Parameters for task.cancel / task.interrupt */
@@ -127,6 +128,7 @@ export interface SessionResumeParams {
   existingTaskId?: string;
   workspaceId?: string;
   attachments?: import('./task.js').FileAttachmentInfo[];
+  projectMode?: boolean;
 }
 
 /** Parameters for storage.saveTask */

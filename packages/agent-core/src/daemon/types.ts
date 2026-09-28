@@ -59,6 +59,7 @@ export interface TaskStartParams {
   allowedTools?: string[];
   systemPromptAppend?: string;
   outputSchema?: object;
+  projectMode?: boolean;
 }
 
 export interface TaskStopParams {

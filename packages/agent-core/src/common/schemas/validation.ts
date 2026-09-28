@@ -41,6 +41,7 @@ export const resumeSessionSchema = z.object({
   chrome: z.boolean().optional(),
   workspaceId: z.string().optional(),
   attachments: z.array(fileAttachmentSchema).optional(),
+  projectMode: z.boolean().optional(),
 });
 
 export const taskSendMessageSchema = z.object({

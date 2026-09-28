@@ -118,6 +118,7 @@ interface AccomplishAPI {
     prompt: string,
     taskId?: string,
     attachments?: FileAttachmentInfo[],
+    projectMode?: boolean,
   ): Promise<Task>;
 
   // Settings

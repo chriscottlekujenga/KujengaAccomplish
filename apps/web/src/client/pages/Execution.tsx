@@ -14,6 +14,7 @@ import { ExecutionHeader } from './execution/ExecutionHeader';
 import { BrowserInstallModal } from './execution/BrowserInstallModal';
 import { ConversationView } from './execution/ConversationView';
 import { FollowUpInput } from './execution/FollowUpInput';
+import { ProjectModeToggle } from '../components/landing/TaskInputToolbar';
 import { useExecutionPage } from './execution/useExecutionPage';
 
 export default function ExecutionPage() {
@@ -180,6 +181,7 @@ export default function ExecutionPage() {
                     </svg>
                   </button>
                 )}
+                <ProjectModeToggle />
                 <ModelIndicator isRunning={true} onOpenSettings={s.handleOpenModelSettings} />
                 <div className="w-px h-6 bg-border flex-shrink-0" />
                 <button

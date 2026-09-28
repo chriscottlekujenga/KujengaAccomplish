@@ -25,7 +25,7 @@ interface TaskInputToolbarProps {
   attachmentsCount: number;
 }
 
-function ProjectModeToggle() {
+export function ProjectModeToggle() {
   const projectModeEnabled = useTaskStore((state) => state.projectModeEnabled);
   const setProjectModeEnabled = useTaskStore((state) => state.setProjectModeEnabled);
   const { t } = useTranslation('common');
@@ -45,7 +45,12 @@ function ProjectModeToggle() {
         </label>
       </TooltipTrigger>
       <TooltipContent>
-        <span>{t('projectMode.tooltip', 'Plan large tasks into subtasks and assign each to the best model')}</span>
+        <span>
+          {t(
+            'projectMode.tooltip',
+            'Plan large tasks into subtasks and assign each to the best model',
+          )}
+        </span>
       </TooltipContent>
     </Tooltip>
   );

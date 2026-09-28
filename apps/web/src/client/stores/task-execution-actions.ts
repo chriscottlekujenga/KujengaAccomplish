@@ -62,7 +62,11 @@ export function createTaskExecutionActions(set: SetFn, get: GetFn) {
       }
     },
 
-    sendFollowUp: async (message: string, attachments?: FileAttachmentInfo[]): Promise<boolean> => {
+    sendFollowUp: async (
+      message: string,
+      attachments?: FileAttachmentInfo[],
+      projectMode = false,
+    ): Promise<boolean> => {
       const accomplish = getAccomplish();
       const { currentTask, startTask } = get();
       const taskStateToken = get()._taskStateToken;
@@ -78,7 +82,7 @@ export function createTaskExecutionActions(set: SetFn, get: GetFn) {
           message: 'UI follow-up: starting fresh task (no session from interrupted task)',
           context: { taskId: currentTask.id },
         });
-        const newTask = await startTask({ prompt: message, files: attachments });
+        const newTask = await startTask({ prompt: message, files: attachments, projectMode });
         return newTask !== null;
       }
       if (!sessionId) {
@@ -119,13 +123,19 @@ export function createTaskExecutionActions(set: SetFn, get: GetFn) {
         void accomplish.logEvent({
           level: 'info',
           message: 'UI follow-up sent',
-          context: { taskId: currentTask.id, message, attachments: attachments?.length },
+          context: {
+            taskId: currentTask.id,
+            message,
+            attachments: attachments?.length,
+            projectMode,
+          },
         });
         const task = await accomplish.resumeSession(
           sessionId,
           message,
           currentTask.id,
           attachments,
+          projectMode,
         );
         if (!hasTaskStateToken(get(), taskStateToken)) {
           return false;

@@ -113,9 +113,17 @@ export class TaskService extends EventEmitter {
 
       // Run the orchestrator without awaiting it so the HTTP call returns immediately.
       orchestrator
-        .run({ goal: params.prompt, taskId, workingDirectory: params.workingDirectory, sessionId: params.sessionId })
+        .run({
+          goal: params.prompt,
+          taskId,
+          workingDirectory: params.workingDirectory,
+          sessionId: params.sessionId,
+        })
         .catch((error) => {
-          this.emit('error', { taskId, error: error instanceof Error ? error.message : String(error) });
+          this.emit('error', {
+            taskId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
     }
 
@@ -182,9 +190,45 @@ export class TaskService extends EventEmitter {
     sessionId: string;
     prompt: string;
     existingTaskId?: string;
+    projectMode?: boolean;
   }): Promise<Task> {
-    const { sessionId, prompt, existingTaskId } = params;
+    const { sessionId, prompt, existingTaskId, projectMode } = params;
     const taskId = existingTaskId || createTaskId();
+
+    if (projectMode) {
+      const orchestrator = new ProjectOrchestrator({
+        taskManager: this.taskManager,
+        storage: this.storage,
+        service: this,
+        runSubtask: (subtaskTaskId, subtaskConfig, subtaskCallbacks) =>
+          this.taskManager.startTask(subtaskTaskId, subtaskConfig, subtaskCallbacks),
+      });
+      this.projectOrchestrators.set(taskId, orchestrator);
+      orchestrator.on('plan', ({ plan }) => this.emit('project-plan', { taskId, plan }));
+      orchestrator.on('status', (status) => {
+        this.emit('project-status', { taskId, status });
+        const todos = projectStatusToTodos(status);
+        this.storage.saveTodosForTask(taskId, todos);
+        this.emit('todoUpdate', { taskId, todos });
+      });
+      orchestrator.on('progress', (progress) => this.emit('progress', { taskId, ...progress }));
+      orchestrator.on('subtask-complete', ({ subtaskTaskId, modelName, result }) => {
+        this.emit('subtask-complete', { taskId, subtaskTaskId, modelName, result });
+      });
+      orchestrator.on('complete', ({ status }) =>
+        this.emit('project-complete', { taskId, status }),
+      );
+      void orchestrator.run({ goal: prompt, taskId, sessionId }).catch((error) => {
+        this.emit('error', {
+          taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    } else {
+      // A later normal follow-up in the same conversation deliberately leaves
+      // project orchestration behind; cancelling it must not affect that run.
+      this.projectOrchestrators.delete(taskId);
+    }
 
     if (existingTaskId) {
       const userMessage: TaskMessage = {

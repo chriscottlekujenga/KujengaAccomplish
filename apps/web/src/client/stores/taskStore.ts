@@ -71,6 +71,7 @@ export interface TaskState {
   sendFollowUp: (
     message: string,
     attachments?: import('@accomplish_ai/agent-core/common').FileAttachmentInfo[],
+    projectMode?: boolean,
   ) => Promise<boolean>;
   /** Send a message to a RUNNING task - the agent interrupts its current
    *  turn and redirects around the new input. */

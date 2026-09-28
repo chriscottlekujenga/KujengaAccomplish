@@ -552,6 +552,24 @@ describe('validation.ts', () => {
           expect(result.data.chrome).toBe(true);
         }
       });
+
+      it('should accept resume config with project mode enabled', () => {
+        // Arrange
+        const config = {
+          sessionId: 'session_abc',
+          prompt: 'Break this follow-up into parallel workstreams',
+          projectMode: true,
+        };
+
+        // Act
+        const result = resumeSessionSchema.safeParse(config);
+
+        // Assert
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.projectMode).toBe(true);
+        }
+      });
     });
 
     describe('invalid payloads', () => {
