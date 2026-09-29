@@ -29,10 +29,10 @@ describe('assignModelForProjectSubtask', () => {
     expect(rec.role).toBe('careful');
   });
 
-  it('assigns fast model for lightweight summaries', () => {
+  it('assigns the low-cost language model for lightweight summaries', () => {
     const rec = assignModelForProjectSubtask('Summarize findings', 'Draft a brief summary.');
-    expect(rec.modelId).toBe('glm-5.3-flash:cloud');
-    expect(rec.role).toBe('fast');
+    expect(rec.modelId).toBe('gemma4:cloud');
+    expect(rec.role).toBe('language');
   });
 });
 

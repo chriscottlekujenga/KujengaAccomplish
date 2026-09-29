@@ -15,6 +15,11 @@ const recommendations = {
     label: 'GLM 5.3 Flash Cloud',
     reason: 'fast choice for straightforward writing and summaries',
   },
+  language: {
+    modelId: 'gemma4:cloud',
+    label: 'Gemma 4 Cloud',
+    reason: 'low-cost natural-language writing, rewriting, translation, and extraction',
+  },
   careful: {
     modelId: 'gpt-oss:120b-cloud',
     label: 'GPT-OSS 120B Cloud',
@@ -35,8 +40,13 @@ export function recommendModelForPrompt(prompt: string): ModelRecommendation {
   if (/\b(compare|analyze|analysis|reason|strategy|plan|decision|math|calculate|proof|trade-?off|risk)\b/.test(text)) {
     return recommendations.careful;
   }
-  if (text.length < 500 && /\b(summarize|summary|rewrite|email|message|translate|brainstorm|list|outline|draft)\b/.test(text)) {
-    return recommendations.fast;
+  if (
+    text.length < 2_000 &&
+    /\b(summarize|summary|rewrite|email|message|translate|brainstorm|list|outline|draft|write|edit|proofread|tone|copy|extract)\b/.test(
+      text,
+    )
+  ) {
+    return recommendations.language;
   }
   return recommendations.default;
 }

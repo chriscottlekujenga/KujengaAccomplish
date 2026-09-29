@@ -193,6 +193,7 @@ export class ProjectOrchestrator extends EventEmitter {
   private static ROLE_TO_MODEL: Record<ProjectModelRole | string, string> = {
     coordinator: 'glm-5.3:cloud',
     fast: 'glm-5.3-flash:cloud',
+    language: 'gemma4:cloud',
     careful: 'gpt-oss:120b-cloud',
     code: 'kimi-k2.7-code:cloud',
   };
@@ -458,6 +459,7 @@ export class ProjectOrchestrator extends EventEmitter {
       'You are a project coordinator. Break the following user goal into a small set of independent subtasks.',
       'Each subtask should be assignable to one of these models:',
       '- glm-5.3-flash:cloud for quick summaries, drafting, simple research, lightweight subtasks',
+      '- gemma4:cloud for low-cost natural-language writing, rewriting, translation, and extraction',
       '- gpt-oss:120b-cloud for careful analysis, architecture, planning, comparisons, risk assessment, math',
       '- kimi-k2.7-code:cloud for coding, debugging, tests, repository work, APIs, databases',
       'You (glm-5.3:cloud) handle coordination, synthesis, and follow-up planning.',
@@ -472,7 +474,7 @@ export class ProjectOrchestrator extends EventEmitter {
       '      "id": "unique-slug",',
       '      "title": "short title",',
       '      "description": "detailed prompt for the subtask",',
-      '      "assignedModel": "fast" | "careful" | "code" | "coordinator",',
+      '      "assignedModel": "fast" | "language" | "careful" | "code" | "coordinator",',
       '      "fileEdits": true | false,',
       '      "dependsOn": ["other-id"]',
       '    }',

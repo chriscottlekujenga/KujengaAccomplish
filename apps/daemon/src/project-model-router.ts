@@ -1,6 +1,6 @@
 import { recommendModelForPrompt, type ModelRecommendation } from './prompt-model-router.js';
 
-export type ProjectModelRole = 'coordinator' | 'fast' | 'careful' | 'code';
+export type ProjectModelRole = 'coordinator' | 'fast' | 'language' | 'careful' | 'code';
 
 export interface ProjectModelAssignment extends ModelRecommendation {
   role: ProjectModelRole;
@@ -16,6 +16,11 @@ const ROLE_RECOMMENDATIONS: Record<ProjectModelRole, ModelRecommendation> = {
     modelId: 'glm-5.3-flash:cloud',
     label: 'GLM 5.3 Flash Cloud',
     reason: 'quick summaries, drafting, simple research, and lightweight subtasks',
+  },
+  language: {
+    modelId: 'gemma4:cloud',
+    label: 'Gemma 4 Cloud',
+    reason: 'low-cost natural-language writing, rewriting, translation, and extraction',
   },
   careful: {
     modelId: 'gpt-oss:120b-cloud',
@@ -51,6 +56,8 @@ export function assignModelForProjectSubtask(
         ? 'careful'
         : routerRec.modelId === ROLE_RECOMMENDATIONS.fast.modelId
           ? 'fast'
+        : routerRec.modelId === ROLE_RECOMMENDATIONS.language.modelId
+          ? 'language'
           : 'coordinator';
 
   return { role, ...routerRec };
