@@ -97,6 +97,29 @@ describe('ConfigGenerator', () => {
       expect(result.configPath).toBeDefined();
     });
 
+    it('instructs agents to use only English when English is selected', () => {
+      const result = generateConfig({
+        ...baseOptions,
+        mcpToolsPath,
+        userDataPath,
+        language: 'en',
+      });
+
+      expect(result.systemPrompt).toContain('Use English exclusively');
+      expect(result.systemPrompt).toContain('Do not output Chinese or any other language');
+    });
+
+    it('defaults automatic language selection to English-only agent output', () => {
+      const result = generateConfig({
+        ...baseOptions,
+        mcpToolsPath,
+        userDataPath,
+        language: 'auto',
+      });
+
+      expect(result.systemPrompt).toContain('Use English exclusively');
+    });
+
     it('should write config file to disk', () => {
       const options: ConfigGeneratorOptions = {
         ...baseOptions,

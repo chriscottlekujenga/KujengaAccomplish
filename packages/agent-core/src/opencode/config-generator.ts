@@ -20,7 +20,12 @@ const LANGUAGE_DISPLAY_NAMES: Record<string, string> = {
 
 function getLanguageInstruction(language: string | undefined): string {
   if (!language || language === 'auto' || language === 'en') {
-    return '';
+    return [
+      '<language-policy>',
+      'Use English exclusively for all visible messages, plans, progress updates, tool explanations, and final responses.',
+      'Do not output Chinese or any other language unless the user explicitly requests it.',
+      '</language-policy>',
+    ].join('\n');
   }
   const displayName = LANGUAGE_DISPLAY_NAMES[language];
   if (!displayName) {

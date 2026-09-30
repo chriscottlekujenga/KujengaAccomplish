@@ -18,7 +18,7 @@ import {
  *
  * Placeholder tokens:
  * - `{{AGENT_ROLE}}` — replaced with the agent role (e.g., "task execution")
- * - `{{LANGUAGE_INSTRUCTION}}` — language instruction (or empty when auto/English)
+ * - `{{LANGUAGE_INSTRUCTION}}` — language instruction (or empty when automatic)
  * - `{{ENVIRONMENT_INSTRUCTIONS}}` — replaced by getPlatformEnvironmentInstructions()
  * - `{{BROWSER_CAPABILITY}}` — browser capability line (or empty)
  * - `{{BROWSER_BEHAVIOR}}` — browser behavior rules (or empty)
