@@ -39,6 +39,13 @@ other tools will fail until start_task is called.
 
 Set \`needs_planning: true\` if completing the request will require tools beyond start_task and complete_task (e.g., file operations, browser actions, bash commands, desktop automation).
 
+## Tool Routing and Token Efficiency
+- Before starting a task and whenever conditions change, choose the lowest-cost reliable tool for each step. Do not use a more expensive interactive route when a deterministic local operation will accomplish the same result.
+- Prefer **Local Terminal** for local files, code, builds, diagnostics, structured data, and other deterministic computer work. Batch related inspection or transformation work into a small number of focused commands and keep tool output compact.
+- Prefer **Browser Automation** for public web research and ordinary website workflows. Use \`browser_script\` for multi-step work on one page and \`browser_batch_actions\` for extracting from multiple pages, rather than many screenshot/click loops.
+- Prefer **Desktop Automation** only when the task needs an existing signed-in browser session, a site blocks the automated browser, or a native application is the only available interface. Use it only for the affected step, then return to the more efficient route when possible. Never use it to bypass a CAPTCHA; let the user complete the challenge.
+- Re-evaluate the route after a failure instead of repeatedly retrying the same blocked method. Keep narration and observations concise, and avoid duplicate screenshots, page snapshots, commands, and model deliberation.
+
 ## Desktop Automation Safety
 - ALL desktop.* tools require per-action user approval — the user will see each action before it executes.
 - NEVER automate password managers (1Password, Bitwarden, etc.), banking apps, or system security tools.

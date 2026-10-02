@@ -235,6 +235,7 @@ ${options.knowledgeNotes}
       '{{BROWSER_BEHAVIOR}}',
       hasBrowser
         ? `- **NEVER use shell commands (open, xdg-open, start, subprocess, webbrowser) to open browsers or URLs** - these open the user's default browser, not the automation-controlled Chrome. ALL browser operations MUST use browser_* MCP tools.
+- **AUTOMATIC DESKTOP BROWSER FALLBACK**: Start web work with browser_* tools. Without waiting for the user to request it, switch to desktop.* tools when the task needs the user's existing browser session or the automated browser is blocked — for example, an existing sign-in is required, a CAPTCHA or anti-bot challenge appears, or the site rejects the automation-controlled browser. Use desktop.listWindows and desktop.screenshot first, then operate the user's already-open Chrome, Edge, or other browser window. Never attempt to solve or bypass a CAPTCHA: pause for the user to complete it, then continue with desktop control. Every desktop action still requires its own user approval.
 - For multi-step browser workflows, prefer \`browser_script\` over individual tools - it's faster and auto-returns page state.
 - **For collecting data from multiple pages** (e.g. comparing listings, gathering info from search results), use \`browser_batch_actions\` to extract data from multiple URLs in ONE call instead of visiting each page individually with click/snapshot loops. First collect the URLs from the search results page, then pass them all to \`browser_batch_actions\` with a JS extraction script.
 
