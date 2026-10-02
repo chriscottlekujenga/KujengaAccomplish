@@ -12,6 +12,7 @@ import { buildDependencyBatches } from './project-scheduler.js';
 import {
   assignModelForProjectSubtask,
   getCoordinatorModel,
+  type LocalProjectModel,
   type ProjectModelRole,
 } from './project-model-router.js';
 import { ProjectContext, type ProjectSubtaskResult } from './project-context.js';
@@ -64,6 +65,7 @@ export class ProjectOrchestrator extends EventEmitter {
     config: TaskConfig,
     callbacks: TaskCallbacks,
   ) => Promise<Task>;
+  private localModel: LocalProjectModel | null;
   private context: ProjectContext | null = null;
   private status: ProjectStatus | null = null;
 
@@ -73,6 +75,7 @@ export class ProjectOrchestrator extends EventEmitter {
     this.storage = opts.storage;
     this.service = opts.service;
     this.runSubtask = opts.runSubtask;
+    this.localModel = this.resolveConnectedLocalModel();
   }
 
   getStatus(): ProjectStatus | null {
@@ -198,8 +201,31 @@ export class ProjectOrchestrator extends EventEmitter {
     code: 'kimi-k2.7-code:cloud',
   };
 
+  private resolveConnectedLocalModel(): LocalProjectModel | null {
+    for (const provider of ['ollama', 'lmstudio'] as const) {
+      const connected = this.storage.getConnectedProvider(provider);
+      if (connected?.connectionStatus === 'connected' && connected.selectedModelId) {
+        return {
+          provider,
+          modelId: connected.selectedModelId,
+          label: `${provider === 'ollama' ? 'Ollama' : 'LM Studio'} local: ${connected.selectedModelId}`,
+        };
+      }
+    }
+    return null;
+  }
+
   private resolveAssignment(subtask: ProjectSubtask) {
     if (subtask.assignedModel) {
+      if (subtask.assignedModel === 'local' && this.localModel) {
+        return {
+          role: 'local' as const,
+          modelId: this.localModel.modelId,
+          provider: this.localModel.provider,
+          label: this.localModel.label,
+          reason: 'explicit coordinator assignment to connected local model',
+        };
+      }
       const role = subtask.assignedModel as ProjectModelRole;
       const modelId = ProjectOrchestrator.ROLE_TO_MODEL[role] ?? subtask.assignedModel;
       return {
@@ -209,7 +235,7 @@ export class ProjectOrchestrator extends EventEmitter {
         role: role as ProjectModelRole,
       };
     }
-    return assignModelForProjectSubtask(subtask.title, subtask.description);
+    return assignModelForProjectSubtask(subtask.title, subtask.description, this.localModel);
   }
 
   private async generatePlan(
@@ -320,6 +346,7 @@ export class ProjectOrchestrator extends EventEmitter {
       prompt,
       taskId: `${projectTaskId}-${subtask.id}`,
       modelId: assignment.modelId,
+      provider: assignment.provider,
       sessionId,
       workingDirectory,
     };
@@ -462,6 +489,11 @@ export class ProjectOrchestrator extends EventEmitter {
       '- gemma4:cloud for low-cost natural-language writing, rewriting, translation, and extraction',
       '- gpt-oss:120b-cloud for careful analysis, architecture, planning, comparisons, risk assessment, math',
       '- kimi-k2.7-code:cloud for coding, debugging, tests, repository work, APIs, databases',
+      ...(this.localModel
+        ? [
+            '- local for short, read-only summaries, extraction, rewriting, translation, classification, or formatting; never use it for planning, tool use, web work, file changes, code, security, or consequential decisions',
+          ]
+        : []),
       'You (glm-5.3:cloud) handle coordination, synthesis, and follow-up planning.',
       '',
       `Goal: ${goal}`,
@@ -474,7 +506,7 @@ export class ProjectOrchestrator extends EventEmitter {
       '      "id": "unique-slug",',
       '      "title": "short title",',
       '      "description": "detailed prompt for the subtask",',
-      '      "assignedModel": "fast" | "language" | "careful" | "code" | "coordinator",',
+      `      "assignedModel": "fast" | "language" | "careful" | "code" | "coordinator"${this.localModel ? ' | "local"' : ''},`,
       '      "fileEdits": true | false,',
       '      "dependsOn": ["other-id"]',
       '    }',

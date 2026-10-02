@@ -34,6 +34,28 @@ describe('assignModelForProjectSubtask', () => {
     expect(rec.modelId).toBe('gemma4:cloud');
     expect(rec.role).toBe('language');
   });
+
+  it('uses a connected local model for bounded, read-only language work', () => {
+    const rec = assignModelForProjectSubtask(
+      'Summarize findings',
+      'Extract the key points and draft a brief summary.',
+      { provider: 'ollama', modelId: 'qwen3:4b', label: 'Ollama local: qwen3:4b' },
+    );
+    expect(rec).toMatchObject({
+      role: 'local',
+      provider: 'ollama',
+      modelId: 'qwen3:4b',
+    });
+  });
+
+  it('keeps code work in the cloud even when a local model is connected', () => {
+    const rec = assignModelForProjectSubtask(
+      'Implement API',
+      'Write the user controller.',
+      { provider: 'ollama', modelId: 'qwen3:4b', label: 'Ollama local: qwen3:4b' },
+    );
+    expect(rec.role).toBe('code');
+  });
 });
 
 describe('getCoordinatorModel', () => {

@@ -1,12 +1,22 @@
 import { recommendModelForPrompt, type ModelRecommendation } from './prompt-model-router.js';
+import type { ProviderId } from '@accomplish_ai/agent-core';
 
-export type ProjectModelRole = 'coordinator' | 'fast' | 'language' | 'careful' | 'code';
+export type ProjectModelRole = 'coordinator' | 'fast' | 'language' | 'careful' | 'code' | 'local';
 
 export interface ProjectModelAssignment extends ModelRecommendation {
   role: ProjectModelRole;
+  /** Set for local models so the CLI routes to the correct provider. */
+  provider?: ProviderId;
 }
 
-const ROLE_RECOMMENDATIONS: Record<ProjectModelRole, ModelRecommendation> = {
+/** A local model that has been explicitly connected in Accomplish settings. */
+export interface LocalProjectModel {
+  provider: Extract<ProviderId, 'ollama' | 'lmstudio'>;
+  modelId: string;
+  label: string;
+}
+
+const ROLE_RECOMMENDATIONS: Record<Exclude<ProjectModelRole, 'local'>, ModelRecommendation> = {
   coordinator: {
     modelId: 'glm-5.3:cloud',
     label: 'GLM 5.3 Cloud',
@@ -37,6 +47,7 @@ const ROLE_RECOMMENDATIONS: Record<ProjectModelRole, ModelRecommendation> = {
 export function assignModelForProjectSubtask(
   subtaskTitle: string,
   subtaskDescription: string,
+  localModel?: LocalProjectModel | null,
 ): ProjectModelAssignment {
   const text = `${subtaskTitle} ${subtaskDescription}`.toLowerCase();
 
@@ -46,6 +57,23 @@ export function assignModelForProjectSubtask(
     )
   ) {
     return { role: 'careful', ...ROLE_RECOMMENDATIONS.careful };
+  }
+
+  // Local inference is free of cloud token charges, but is deliberately limited
+  // to short, read-only language work. Planning, code, tools, web work, and
+  // consequential decisions remain on cloud models for reliability.
+  const isBoundedLanguageWork =
+    text.length <= 2_000 &&
+    /\b(summarize|summary|rewrite|translate|extract|classify|proofread|format|outline|draft|copy)\b/.test(text) &&
+    !/\b(code|bug|debug|test|build|terminal|browser|website|login|captcha|api|database|sql|deploy|security|risk|plan|decision|file|edit|delete|rename|send|publish)\b/.test(text);
+  if (localModel && isBoundedLanguageWork) {
+    return {
+      role: 'local',
+      modelId: localModel.modelId,
+      provider: localModel.provider,
+      label: localModel.label,
+      reason: 'bounded, read-only language subtask; uses connected local model to conserve cloud tokens',
+    };
   }
 
   const routerRec = recommendModelForPrompt(text);
