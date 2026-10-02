@@ -42,6 +42,7 @@ const pnpmSymlinksToResolve = [
   'opencode-linux-x64-baseline',
   'opencode-linux-x64-musl',
   'opencode-linux-x64-baseline-musl',
+  'opencode-windows-arm64',
   'opencode-windows-x64',
   'opencode-windows-x64-baseline',
 ];

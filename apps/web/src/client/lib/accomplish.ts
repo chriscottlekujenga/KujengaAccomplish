@@ -24,6 +24,7 @@ import type {
   ToolSupportStatus,
   Skill,
   McpConnector,
+  SftpSite,
   FileAttachmentInfo,
   Workspace,
   WorkspaceCreateInput,
@@ -659,6 +660,9 @@ interface AccomplishAPI {
   startConnectorOAuth(connectorId: string): Promise<{ state: string; authUrl: string }>;
   completeConnectorOAuth(state: string, code: string): Promise<McpConnector>;
   disconnectConnector(connectorId: string): Promise<void>;
+  getSftpSites(): Promise<SftpSite[]>;
+  saveSftpSite(site: Omit<SftpSite, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<SftpSite>;
+  deleteSftpSite(id: string): Promise<void>;
   onMcpAuthCallback?(callback: (url: string) => void): () => void;
 }
 

@@ -93,6 +93,7 @@
     "opencode-linux-x64": "1.3.6",
     "opencode-linux-x64-baseline": "1.3.6",
     "opencode-linux-x64-baseline-musl": "1.3.6",
+    "opencode-windows-arm64": "1.3.6",
     "opencode-linux-x64-musl": "1.3.6"
   },
   "build": {
@@ -125,6 +126,7 @@
       "node_modules/opencode-linux-x64-baseline-musl/**",
       "node_modules/opencode-linux-arm64/**",
       "node_modules/opencode-linux-arm64-musl/**",
+      "node_modules/opencode-windows-arm64/**",
       "node_modules/opencode-windows-x64/**",
       "node_modules/opencode-windows-x64-baseline/**"
     ],
@@ -162,6 +164,17 @@
       {
         "from": "../../apps/daemon/dist",
         "to": "daemon"
+      },
+      {
+        "from": "../../apps/daemon/node_modules",
+        "to": "daemon/node_modules",
+        "filter": [
+          "better-sqlite3/**/*",
+          "bindings/**/*",
+          "file-uri-to-path/**/*",
+          "node-pty/**/*",
+          "node-addon-api/**/*"
+        ]
       }
     ],
     "asar": true,
@@ -177,6 +190,8 @@
       "node_modules/opencode-darwin-x64-baseline/package.json",
       "node_modules/opencode-windows-x64/bin/opencode.exe",
       "node_modules/opencode-windows-x64/package.json",
+      "node_modules/opencode-windows-arm64/bin/opencode.exe",
+      "node_modules/opencode-windows-arm64/package.json",
       "node_modules/opencode-windows-x64-baseline/bin/opencode.exe",
       "node_modules/opencode-windows-x64-baseline/package.json",
       "node_modules/node-pty/build/**/*.node",

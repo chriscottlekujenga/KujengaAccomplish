@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { OPENCODE_SLACK_MCP_SERVER_URL, OPENCODE_SLACK_MCP_CLIENT_ID } from './auth.js';
 import { MCP_TOOL_TIMEOUT_MS } from '../common/constants.js';
+import type { SftpSite } from '../common/types/sftp.js';
 
 /** Browser automation mode for task execution. */
 export interface BrowserConfig {
@@ -67,6 +68,7 @@ export interface BuildMcpServersOptions {
     url: string;
     accessToken: string;
   }>;
+  sftpSites?: SftpSite[];
 }
 
 /**
@@ -82,6 +84,7 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
     browserConfig,
     authToken,
     connectors,
+    sftpSites,
   } = options;
 
   // Auth env for daemon HTTP APIs — MCP tools send this as Authorization header
@@ -157,6 +160,16 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
       enabled: true,
       ...(Object.keys(browserEnv).length > 0 && { environment: browserEnv }),
       timeout: 30000,
+    };
+  }
+
+  if (sftpSites && sftpSites.length > 0) {
+    mcpServers['wordpress-sftp'] = {
+      type: 'local',
+      command: resolveMcpCommand(mcpToolsPath, 'wordpress-sftp', 'dist/index.mjs', nodeExe),
+      enabled: true,
+      environment: { WORDPRESS_SFTP_SITES: JSON.stringify(sftpSites) },
+      timeout: 120000,
     };
   }
 

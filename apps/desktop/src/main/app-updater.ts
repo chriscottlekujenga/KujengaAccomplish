@@ -1,5 +1,9 @@
 import { app } from 'electron';
-import { autoUpdater } from 'electron-updater';
+// electron-updater is published as CommonJS. Import it as the default module so
+// Electron's ESM loader can access its exports in packaged builds.
+import electronUpdater from 'electron-updater';
+
+const { autoUpdater } = electronUpdater;
 import { getLogCollector } from './logging';
 
 let started = false;

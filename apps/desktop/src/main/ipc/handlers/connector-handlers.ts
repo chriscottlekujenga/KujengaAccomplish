@@ -14,6 +14,7 @@ import type {
   OAuthMetadata,
   OAuthClientRegistration,
 } from '@accomplish_ai/agent-core';
+import type { SftpSite } from '@accomplish_ai/agent-core/common';
 import { getStorage } from '../../store/storage';
 import { handle } from './utils';
 
@@ -46,6 +47,38 @@ export function registerConnectorHandlers(): void {
   handle('connectors:list', async () => {
     return storage.getAllConnectors();
   });
+
+  handle('sftp:list', async () => storage.getSftpSites());
+
+  handle('sftp:save', async (_event: IpcMainInvokeEvent, input: Omit<SftpSite, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) => {
+    const host = sanitizeString(input.host, 'sftpHost', 255).trim();
+    const username = sanitizeString(input.username, 'sftpUsername', 128).trim();
+    const name = sanitizeString(input.name, 'sftpName', 128).trim();
+    const remoteRoot = sanitizeString(input.remoteRoot || '/', 'sftpRemoteRoot', 512).trim();
+    if (!host || !username || !name || !/^\/?[^\0]*$/.test(remoteRoot)) {
+      throw new Error('Enter a site name, host, username, and a valid remote folder.');
+    }
+    const port = Number(input.port || 22);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('SFTP port must be between 1 and 65535.');
+    const now = new Date().toISOString();
+    const existing = input.id ? storage.getSftpSites().find((site) => site.id === input.id) : undefined;
+    const site: SftpSite = {
+      id: existing?.id ?? `sftp-${crypto.randomUUID()}`,
+      name,
+      host,
+      port,
+      username,
+      remoteRoot: remoteRoot.startsWith('/') ? remoteRoot : `/${remoteRoot}`,
+      ...(input.privateKeyPath?.trim() && { privateKeyPath: sanitizeString(input.privateKeyPath, 'sftpPrivateKeyPath', 1024).trim() }),
+      isEnabled: input.isEnabled !== false,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    storage.saveSftpSite(site);
+    return site;
+  });
+
+  handle('sftp:delete', async (_event: IpcMainInvokeEvent, id: string) => storage.deleteSftpSite(id));
 
   handle('connectors:add', async (_event: IpcMainInvokeEvent, name: string, url: string) => {
     const sanitizedName = sanitizeString(name, 'connectorName', 128);

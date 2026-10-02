@@ -20,6 +20,7 @@ import type { CloudBrowserConfig } from '../common/types/cloud-browser.js';
 import type { MessagingConfig } from '../common/types/messaging.js';
 import type { BlocklistEntry } from '../common/types/desktop.js';
 import type { ScheduledTask } from '../common/types/daemon.js';
+import type { SftpSite } from '../common/types/sftp.js';
 
 /** Options for creating a Storage instance */
 export interface StorageOptions {
@@ -270,6 +271,13 @@ export interface ConnectorStorageAPI {
   deleteConnectorTokens(connectorId: string): void;
 }
 
+/** Locally encrypted SFTP destinations for managed WordPress file editing. */
+export interface SftpStorageAPI {
+  getSftpSites(): SftpSite[];
+  saveSftpSite(site: SftpSite): void;
+  deleteSftpSite(id: string): void;
+}
+
 /** API for database initialization and lifecycle management */
 export interface DatabaseLifecycleAPI {
   /** Initialize the database, creating it if needed and running migrations */
@@ -322,6 +330,7 @@ export interface StorageAPI
     ProviderSettingsAPI,
     SecureStorageAPI,
     ConnectorStorageAPI,
+    SftpStorageAPI,
     DesktopControlStorageAPI,
     SchedulerStorageAPI,
     DatabaseLifecycleAPI {}
@@ -344,4 +353,5 @@ export type {
   OAuthTokens,
   CloudBrowserConfig,
   MessagingConfig,
+  SftpSite,
 };

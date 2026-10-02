@@ -1,0 +1,7 @@
+{
+  "name": "wordpress-sftp-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "devDependencies": { "@modelcontextprotocol/sdk": "^1.0.0", "zod": "^3.24.1" }
+}

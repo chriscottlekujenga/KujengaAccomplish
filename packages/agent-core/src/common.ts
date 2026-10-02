@@ -138,6 +138,7 @@ export {
   getOAuthProviderDisplayName,
   isOAuthProviderId,
 } from './common/types/connector.js';
+export type { SftpSite } from './common/types/sftp.js';
 export type {
   ConnectorStatus,
   OAuthTokens,

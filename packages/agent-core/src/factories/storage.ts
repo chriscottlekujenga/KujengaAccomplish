@@ -105,6 +105,7 @@ import {
 } from '../storage/repositories/scheduled-tasks.js';
 import { SecureStorage } from '../internal/classes/SecureStorage.js';
 import type { OAuthTokens } from '../common/types/connector.js';
+import type { SftpSite } from '../common/types/sftp.js';
 import type { StorageAPI, StorageOptions } from '../types/storage.js';
 import { createConsoleLogger } from '../utils/logging.js';
 
@@ -223,6 +224,42 @@ export function createStorage(options: StorageOptions = {}): StorageAPI {
       }
     },
     deleteConnectorTokens: (connectorId) => secureStorage.delete(`connector-tokens:${connectorId}`),
+
+    // SFTP sites are encrypted because their server and account details are sensitive.
+    getSftpSites: () => {
+      const value = secureStorage.get('sftp-sites');
+      if (!value) return [];
+      try {
+        const sites = JSON.parse(value) as SftpSite[];
+        return Array.isArray(sites) ? sites : [];
+      } catch {
+        log.error('Failed to parse stored SFTP sites');
+        return [];
+      }
+    },
+    saveSftpSite: (site) => {
+      const value = secureStorage.get('sftp-sites');
+      let sites: SftpSite[] = [];
+      try {
+        sites = value ? (JSON.parse(value) as SftpSite[]) : [];
+      } catch {
+        // Replace only an unreadable SFTP record; other encrypted credentials are unaffected.
+      }
+      const index = sites.findIndex((existing) => existing.id === site.id);
+      if (index >= 0) sites[index] = site;
+      else sites.push(site);
+      secureStorage.set('sftp-sites', JSON.stringify(sites));
+    },
+    deleteSftpSite: (id) => {
+      const value = secureStorage.get('sftp-sites');
+      if (!value) return;
+      try {
+        const sites = (JSON.parse(value) as SftpSite[]).filter((site) => site.id !== id);
+        secureStorage.set('sftp-sites', JSON.stringify(sites));
+      } catch {
+        log.error('Failed to delete stored SFTP site');
+      }
+    },
 
     // Desktop Control
     getDesktopBlocklist: () => getDesktopBlocklist(),

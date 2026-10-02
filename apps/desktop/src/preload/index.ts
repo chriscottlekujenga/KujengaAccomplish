@@ -20,6 +20,7 @@ import type {
   KnowledgeNoteUpdateInput,
 } from '@accomplish_ai/agent-core';
 import type { CloudBrowserConfig } from '@accomplish_ai/agent-core/common';
+import type { SftpSite } from '@accomplish_ai/agent-core/common';
 
 // Expose the accomplish API to the renderer
 const accomplishAPI = {
@@ -677,6 +678,11 @@ const accomplishAPI = {
     ipcRenderer.invoke('connectors:complete-oauth', state, code),
   disconnectConnector: (connectorId: string): Promise<void> =>
     ipcRenderer.invoke('connectors:disconnect', connectorId),
+  // WordPress SFTP sites (private-key authentication)
+  getSftpSites: (): Promise<SftpSite[]> => ipcRenderer.invoke('sftp:list'),
+  saveSftpSite: (site: Omit<SftpSite, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<SftpSite> =>
+    ipcRenderer.invoke('sftp:save', site),
+  deleteSftpSite: (id: string): Promise<void> => ipcRenderer.invoke('sftp:delete', id),
   onMcpAuthCallback: (callback: (url: string) => void) => {
     const listener = (_: unknown, url: string) => callback(url);
     ipcRenderer.on('auth:mcp-callback', listener);

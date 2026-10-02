@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import type { ProviderId } from '../common/types/providerSettings.js';
 import type { Skill } from '../common/types/skills.js';
+import type { SftpSite } from '../common/types/sftp.js';
 import { createConsoleLogger } from '../utils/logging.js';
 import {
   getPlatformEnvironmentInstructions,
@@ -67,6 +68,8 @@ export interface ConfigGeneratorOptions {
     url: string;
     accessToken: string;
   }>;
+  /** Enabled SFTP sites, limited to their configured remote roots. */
+  sftpSites?: SftpSite[];
   /** Formatted workspace knowledge notes to inject into the system prompt */
   knowledgeNotes?: string;
   /** UI language preference — instructs the agent to reply in the user's language */
@@ -215,6 +218,7 @@ ${options.knowledgeNotes}
     browserConfig,
     authToken: options.authToken,
     connectors: options.connectors,
+    sftpSites: options.sftpSites,
   });
 
   // Fill browser-specific template sections based on mode

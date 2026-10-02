@@ -15,6 +15,7 @@ const log = createConsoleLogger({ prefix: 'CLIResolver' });
 
 const WINDOWS_OPENCODE_X64_PACKAGE = 'opencode-windows-x64';
 const WINDOWS_OPENCODE_X64_BASELINE_PACKAGE = 'opencode-windows-x64-baseline';
+const WINDOWS_OPENCODE_ARM64_PACKAGE = 'opencode-windows-arm64';
 const LINUX_OPENCODE_X64_PACKAGE = 'opencode-linux-x64';
 const LINUX_OPENCODE_X64_BASELINE_PACKAGE = 'opencode-linux-x64-baseline';
 const LINUX_OPENCODE_X64_MUSL_PACKAGE = 'opencode-linux-x64-musl';
@@ -58,6 +59,11 @@ export function detectWindowsAvx2Support(): boolean {
 
 export function getWindowsPackageNames(): string[] {
   if (cachedWindowsPackageNames) {
+    return cachedWindowsPackageNames;
+  }
+
+  if (process.arch === 'arm64') {
+    cachedWindowsPackageNames = [WINDOWS_OPENCODE_ARM64_PACKAGE];
     return cachedWindowsPackageNames;
   }
 

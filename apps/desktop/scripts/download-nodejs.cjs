@@ -5,6 +5,7 @@
  * - macOS x64
  * - macOS arm64
  * - Windows x64
+ * - Windows arm64
  *
  * Usage: node scripts/download-nodejs.cjs
  */
@@ -36,6 +37,12 @@ const PLATFORMS = [
     file: `node-v${NODE_VERSION}-win-x64.zip`,
     extract: 'zip',
     sha256: '56e5aacdeee7168871721b75819ccacf2367de8761b78eaceacdecd41e04ca03',
+  },
+  {
+    name: 'win32-arm64',
+    file: `node-v${NODE_VERSION}-win-arm64.zip`,
+    extract: 'zip',
+    sha256: '7c03744df29e81c34043a956969b3afc34171d3ab85e25fc737eb1860222444f',
   },
 ];
 

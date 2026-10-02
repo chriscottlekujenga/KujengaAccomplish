@@ -104,6 +104,7 @@ export async function resolveTaskConfig(
 
   // 3. Resolve connectors with token refresh
   const connectors = await resolveConnectors(storage, log);
+  const sftpSites = storage.getSftpSites().filter((site) => site.isEnabled);
 
   // 4. Resolve cloud browser config
   const browser = resolveCloudBrowser(storage);
@@ -148,6 +149,7 @@ export async function resolveTaskConfig(
       model: modelOverride?.model,
       smallModel: modelOverride?.smallModel,
       connectors: connectors.length > 0 ? connectors : undefined,
+      sftpSites: sftpSites.length > 0 ? sftpSites : undefined,
       browser,
       knowledgeNotes,
       language,

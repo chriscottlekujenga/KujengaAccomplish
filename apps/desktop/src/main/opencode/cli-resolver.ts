@@ -40,7 +40,12 @@ export function getBundledOpenCodeVersion(): string | null {
   }
   if (app.isPackaged) {
     try {
-      const packageName = process.platform === 'win32' ? 'opencode-windows-x64' : 'opencode-ai';
+      const packageName =
+        process.platform === 'win32'
+          ? process.arch === 'arm64'
+            ? 'opencode-windows-arm64'
+            : 'opencode-windows-x64'
+          : 'opencode-ai';
       const packageJsonPath = path.join(
         process.resourcesPath,
         'app.asar.unpacked',

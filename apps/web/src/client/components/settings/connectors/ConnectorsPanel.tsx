@@ -5,6 +5,7 @@ import { SlackConnectorSection } from './SlackConnectorSection';
 import { ConnectorAddForm } from './ConnectorAddForm';
 import { ConnectorList } from './ConnectorList';
 import { useConnectorsPanel } from './useConnectorsPanel';
+import { SftpSitesSection } from './SftpSitesSection';
 
 export function ConnectorsPanel() {
   const { t } = useTranslation('settings');
@@ -46,6 +47,8 @@ export function ConnectorsPanel() {
         onAuthenticate={handleSlackAuthenticate}
         onDisconnect={handleSlackDisconnect}
       />
+
+      <SftpSitesSection />
 
       <ConnectorAddForm
         url={url}
