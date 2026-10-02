@@ -107,8 +107,13 @@ try {
   // This avoids issues with node-pty's winpty.gyp batch file handling
   const npmRebuildFlag = isWindows ? ' --config.npmRebuild=false' : '';
 
-  // Use pnpm exec to avoid npx resolution/network checks that can hang on CI Windows runners.
-  const command = `pnpm exec electron-builder ${args}${npmRebuildFlag}`;
+  // Use pnpm exec by default. BUILD_DIRECT_ELECTRON_BUILDER is useful on locked-down
+  // Windows machines where pnpm's dependency approval check prevents an otherwise
+  // already-installed electron-builder from starting.
+  const builder = process.env.BUILD_DIRECT_ELECTRON_BUILDER
+    ? 'node_modules\\.bin\\electron-builder.cmd'
+    : 'pnpm exec electron-builder';
+  const command = `${builder} ${args}${npmRebuildFlag}`;
 
   console.log('Running:', command);
   if (isWindows) {
