@@ -1,4 +1,6 @@
 import { app } from 'electron';
+import fs from 'fs';
+import path from 'path';
 // electron-updater is published as CommonJS. Import it as the default module so
 // Electron's ESM loader can access its exports in packaged builds.
 import electronUpdater from 'electron-updater';
@@ -19,6 +21,12 @@ function log(level: 'INFO' | 'WARN', message: string, data?: Record<string, unkn
 /** Checks the KujengaAccomplish GitHub release feed after startup. */
 export function startAutoUpdater(): void {
   if (started || !app.isPackaged || process.env.ACCOMPLISH_DISABLE_AUTO_UPDATE === '1') return;
+  // A locally unpacked Windows build has no update metadata. Skip the release
+  // check rather than creating a misleading startup error.
+  if (!fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))) {
+    log('INFO', '[Updater] Skipping update check for local unpacked build');
+    return;
+  }
   started = true;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
