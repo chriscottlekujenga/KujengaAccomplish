@@ -170,6 +170,10 @@
         "to": "daemon"
       },
       {
+        "from": "../../apps/daemon/package.json",
+        "to": "daemon/package.json"
+      },
+      {
         "from": "../../apps/daemon/node_modules",
         "to": "daemon/node_modules",
         "filter": [
