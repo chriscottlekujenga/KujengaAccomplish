@@ -30,7 +30,10 @@ export function parseProjectPlan(raw: string, goal: string): ProjectPlan {
   try {
     parsed = JSON.parse(candidate);
   } catch {
-    throw new ProjectPlanParseError('Coordinator response was not valid JSON.');
+    // Cloud coordinators occasionally answer a simple follow-up in prose despite
+    // the JSON instruction. Treat that answer as a single executable task rather
+    // than failing the entire project.
+    return createFallbackPlan(raw, goal);
   }
 
   if (!parsed || typeof parsed !== 'object') {
@@ -74,6 +77,23 @@ export function parseProjectPlan(raw: string, goal: string): ProjectPlan {
   validateDependencies(subtasks);
 
   return { summary: summary || goal, subtasks };
+}
+
+function createFallbackPlan(raw: string, goal: string): ProjectPlan {
+  const instruction = raw.trim() || goal;
+  return {
+    summary: goal,
+    subtasks: [
+      {
+        id: 'coordinator-prose-fallback',
+        title: 'Continue the project',
+        description: instruction,
+        dependsOn: [],
+        fileEdits: /\b(edit|update|create|implement|change|commit|push|continue)\b/i.test(instruction),
+        assignedModel: 'fast',
+      },
+    ],
+  };
 }
 
 function validateDependencies(subtasks: ProjectSubtask[]): void {
