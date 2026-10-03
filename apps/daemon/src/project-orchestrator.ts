@@ -259,7 +259,7 @@ export class ProjectOrchestrator extends EventEmitter {
 
     const planTaskId = config.taskId as string;
     const callbacks = this.createSubtaskCallbacks(planTaskId, coordinator.modelId);
-    const task = await this.runSubtask(planTaskId, config, callbacks);
+    const task = await this.runSubtaskToCompletion(planTaskId, config, callbacks);
 
     const raw = this.extractTextOutput(task);
     return parseProjectPlan(raw, goal);
@@ -358,7 +358,7 @@ export class ProjectOrchestrator extends EventEmitter {
     let result: ProjectSubtaskResult;
 
     try {
-      const task = await this.runSubtask(subtaskTaskId, config, callbacks);
+      const task = await this.runSubtaskToCompletion(subtaskTaskId, config, callbacks);
       const output = this.extractTextOutput(task);
       const changedFiles = this.extractChangedFiles(output);
       result = {
@@ -397,7 +397,7 @@ export class ProjectOrchestrator extends EventEmitter {
             prompt: `${prompt}\n\nThe first attempt failed with: ${initialError}\nReview the task carefully and complete it.`,
           };
           const retryTaskId = retryConfig.taskId as string;
-          const retryTask = await this.runSubtask(
+          const retryTask = await this.runSubtaskToCompletion(
             retryTaskId,
             retryConfig,
             this.createSubtaskCallbacks(retryTaskId, escalation.modelId),
@@ -503,7 +503,7 @@ export class ProjectOrchestrator extends EventEmitter {
 
     const synthesisTaskId = config.taskId as string;
     const callbacks = this.createSubtaskCallbacks(synthesisTaskId, coordinator.modelId);
-    const task = await this.runSubtask(synthesisTaskId, config, callbacks);
+    const task = await this.runSubtaskToCompletion(synthesisTaskId, config, callbacks);
     const raw = this.extractTextOutput(task);
 
     return this.parseSynthesis(raw);
@@ -596,6 +596,43 @@ export class ProjectOrchestrator extends EventEmitter {
         return text;
       })
       .join('\n\n');
+  }
+
+  /**
+   * TaskManager.startTask resolves once work has started, not when the agent
+   * finishes. Project mode must await the callback lifecycle, otherwise the
+   * parent project is marked complete while its subtasks are still running.
+   */
+  private async runSubtaskToCompletion(
+    taskId: string,
+    config: TaskConfig,
+    callbacks: TaskCallbacks,
+  ): Promise<Task> {
+    let resolveCompletion: (() => void) | undefined;
+    let rejectCompletion: ((error: Error) => void) | undefined;
+    const completion = new Promise<void>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+    const wrappedCallbacks: TaskCallbacks = {
+      ...callbacks,
+      onComplete: (result) => {
+        callbacks.onComplete(result);
+        resolveCompletion?.();
+      },
+      onError: (error) => {
+        callbacks.onError(error);
+        rejectCompletion?.(error);
+      },
+    };
+
+    const started = await this.runSubtask(taskId, config, wrappedCallbacks);
+    // Test doubles and synchronous adapters may return a final task directly.
+    if (started.status !== 'running' && started.status !== 'queued') {
+      return started;
+    }
+    await completion;
+    return (this.storage.getTask(taskId) as Task | undefined) ?? started;
   }
 
   private extractChangedFiles(output: string): string[] {
