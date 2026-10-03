@@ -48,8 +48,16 @@ describe('parseProjectPlan', () => {
     expect(plan.summary).toBe(goal);
   });
 
-  it('throws when JSON is invalid', () => {
-    expect(() => parseProjectPlan('not json', goal)).toThrow(ProjectPlanParseError);
+  it('turns coordinator prose into one executable fallback subtask', () => {
+    const plan = parseProjectPlan('not json', goal);
+    expect(plan.summary).toBe(goal);
+    expect(plan.subtasks).toEqual([
+      expect.objectContaining({
+        id: 'coordinator-prose-fallback',
+        description: 'not json',
+        assignedModel: 'fast',
+      }),
+    ]);
   });
 
   it('throws when subtasks is missing', () => {

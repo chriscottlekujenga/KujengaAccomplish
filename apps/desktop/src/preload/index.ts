@@ -456,6 +456,21 @@ const accomplishAPI = {
     ipcRenderer.on('task:summary', listener);
     return () => ipcRenderer.removeListener('task:summary', listener);
   },
+  onProjectPlan: (callback: (data: unknown) => void) => {
+    const listener = (_: unknown, data: unknown) => callback(data);
+    ipcRenderer.on('task:project-plan', listener);
+    return () => ipcRenderer.removeListener('task:project-plan', listener);
+  },
+  onProjectStatus: (callback: (data: unknown) => void) => {
+    const listener = (_: unknown, data: unknown) => callback(data);
+    ipcRenderer.on('task:project-status', listener);
+    return () => ipcRenderer.removeListener('task:project-status', listener);
+  },
+  onProjectComplete: (callback: (data: unknown) => void) => {
+    const listener = (_: unknown, data: unknown) => callback(data);
+    ipcRenderer.on('task:project-complete', listener);
+    return () => ipcRenderer.removeListener('task:project-complete', listener);
+  },
   // Todo updates from OpenCode todowrite tool
   onTodoUpdate: (
     callback: (data: {

@@ -265,6 +265,10 @@ export interface DaemonNotificationMap {
   'task.message': { taskId: string; messages: TaskMessage[] };
   'task.statusChange': { taskId: string; status: string; completedAt?: string };
   'task.summary': { taskId: string; summary: string };
+  /** Structured Project-mode events are intentionally separate from task messages. */
+  'task.projectPlan': { taskId: string; plan: unknown };
+  'task.projectStatus': { taskId: string; status: unknown };
+  'task.projectComplete': { taskId: string; status: unknown };
   'task.complete': { taskId: string; result: TaskResult };
   'task.error': { taskId: string; error?: string };
   'permission.request': { taskId: string; request: PermissionRequest };

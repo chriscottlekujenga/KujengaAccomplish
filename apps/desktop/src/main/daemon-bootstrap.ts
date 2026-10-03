@@ -154,6 +154,11 @@ function registerNotificationHandlers(
   });
 
   client.onNotification('task.error', (data) => {
+    const taskError = data as { taskId?: string; error?: unknown };
+    log(
+      'ERROR',
+      `[DaemonBootstrap] Task ${taskError.taskId ?? 'unknown'} failed: ${String(taskError.error ?? 'unknown error')}`,
+    );
     forward('task:update', { taskId: data.taskId, type: 'error', error: data.error });
   });
 
@@ -163,6 +168,18 @@ function registerNotificationHandlers(
 
   client.onNotification('task.summary', (data) => {
     forward('task:summary', data);
+  });
+
+  // Project mode has its own structured updates. Keep these separate from
+  // normal task messages so a coordinator's JSON is never rendered as chat.
+  client.onNotification('task.projectPlan', (data) => {
+    forward('task:project-plan', data);
+  });
+  client.onNotification('task.projectStatus', (data) => {
+    forward('task:project-status', data);
+  });
+  client.onNotification('task.projectComplete', (data) => {
+    forward('task:project-complete', data);
   });
 
   // Permission / question requests
