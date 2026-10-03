@@ -32,6 +32,7 @@ import { migration as v022 } from './v022-remove-run-in-background.js';
 import { migration as v023 } from './v023-scheduled-tasks.js';
 import { migration as v024 } from './v024-language.js';
 import { migration as v025 } from './v025-todo-model.js';
+import { migration as v026 } from './v026-repair-huggingface-local.js';
 
 const migrations: Migration[] = [
   v001,
@@ -59,13 +60,14 @@ const migrations: Migration[] = [
   v023,
   v024,
   v025,
+  v026,
 ];
 export function registerMigration(migration: Migration): void {
   migrations.push(migration);
   migrations.sort((a, b) => a.version - b.version);
 }
 
-export const CURRENT_VERSION = 25;
+export const CURRENT_VERSION = 26;
 export function getStoredVersion(db: Database): number {
   try {
     const tableExists = db
