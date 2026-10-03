@@ -90,6 +90,13 @@ export function registerTaskSubscriptions(getStore: () => import('./taskStore').
     }
   });
 
+  // Project mode continues after the Home page has unmounted, so this must be
+  // global rather than subscribed only by the launcher page.  Execution uses
+  // the stored status to keep its plan and right-hand task list current.
+  window.accomplish.onProjectStatus?.((data) => {
+    getStore().setProjectStatus(data.taskId, data.status);
+  });
+
   window.accomplish.onAuthError?.((data: { providerId: string; message: string }) => {
     getStore().setAuthError(data);
   });

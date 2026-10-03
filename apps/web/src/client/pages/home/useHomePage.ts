@@ -55,8 +55,6 @@ export function useHomePage() {
     }
   }, [location.pathname, loadFavorites]);
 
-  const setProjectStatus = useTaskStore((state) => state.setProjectStatus);
-
   useEffect(() => {
     const unsubscribeTask = accomplish.onTaskUpdate((event) => {
       addTaskUpdate(event);
@@ -64,15 +62,11 @@ export function useHomePage() {
     const unsubscribePermission = accomplish.onPermissionRequest((request) => {
       setPermissionRequest(request);
     });
-    const unsubscribeProjectStatus = accomplish.onProjectStatus?.((event) => {
-      setProjectStatus(event.taskId, event.status);
-    });
     return () => {
       unsubscribeTask();
       unsubscribePermission();
-      unsubscribeProjectStatus?.();
     };
-  }, [addTaskUpdate, setPermissionRequest, setProjectStatus, accomplish]);
+  }, [addTaskUpdate, setPermissionRequest, accomplish]);
 
   const {
     attachments,

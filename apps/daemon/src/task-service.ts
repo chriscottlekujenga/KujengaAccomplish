@@ -244,12 +244,43 @@ export class TaskService extends EventEmitter {
     });
     this.projectOrchestrators.set(taskId, orchestrator);
 
-    orchestrator.on('plan', ({ plan }) => this.emit('project-plan', { taskId, plan }));
+    const announcedSteps = new Map<string, string>();
+    const addProjectUpdate = (content: string) => {
+      const message: TaskMessage = {
+        id: createMessageId(),
+        type: 'assistant',
+        content,
+        timestamp: new Date().toISOString(),
+      };
+      this.storage.addTaskMessage(taskId, message);
+      this.emit('message', { taskId, messages: [message] });
+    };
+
+    orchestrator.on('plan', ({ plan }) => {
+      this.emit('project-plan', { taskId, plan });
+      const steps = plan.subtasks
+        .map((step: { title: string }) => `• ${step.title}`)
+        .join('\n');
+      addProjectUpdate(`Project plan ready. I’ll work through these steps:\n${steps}`);
+    });
     orchestrator.on('status', (status) => {
       this.emit('project-status', { taskId, status });
       const todos = projectStatusToTodos(status);
       this.storage.saveTodosForTask(taskId, todos);
       this.emit('todoUpdate', { taskId, todos });
+
+      for (const step of status.subtasks) {
+        const previous = announcedSteps.get(step.subtaskId);
+        if (previous === step.status) continue;
+        announcedSteps.set(step.subtaskId, step.status);
+        if (step.status === 'running') {
+          addProjectUpdate(`Working on: ${step.title}`);
+        } else if (step.status === 'completed') {
+          addProjectUpdate(`Completed: ${step.title}`);
+        } else if (step.status === 'failed') {
+          addProjectUpdate(`Could not complete: ${step.title}. Continuing with the remaining work.`);
+        }
+      }
     });
     orchestrator.on('progress', (progress) => this.emit('progress', { taskId, ...progress }));
     orchestrator.on('subtask-complete', ({ subtaskTaskId, modelName, result }) => {
