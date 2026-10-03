@@ -24,8 +24,9 @@ const buildMode = getBuildMode();
 const skillsDir = path.join(
   __dirname,
   '..',
-  'node_modules',
-  '@accomplish_ai',
+  '..',
+  '..',
+  'packages',
   'agent-core',
   'mcp-tools',
 );

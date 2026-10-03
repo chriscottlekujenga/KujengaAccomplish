@@ -1,7 +1,7 @@
 import { recommendModelForPrompt, type ModelRecommendation } from './prompt-model-router.js';
 import type { ProviderId } from '@accomplish_ai/agent-core';
 
-export type ProjectModelRole = 'coordinator' | 'fast' | 'language' | 'careful' | 'code' | 'local';
+export type ProjectModelRole = 'coordinator' | 'fast' | 'language' | 'careful' | 'code' | 'local' | 'escalated';
 
 export interface ProjectModelAssignment extends ModelRecommendation {
   role: ProjectModelRole;
@@ -18,9 +18,14 @@ export interface LocalProjectModel {
 
 const ROLE_RECOMMENDATIONS: Record<Exclude<ProjectModelRole, 'local'>, ModelRecommendation> = {
   coordinator: {
+    modelId: 'glm-5.3-flash:cloud',
+    label: 'GLM 5.3 Flash Cloud',
+    reason: 'cost-efficient coordination and general multi-step work',
+  },
+  escalated: {
     modelId: 'glm-5.3:cloud',
     label: 'GLM 5.3 Cloud',
-    reason: 'coordinator and general multi-step work',
+    reason: 'high-stakes coordination, ambiguous decisions, or recovery after a failed subtask',
   },
   fast: {
     modelId: 'glm-5.3-flash:cloud',
@@ -52,11 +57,11 @@ export function assignModelForProjectSubtask(
   const text = `${subtaskTitle} ${subtaskDescription}`.toLowerCase();
 
   if (
-    /\b(migrate|migration|refactor|refactoring|rewrite|schema|database|db|deploy|release|breaking)\b/.test(
+    /\b(migrate|migration|deploy|release|breaking|production|security|credential|privacy|compliance|legal|financial|payment|destructive|delete|data.loss)\b/.test(
       text,
     )
   ) {
-    return { role: 'careful', ...ROLE_RECOMMENDATIONS.careful };
+    return { role: 'escalated', ...ROLE_RECOMMENDATIONS.escalated };
   }
 
   // Local inference is free of cloud token charges, but is deliberately limited
@@ -91,6 +96,15 @@ export function assignModelForProjectSubtask(
   return { role, ...routerRec };
 }
 
-export function getCoordinatorModel(): ProjectModelAssignment {
-  return { role: 'coordinator', ...ROLE_RECOMMENDATIONS.coordinator };
+export function getCoordinatorModel(
+  goal = '',
+  forceEscalation = false,
+): ProjectModelAssignment {
+  const highStakesGoal =
+    /\b(migrate|migration|deploy|release|production|security|credential|privacy|compliance|legal|financial|payment|destructive|delete|data.loss|ambiguous|uncertain|trade.?off)\b/i.test(
+      goal,
+    );
+  const role: Exclude<ProjectModelRole, 'local'> =
+    forceEscalation || highStakesGoal ? 'escalated' : 'coordinator';
+  return { role, ...ROLE_RECOMMENDATIONS[role] };
 }

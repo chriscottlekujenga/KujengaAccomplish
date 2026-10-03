@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { ProjectOrchestrator, type ProjectOrchestratorOptions } from '../../src/project-orchestrator.js';
 import type { Task, TaskCallbacks, TaskConfig, TaskManagerAPI, StorageAPI } from '@accomplish_ai/agent-core';
 
-const coordinatorModel = 'glm-5.3:cloud';
+const coordinatorModel = 'glm-5.3-flash:cloud';
 
 function makeTask(id: string, content: string, status: Task['status'] = 'completed'): Task {
   return {
@@ -28,6 +28,7 @@ function createFakeStorage(): StorageAPI {
     addTaskMessage: vi.fn(),
     getActiveProviderModel: vi.fn(() => null),
     getSelectedModel: vi.fn(() => null),
+    getConnectedProvider: vi.fn(() => null),
   } as unknown as StorageAPI;
 }
 
@@ -212,5 +213,31 @@ describe('ProjectOrchestrator', () => {
     expect(codeCall?.[1].prompt).toContain('Project goal:');
     expect(codeCall?.[1].prompt).toContain('Research');
     expect(codeCall?.[1].prompt).toContain('src/research.ts');
+  });
+
+  it('retries a failed subtask once with GLM 5.3 Cloud', async () => {
+    let firstAttempt = true;
+    runSubtaskMock.mockImplementation(async (taskId: string) => {
+      if (taskId.includes('-plan')) {
+        return makeTask(taskId, JSON.stringify({ summary: 'Plan', subtasks: [{ id: 'research', title: 'Research', description: 'Research.', assignedModel: 'fast', fileEdits: false, dependsOn: [] }] }));
+      }
+      if (taskId.includes('-synthesis')) {
+        return makeTask(taskId, JSON.stringify({ synthesis: 'Recovered.', unfinished: [], needsMoreSubtasks: false, followUpSubtasks: [] }));
+      }
+      if (taskId.endsWith('-research') && firstAttempt) {
+        firstAttempt = false;
+        throw new Error('temporary provider failure');
+      }
+      return makeTask(taskId, 'Recovered result');
+    });
+
+    const orchestrator = new ProjectOrchestrator(opts);
+    const status = await orchestrator.run({ goal: 'retry test', taskId: 'project-retry' });
+
+    const retryCall = runSubtaskMock.mock.calls.find((call) => call[0].endsWith('-research-retry'));
+    expect(retryCall?.[1].modelId).toBe('glm-5.3:cloud');
+    expect(retryCall?.[1].provider).toBeUndefined();
+    expect(status.subtasks[0].modelId).toBe('glm-5.3:cloud');
+    expect(status.subtasks[0].status).toBe('completed');
   });
 });

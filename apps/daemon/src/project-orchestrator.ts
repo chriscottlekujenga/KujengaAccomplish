@@ -104,7 +104,8 @@ export class ProjectOrchestrator extends EventEmitter {
       unfinished: [],
     };
 
-    // Step 1: ask coordinator (GLM 5.3 Cloud) to produce a plan.
+    // Step 1: ask the cost-efficient coordinator to produce a plan. High-stakes
+    // goals are escalated to GLM 5.3 Cloud by the project model router.
     this.emit('progress', { taskId, stage: 'planning', message: 'Generating project plan…' });
     const plan = await this.generatePlan(taskId, goal, workingDirectory, sessionId);
     this.context.plan = plan;
@@ -194,11 +195,12 @@ export class ProjectOrchestrator extends EventEmitter {
   }
 
   private static ROLE_TO_MODEL: Record<ProjectModelRole | string, string> = {
-    coordinator: 'glm-5.3:cloud',
+    coordinator: 'glm-5.3-flash:cloud',
     fast: 'glm-5.3-flash:cloud',
     language: 'gemma4:cloud',
     careful: 'gpt-oss:120b-cloud',
     code: 'kimi-k2.7-code:cloud',
+    escalated: 'glm-5.3:cloud',
   };
 
   private resolveConnectedLocalModel(): LocalProjectModel | null {
@@ -244,7 +246,7 @@ export class ProjectOrchestrator extends EventEmitter {
     workingDirectory?: string,
     sessionId?: string,
   ): Promise<ProjectPlan> {
-    const coordinator = getCoordinatorModel();
+    const coordinator = getCoordinatorModel(goal);
     const prompt = this.buildPlanPrompt(goal);
     const config: TaskConfig = {
       prompt,
@@ -368,14 +370,58 @@ export class ProjectOrchestrator extends EventEmitter {
         changedFiles,
       };
     } catch (error) {
-      result = {
-        subtaskId: subtask.id,
-        title: subtask.title,
-        status: 'failed',
-        modelId: assignment.modelId,
-        output: '',
-        error: error instanceof Error ? error.message : String(error),
-      };
+      const initialError = error instanceof Error ? error.message : String(error);
+      const escalation = getCoordinatorModel('', true);
+      if (assignment.modelId === escalation.modelId) {
+        result = {
+          subtaskId: subtask.id,
+          title: subtask.title,
+          status: 'failed',
+          modelId: assignment.modelId,
+          output: '',
+          error: initialError,
+        };
+      } else {
+        this.emit('progress', {
+          taskId: projectTaskId,
+          stage: 'retry',
+          message: `Retrying failed subtask with ${escalation.label}: ${subtask.title}`,
+          modelName: escalation.modelId,
+        });
+        try {
+          const retryConfig: TaskConfig = {
+            ...config,
+            taskId: `${subtaskTaskId}-retry`,
+            modelId: escalation.modelId,
+            provider: undefined,
+            prompt: `${prompt}\n\nThe first attempt failed with: ${initialError}\nReview the task carefully and complete it.`,
+          };
+          const retryTaskId = retryConfig.taskId as string;
+          const retryTask = await this.runSubtask(
+            retryTaskId,
+            retryConfig,
+            this.createSubtaskCallbacks(retryTaskId, escalation.modelId),
+          );
+          const output = this.extractTextOutput(retryTask);
+          result = {
+            subtaskId: subtask.id,
+            title: subtask.title,
+            status: retryTask.status === 'cancelled' || retryTask.status === 'interrupted' ? 'cancelled' : 'completed',
+            modelId: escalation.modelId,
+            output,
+            changedFiles: this.extractChangedFiles(output),
+          };
+        } catch (retryError) {
+          result = {
+            subtaskId: subtask.id,
+            title: subtask.title,
+            status: 'failed',
+            modelId: escalation.modelId,
+            output: '',
+            error: retryError instanceof Error ? retryError.message : String(retryError),
+          };
+        }
+      }
     }
 
     this.context.addResult(result);
@@ -383,6 +429,7 @@ export class ProjectOrchestrator extends EventEmitter {
       subtask.id,
       result.status,
       result.status === 'failed' ? result.error : result.output,
+      result.modelId,
     );
   }
 
@@ -390,6 +437,7 @@ export class ProjectOrchestrator extends EventEmitter {
     subtaskId: string,
     status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled',
     output?: string,
+    modelId?: string,
   ): void {
     if (!this.status) {
       return;
@@ -399,6 +447,9 @@ export class ProjectOrchestrator extends EventEmitter {
       entry.status = status;
       if (output !== undefined) {
         entry.output = output;
+      }
+      if (modelId !== undefined) {
+        entry.modelId = modelId;
       }
     }
     this.emit('status', this.status);
@@ -437,7 +488,10 @@ export class ProjectOrchestrator extends EventEmitter {
       throw new Error('ProjectContext not initialized');
     }
 
-    const coordinator = getCoordinatorModel();
+    const coordinator = getCoordinatorModel(
+      this.context.goal,
+      this.status?.subtasks.some((subtask) => subtask.status === 'failed') ?? false,
+    );
     const prompt = this.context.buildSynthesisPrompt();
     const config: TaskConfig = {
       prompt,
@@ -494,7 +548,7 @@ export class ProjectOrchestrator extends EventEmitter {
             '- local for short, read-only summaries, extraction, rewriting, translation, classification, or formatting; never use it for planning, tool use, web work, file changes, code, security, or consequential decisions',
           ]
         : []),
-      'You (glm-5.3:cloud) handle coordination, synthesis, and follow-up planning.',
+      'You (the coordinator model selected for this project) handle coordination, synthesis, and follow-up planning.',
       '',
       `Goal: ${goal}`,
       '',
@@ -506,7 +560,7 @@ export class ProjectOrchestrator extends EventEmitter {
       '      "id": "unique-slug",',
       '      "title": "short title",',
       '      "description": "detailed prompt for the subtask",',
-      `      "assignedModel": "fast" | "language" | "careful" | "code" | "coordinator"${this.localModel ? ' | "local"' : ''},`,
+      `      "assignedModel": "fast" | "language" | "careful" | "code" | "coordinator" | "escalated"${this.localModel ? ' | "local"' : ''},`,
       '      "fileEdits": true | false,',
       '      "dependsOn": ["other-id"]',
       '    }',

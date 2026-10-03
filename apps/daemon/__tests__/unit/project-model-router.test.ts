@@ -11,22 +11,22 @@ describe('assignModelForProjectSubtask', () => {
     expect(rec.role).toBe('code');
   });
 
-  it('assigns careful model for migration tasks', () => {
+  it('escalates migration tasks to GLM 5.3 Cloud', () => {
     const rec = assignModelForProjectSubtask(
       'Database migration',
       'Update the schema and migrate customer data.',
     );
-    expect(rec.modelId).toBe('gpt-oss:120b-cloud');
-    expect(rec.role).toBe('careful');
+    expect(rec.modelId).toBe('glm-5.3:cloud');
+    expect(rec.role).toBe('escalated');
   });
 
-  it('assigns careful model for risk assessment', () => {
+  it('escalates security-sensitive work to GLM 5.3 Cloud', () => {
     const rec = assignModelForProjectSubtask(
       'Risk review',
       'Assess the security implications of the new design.',
     );
-    expect(rec.modelId).toBe('gpt-oss:120b-cloud');
-    expect(rec.role).toBe('careful');
+    expect(rec.modelId).toBe('glm-5.3:cloud');
+    expect(rec.role).toBe('escalated');
   });
 
   it('assigns the low-cost language model for lightweight summaries', () => {
@@ -59,9 +59,15 @@ describe('assignModelForProjectSubtask', () => {
 });
 
 describe('getCoordinatorModel', () => {
-  it('returns GLM 5.3 Cloud', () => {
+  it('returns GLM 5.3 Flash Cloud by default', () => {
     const rec = getCoordinatorModel();
-    expect(rec.modelId).toBe('glm-5.3:cloud');
+    expect(rec.modelId).toBe('glm-5.3-flash:cloud');
     expect(rec.role).toBe('coordinator');
+  });
+
+  it('escalates high-stakes coordination to GLM 5.3 Cloud', () => {
+    const rec = getCoordinatorModel('Plan a production security migration');
+    expect(rec.modelId).toBe('glm-5.3:cloud');
+    expect(rec.role).toBe('escalated');
   });
 });
