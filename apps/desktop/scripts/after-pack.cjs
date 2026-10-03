@@ -174,7 +174,19 @@ async function copyDaemonNodeModules(context) {
     fs.cpSync(source, path.join(destinationRoot, moduleName), { recursive: true, force: true });
   }
 
-  console.log('[after-pack] Copied Node-runtime database dependencies for daemon');
+  // The daemon imports node-pty directly. Copy its Node-compatible build from
+  // the daemon workspace rather than Electron's unpacked dependency tree.
+  const nodePtySource = path.join(__dirname, '..', '..', 'daemon', 'node_modules', 'node-pty');
+  if (!fs.existsSync(nodePtySource)) {
+    throw new Error(`[after-pack] Missing daemon runtime dependency: ${nodePtySource}`);
+  }
+  fs.cpSync(nodePtySource, path.join(destinationRoot, 'node-pty'), {
+    recursive: true,
+    force: true,
+    dereference: true,
+  });
+
+  console.log('[after-pack] Copied Node-runtime dependencies for daemon');
 }
 
 /**
