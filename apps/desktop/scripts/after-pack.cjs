@@ -89,6 +89,7 @@ exports.default = async function afterPack(context) {
   if (platformName === 'windows') {
     await copyNodePtyPrebuilds(context, archName);
     await pruneNodePtyArm64(context, archName);
+    await copyDaemonNodeModules(context);
   }
 
   // Re-sign macOS apps after modifying the bundle
@@ -153,6 +154,27 @@ async function copyNodePtyPrebuilds(context, arch) {
   }
 
   console.log(`[after-pack] Successfully copied node-pty prebuilds to ${buildReleaseDir}`);
+}
+
+/**
+ * Ship the database driver compiled for the bundled Node runtime with the daemon.
+ * Electron and the daemon use different Node ABIs, so the daemon cannot load the
+ * Electron-native copy packaged under app.asar.unpacked/node_modules.
+ */
+async function copyDaemonNodeModules(context) {
+  const sourceRoot = path.join(__dirname, '..', 'resources', 'daemon-node-modules');
+  const destinationRoot = path.join(context.appOutDir, 'resources', 'daemon', 'node_modules');
+  const modules = ['better-sqlite3', 'bindings', 'file-uri-to-path'];
+
+  for (const moduleName of modules) {
+    const source = path.join(sourceRoot, moduleName);
+    if (!fs.existsSync(source)) {
+      throw new Error(`[after-pack] Missing daemon runtime dependency: ${source}`);
+    }
+    fs.cpSync(source, path.join(destinationRoot, moduleName), { recursive: true, force: true });
+  }
+
+  console.log('[after-pack] Copied Node-runtime database dependencies for daemon');
 }
 
 /**
