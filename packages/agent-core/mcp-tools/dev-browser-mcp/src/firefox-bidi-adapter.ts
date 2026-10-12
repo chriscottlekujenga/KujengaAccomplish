@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- This file is a dynamic compatibility boundary between Puppeteer WebDriver BiDi and Playwright-shaped APIs. */
 import { EventEmitter } from 'events';
 import os from 'os';
 import path from 'path';
@@ -195,9 +196,7 @@ function wrapPage(raw: PuppeteerPage, context: any, targetId: string): any {
   const cached = wrappedPages.get(raw as any);
   if (cached) return cached;
 
-  let proxy: any;
-
-  proxy = new Proxy(raw as any, {
+  const proxy: any = new Proxy(raw as any, {
     get(target, prop, receiver) {
       if (prop === '__rawPuppeteerPage') return raw;
       if (prop === '__accomplishTargetId') return targetId;
@@ -292,7 +291,7 @@ function wrapContext(raw: PuppeteerBrowserContext): any {
 
   let nextTarget = 1;
   const targetIds = new WeakMap<object, string>();
-  let proxy: any;
+  const proxyHolder: { value?: any } = {};
 
   const wrap = (page: PuppeteerPage) => {
     let id = targetIds.get(page as any);
@@ -300,10 +299,10 @@ function wrapContext(raw: PuppeteerBrowserContext): any {
       id = `firefox-bidi-${nextTarget++}`;
       targetIds.set(page as any, id);
     }
-    return wrapPage(page, proxy, id);
+    return wrapPage(page, proxyHolder.value, id);
   };
 
-  proxy = {
+  const proxy: any = {
     async pages() {
       return (await raw.pages()).map(wrap);
     },
@@ -323,6 +322,7 @@ function wrapContext(raw: PuppeteerBrowserContext): any {
     __rawPuppeteerContext: raw,
   };
 
+  proxyHolder.value = proxy;
   wrappedContexts.set(raw as any, proxy);
   return proxy;
 }

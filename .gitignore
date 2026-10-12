@@ -85,3 +85,10 @@ apps/desktop/resources/nodejs/
 packages/agent-core/mcp-tools/*/package-lock.json
 packages/agent-core/mcp-tools/package-lock.json
 /.run/
+
+# Local Ubuntu ARM64 / Firefox BiDi development artifacts
+.firefox-bidi-backups/
+*.before-arm64-fix
+*.before-arm64-browser-*
+*.before-arm64-chromium-fix
+packages/agent-core/mcp-tools/dev-browser/server.mjs
