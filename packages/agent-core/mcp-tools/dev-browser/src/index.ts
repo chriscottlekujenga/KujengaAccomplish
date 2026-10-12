@@ -1,6 +1,6 @@
 import express, { type Express, type Request, type Response } from 'express';
 import { chromium, type BrowserContext, type Page } from 'playwright';
-import { mkdirSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { Socket } from 'net';
 import type {
@@ -68,6 +68,15 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
   const cdpPort = options.cdpPort ?? parseInt(process.env.DEV_BROWSER_CDP_PORT || '9225', 10);
   const profileDir = options.profileDir ?? process.env.DEV_BROWSER_PROFILE;
   const useSystemChrome = options.useSystemChrome ?? true;
+  const systemChromeExecutable =
+    process.env.DEV_BROWSER_CHROME_PATH ||
+    [
+      '/snap/bin/chromium',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+    ].find((candidate) => existsSync(candidate));
 
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
     throw new Error(`Invalid port: ${port}. Must be a number between 1 and 65535`);
@@ -84,15 +93,15 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
   let context: BrowserContext;
   let usedSystemChrome = false;
 
-  if (useSystemChrome) {
+  if (useSystemChrome && systemChromeExecutable) {
     try {
-      console.log('Trying to use system Chrome...');
+      console.log(`Trying system Chromium/Chrome: ${systemChromeExecutable}`);
       const chromeUserDataDir = join(baseProfileDir, 'chrome-profile');
       mkdirSync(chromeUserDataDir, { recursive: true });
 
       context = await chromium.launchPersistentContext(chromeUserDataDir, {
         headless,
-        channel: 'chrome',
+        executablePath: systemChromeExecutable,
         ignoreDefaultArgs: ['--enable-automation'],
         args: [
           `--remote-debugging-port=${cdpPort}`,
@@ -100,7 +109,7 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
         ],
       });
       usedSystemChrome = true;
-      console.log('Using system Chrome (fast startup!)');
+      console.log(`Using system Chromium/Chrome: ${systemChromeExecutable}`);
     } catch (_chromeError) {
       console.log('System Chrome not available, falling back to Playwright Chromium...');
     }

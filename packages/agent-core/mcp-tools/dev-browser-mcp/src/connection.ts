@@ -1,5 +1,9 @@
 import { chromium, type Browser, type Page, type CDPSession } from 'playwright';
 import { BrowserManager, isRecoverableConnectionError } from './browser-manager.js';
+import {
+  isFirefoxBidiEnabled,
+  launchFirefoxBidiBrowser,
+} from './firefox-bidi-adapter.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,6 +96,11 @@ export function configureFromEnv(): ConnectionConfig {
 
 export async function ensureConnected(): Promise<Browser> {
   return browserManager.ensureConnected(async () => {
+    if (isFirefoxBidiEnabled()) {
+      browserManager.setCachedServerMode('firefox-bidi');
+      return (await launchFirefoxBidiBrowser()) as unknown as Browser;
+    }
+
     if (config.mode === 'remote') {
       return connectRemote();
     }
@@ -107,6 +116,9 @@ export function getFullPageName(pageName?: string): string {
 export async function getPage(pageName?: string): Promise<Page> {
   const resolvedName = pageName || 'main';
   return browserManager.withConnectionRecovery(async () => {
+    if (isFirefoxBidiEnabled()) {
+      return getPageRemote(pageName);
+    }
     if (config.mode === 'remote') {
       return getPageRemote(pageName);
     }
@@ -116,6 +128,9 @@ export async function getPage(pageName?: string): Promise<Page> {
 
 export async function listPages(): Promise<string[]> {
   return browserManager.withConnectionRecovery(async () => {
+    if (isFirefoxBidiEnabled()) {
+      return listPagesRemote();
+    }
     if (config.mode === 'remote') {
       return listPagesRemote();
     }
@@ -125,6 +140,9 @@ export async function listPages(): Promise<string[]> {
 
 export async function closePage(pageName: string): Promise<boolean> {
   return browserManager.withConnectionRecovery(async () => {
+    if (isFirefoxBidiEnabled()) {
+      return closePageRemote(pageName);
+    }
     if (config.mode === 'remote') {
       return closePageRemote(pageName);
     }

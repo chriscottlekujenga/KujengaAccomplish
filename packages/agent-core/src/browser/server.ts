@@ -115,6 +115,10 @@ export async function ensureDevBrowserServer(
   config: BrowserServerConfig,
   onProgress?: (progress: { stage: string; message?: string }) => void,
 ): Promise<ServerStartResult> {
+  if (process.env.ACCOMPLISH_BROWSER === 'firefox-bidi') {
+    log.info('[Browser] Firefox WebDriver BiDi backend enabled; skipping Chromium dev-browser server');
+    return { ready: true, logs: ['Firefox WebDriver BiDi backend enabled'] };
+  }
   const hasChrome = isSystemChromeInstalled();
   const hasPlaywright = isPlaywrightInstalled();
 

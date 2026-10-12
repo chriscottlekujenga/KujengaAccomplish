@@ -13,7 +13,12 @@ export function isSystemChromeInstalled(): boolean {
       fs.existsSync(path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'))
     );
   }
-  return fs.existsSync('/usr/bin/google-chrome') || fs.existsSync('/usr/bin/chromium-browser');
+  return (
+    fs.existsSync('/usr/bin/google-chrome') ||
+    fs.existsSync('/usr/bin/chromium-browser') ||
+    fs.existsSync('/usr/bin/chromium') ||
+    fs.existsSync('/snap/bin/chromium')
+  );
 }
 
 export function isPlaywrightInstalled(): boolean {
