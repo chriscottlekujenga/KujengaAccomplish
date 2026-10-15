@@ -5,7 +5,7 @@
  * Every action goes through:
  *   1. Request validation
  *   2. Blocklist check (against active window / target window)
- *   3. User permission request (via the permission HTTP API)
+ *   3. Standard mode: user permission request; Expert mode: prompt-defined gates
  *   4. Execution via automation.ts
  *
  * Follows the same serve pattern as dev-browser.
@@ -37,6 +37,10 @@ export type {
 
 const DEFAULT_PORT = 7400;
 const DEFAULT_PERMISSION_API_PORT = 7822;
+
+function isExpertAutonomyMode(): boolean {
+  return process.env.ACCOMPLISH_AUTONOMY_MODE?.toLowerCase() === 'expert';
+}
 
 /**
  * Build a human-readable description of the action for the permission prompt.
@@ -86,6 +90,12 @@ async function requestPermission(
   request: DesktopActionRequest,
   permissionApiPort: number,
 ): Promise<boolean> {
+  // Expert mode uses prompt-defined human gates. The sensitive-app
+  // blocklist is still enforced before this function is called.
+  if (isExpertAutonomyMode()) {
+    return true;
+  }
+
   const permissionData: DesktopPermissionRequestData = {
     action: request.action,
     description: describeAction(request),

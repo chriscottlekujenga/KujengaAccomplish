@@ -34,7 +34,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "pnpm -r clean && rm -rf node_modules",
-    "prepare": "husky"
+    "prepare": "husky",
+    "dev:expert": "ACCOMPLISH_AUTONOMY_MODE=expert node scripts/dev.cjs"
   },
   "engines": {
     "node": ">=20.0.0",

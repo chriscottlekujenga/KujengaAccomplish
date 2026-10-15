@@ -92,6 +92,10 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
     ? { ACCOMPLISH_DAEMON_AUTH_TOKEN: authToken }
     : {};
 
+  const autonomyMode = process.env.ACCOMPLISH_AUTONOMY_MODE?.toLowerCase();
+  const autonomyEnv: Record<string, string> =
+    autonomyMode === 'expert' ? { ACCOMPLISH_AUTONOMY_MODE: 'expert' } : {};
+
   const mcpServers: Record<string, McpServerConfig> = {
     slack: {
       type: 'remote',
@@ -102,7 +106,7 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
       type: 'local',
       command: resolveMcpCommand(mcpToolsPath, 'file-permission', 'dist/index.mjs', nodeExe),
       enabled: true,
-      environment: { PERMISSION_API_PORT: String(permissionApiPort), ...authEnv },
+      environment: { PERMISSION_API_PORT: String(permissionApiPort), ...authEnv, ...autonomyEnv },
       timeout: 30000,
     },
     'ask-user-question': {
@@ -135,7 +139,7 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
       type: 'local',
       command: resolveMcpCommand(mcpToolsPath, 'desktop-control', 'dist/index.mjs', nodeExe),
       enabled: true,
-      environment: { PERMISSION_API_PORT: String(permissionApiPort), ...authEnv },
+      environment: { PERMISSION_API_PORT: String(permissionApiPort), ...authEnv, ...autonomyEnv },
       timeout: 60000,
     },
   };

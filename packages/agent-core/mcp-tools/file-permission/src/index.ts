@@ -10,6 +10,7 @@ import {
 const PERMISSION_API_PORT = process.env.PERMISSION_API_PORT || '9226';
 const PERMISSION_API_URL = `http://localhost:${PERMISSION_API_PORT}/permission`;
 const AUTH_TOKEN = process.env.ACCOMPLISH_DAEMON_AUTH_TOKEN;
+const EXPERT_AUTONOMY_MODE = process.env.ACCOMPLISH_AUTONOMY_MODE?.toLowerCase() === 'expert';
 
 function getHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -88,6 +89,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToo
         { type: 'text', text: 'Error: operation and either filePath or filePaths are required' },
       ],
       isError: true,
+    };
+  }
+
+  if (EXPERT_AUTONOMY_MODE) {
+    return {
+      content: [{ type: 'text', text: 'allowed (Expert mode: prompt-defined gates are active)' }],
     };
   }
 

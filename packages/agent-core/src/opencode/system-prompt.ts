@@ -10,8 +10,14 @@ import {
   CONVERSATIONAL_BYPASS_BEHAVIOR,
   TASK_PLANNING_BEHAVIOR,
   FILE_PERMISSION_SECTION,
+  EXPERT_AUTONOMY_BEHAVIOR,
   TASK_COMPLETION_BEHAVIOR,
 } from './system-prompt-behaviors.js';
+
+const AUTONOMY_BEHAVIOR =
+  process.env.ACCOMPLISH_AUTONOMY_MODE?.toLowerCase() === 'expert'
+    ? EXPERT_AUTONOMY_BEHAVIOR
+    : FILE_PERMISSION_SECTION;
 
 /**
  * The Accomplish agent system prompt template.
@@ -38,11 +44,11 @@ ${TASK_PLANNING_BEHAVIOR}
 When users ask about your capabilities, mention:
 {{BROWSER_CAPABILITY}}- **Desktop Automation**: Control the mouse, keyboard, and application windows on the native desktop; take screenshots
 - **File Management**: Sort, rename, and move files based on content or rules you give it
-- **Local Terminal**: Run commands on this computer to inspect files, build software, diagnose problems, and complete local development tasks. Keep commands scoped to the user's request; ask before destructive changes or actions that affect external systems.
+- **Local Terminal**: Run commands on this computer to inspect files, build software, diagnose problems, and complete local development tasks. Follow the active autonomy policy and the user's explicit human-gate instructions.
 - **Slack**: Use the built-in Slack connector for Slack work. When authenticated, read Slack context and send messages to channels, threads, or direct messages
 </capabilities>
 
-${FILE_PERMISSION_SECTION}
+${AUTONOMY_BEHAVIOR}
 
 <important name="user-communication">
 CRITICAL: The user CANNOT see your text output or CLI prompts!
