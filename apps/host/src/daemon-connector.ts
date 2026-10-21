@@ -51,6 +51,11 @@ export interface DaemonConnectorOptions {
   dataDir: string;
   daemonEntryPath: string;
   nodeBin: string;
+  /**
+   * Repo root (ACCOMPLISH_APP_PATH) so the daemon resolves the bundled
+   * opencode CLI in dev mode.
+   */
+  appPath?: string;
   /** When set, a reachable daemon with a different buildId is restarted. */
   expectedBuildId?: string;
   logger?: HostLogger;
@@ -210,6 +215,14 @@ export class DaemonConnector {
     delete env.ELECTRON_RUN_AS_NODE;
     if (this.opts.expectedBuildId !== undefined) {
       env.ACCOMPLISH_BUILD_ID = this.opts.expectedBuildId;
+    }
+    // Credential isolation: opencode's auth.json and app data live under
+    // XDG_DATA_HOME, so scoping it to the data dir keeps the shell's keys
+    // separate from any other opencode installation (and separate from the
+    // Electron shell's profile during the migration).
+    env.XDG_DATA_HOME = dataDir;
+    if (this.opts.appPath !== undefined) {
+      env.ACCOMPLISH_APP_PATH = this.opts.appPath;
     }
 
     const logPath = getDaemonLogPath(dataDir);

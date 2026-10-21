@@ -252,6 +252,33 @@ describe('gateway ↔ real daemon integration', () => {
     expect(mode).toBe(0o600);
   });
 
+  it('publishes gateway-info.json for the .desktop launcher hand-off', () => {
+    const infoPath = path.join(dataDir, 'gateway-info.json');
+    expect(existsSync(infoPath)).toBe(true);
+    const info = JSON.parse(readFileSync(infoPath, 'utf8')) as { port: number; pid: number };
+    expect(info.port).toBe(app.gateway.port);
+    expect(info.pid).toBe(process.pid);
+    // The instance must be discoverable via findExistingInstance.
+    const mode = statSync(infoPath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('forwards accomplish:// deep links to authenticated WS clients', async () => {
+    const session = await openEventStream();
+    const control = session.nextControl('mcp-callback');
+    const res = await fetch(gatewayUrl('/deep-link'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ url: 'accomplish://callback/mcp?state=phase2' }),
+    });
+    expect(res.status).toBe(200);
+    await control;
+    session.close();
+  });
+
   it('streams settings.changed notifications to authenticated WS clients', async () => {
     const session = await openEventStream();
     const target = ((await rpc('settings.getAll')) as { app: { theme: string } }).app.theme;

@@ -103,6 +103,7 @@
   },
   "app": {
     "mustRunInDesktop": "This application must be run inside the Accomplish desktop app.",
+    "openViaLauncher": "This page was opened without a session token. Launch Accomplish from your applications menu (or the desktop launcher) to open an authenticated session.",
     "unableToStart": "Unable to Start",
     "updateRequired": "Update Required",
     "schemaNewerMessage": "This data was created by a newer version of Accomplish (schema v{{version}}).",

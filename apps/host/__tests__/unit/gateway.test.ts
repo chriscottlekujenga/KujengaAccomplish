@@ -176,7 +176,7 @@ describe('gateway security', () => {
 
   describe('method authorization', () => {
     it('rejects methods outside the allowlist', async () => {
-      const { status } = await postRpc(rpcBody(1, 'secrets.storeApiKey', { provider: 'x' }), {
+      const { status } = await postRpc(rpcBody(1, 'secrets.deleteApiKey', { provider: 'x' }), {
         Authorization: `Bearer ${TOKEN}`,
       });
       expect(status).toBe(403);

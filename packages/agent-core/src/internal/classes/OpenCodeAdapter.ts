@@ -77,6 +77,9 @@ import { getOAuthProviderDisplayName, isOAuthProviderId } from '../../common/typ
 import { CONNECTOR_AUTH_REQUIRED_MARKER } from '../../common/constants.js';
 import { createConsoleLogger } from '../../utils/logging.js';
 import { ACCOMPLISH_AGENT_NAME } from '../../opencode/config-generator.js';
+import { PROVIDER_ID_TO_OPENCODE, type ProviderId } from '../../common/types/providerSettings.js';
+import type { SelectedModel } from '../../common/types/provider.js';
+import { normalizeSelectedModelForSdk } from '../../opencode/model-runtime-mapping.js';
 // `toTaskMessage` and `ModelContext` will be wired when we move to emitting
 // pre-processed `TaskMessage` shapes on the event bus (Phase 1c / Phase 2 —
 // renderer upsert-by-ID lands there). Today we still emit `OpenCodeMessage`
@@ -219,6 +222,14 @@ interface PendingRequest {
   sessionId: string;
 }
 
+/**
+ * SDK stream events that arrive on a fixed cadence but carry no task progress.
+ * Bumping the watchdog fingerprint for them keeps it advancing forever during
+ * a real stall (e.g. `server.heartbeat` fires ~1/s), so the inactivity
+ * watchdog never fires.
+ */
+const WATCHDOG_KEEP_ALIVE_EVENT_TYPES: ReadonlySet<string> = new Set(['server.heartbeat']);
+
 export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private options: AdapterOptions;
   private sandboxProvider: SandboxProvider;
@@ -232,6 +243,14 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private currentModelId: string | null = null;
   private currentProviderId: string | null = null;
   private lastWorkingDirectory: string | undefined;
+  /**
+   * Resolved `providerID`/`modelID` pair for the current task, captured in
+   * `startTask` via `buildModelParam`. The completion enforcer's continuation
+   * prompt fires outside `startTask`'s scope and must target the same model,
+   * otherwise opencode's model cascade is empty and the nudge never reaches
+   * an LLM (task hangs).
+   */
+  private currentModelParam: { providerID: string; modelID: string } | null = null;
 
   private eventAbortController: AbortController | null = null;
   private eventStreamPromise: Promise<void> | null = null;
@@ -377,6 +396,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     this.currentSessionId = null;
     this.currentModelId = config.modelId ?? null;
     this.currentProviderId = config.provider ?? null;
+    this.currentModelParam = null;
     this.hasCompleted = false;
     this.wasInterrupted = false;
     this.pendingRequest = null;
@@ -406,6 +426,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     const onBeforeStartCtx: OnBeforeStartContext = {
       taskId,
       workspaceId: config.workspaceId,
+      workingDirectory: config.workingDirectory,
     };
 
     if (this.options.onBeforeStart) {
@@ -462,6 +483,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     // long-lived; `session.prompt(sessionID=X, text=...)` appends a new
     // user turn to session X and the agent sees the full prior history.
     const model = this.buildModelParam(config);
+    this.currentModelParam = model;
     let sessionId: string | null = config.sessionId ?? null;
     if (!sessionId) {
       const sessionCreateRes = await this.client.session.create(
@@ -742,8 +764,28 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   }
 
   private buildModelParam(config: TaskConfig): { providerID: string; modelID: string } | null {
-    if (!config.modelId || !config.provider) return null;
-    return { providerID: config.provider, modelID: config.modelId };
+    if (!config.modelId || !config.provider) {
+      return null;
+    }
+    // Internal provider IDs don't always match OpenCode's provider registry
+    // names (e.g. `zai` → `zai-coding-plan`, `copilot` → `github-copilot`).
+    // The SDK model ref must resolve against the names used in the generated
+    // opencode config, so map through the same table the config generator
+    // uses. Unmapped values pass through unchanged.
+    const providerID = PROVIDER_ID_TO_OPENCODE[config.provider as ProviderId] ?? config.provider;
+    // The stored selected model is a full ref (`ollama/glm-5.3:cloud`). Opencode
+    // forwards `modelID` verbatim to the provider's API call, so it must be the
+    // bare model name the server knows — send the prefixed ref and the provider
+    // 404s ('model "ollama/glm-5.3" not found') and the task fails. Reuse the
+    // same ref-splitting the desktop path performs via normalizeSelectedModelForSdk.
+    const sdkRef = normalizeSelectedModelForSdk({
+      provider: config.provider as SelectedModel['provider'],
+      model: config.modelId,
+    });
+    if (!sdkRef) {
+      return null;
+    }
+    return { providerID, modelID: sdkRef.modelID };
   }
 
   private createCompletionEnforcer(): CompletionEnforcer {
@@ -758,6 +800,9 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
           // Also pass the compact workspace-instructions `system` block
           // every turn, same rationale as the initial prompt: agent-level
           // prompts get crowded out by provider-native instruction channels.
+          // And pass the same model ref as the initial prompt: without it
+          // opencode's model cascade is empty and the nudge never reaches
+          // an LLM, leaving a hanging task.
           const runtimeSystem = this.buildWorkspaceInstructionRuntimeBlock();
           this.client.session
             .prompt({
@@ -765,6 +810,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
               agent: ACCOMPLISH_AGENT_NAME,
               ...(runtimeSystem ? { system: runtimeSystem } : {}),
               parts: [{ type: 'text', text: prompt }],
+              ...(this.currentModelParam ? { model: this.currentModelParam } : {}),
             })
             .catch((err: unknown) => {
               log.warn('continuation prompt rejected', { error: serializeError(err) });
@@ -874,7 +920,12 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     // event (message, part, delta, permission, question, idle, error,
     // todo…) counts as progress. A hang that produces no events will
     // leave this counter stable, letting the watchdog detect the stall.
-    this.watchdogActivityCounter += 1;
+    // Keep-alive events (`server.heartbeat`) are excluded — they fire on
+    // a fixed cadence regardless of progress, so counting them would
+    // mask any real stall (the watchdog could never fire).
+    if (!WATCHDOG_KEEP_ALIVE_EVENT_TYPES.has(event.type)) {
+      this.watchdogActivityCounter += 1;
+    }
     switch (event.type) {
       case 'message.updated': {
         const info = (event.properties as { info: OpenCodeSdkMessage }).info;

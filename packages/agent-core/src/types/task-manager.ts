@@ -31,6 +31,15 @@ export interface TaskProgressEvent {
 export interface OnBeforeStartContext {
   taskId?: string;
   workspaceId?: string;
+  /**
+   * Absolute directory the task runs in. Threaded from TaskConfig through the
+   * adapter's getServerUrl ctx so the daemon's server-manager can spawn
+   * `opencode serve` with `cwd` set to the task workspace. Without it the
+   * serve process inherits the daemon's process cwd (homedir), and opencode's
+   * turn-start git snapshot runs `git add --all` over ~the whole home dir and
+   * never finishes.
+   */
+  workingDirectory?: string;
 }
 
 /**

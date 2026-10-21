@@ -23,7 +23,7 @@ export const HOST_VERSION = '0.1.0';
 
 export interface HostConfig {
   dataDir: string;
-  /** Gateway token file — written 0600 for the Phase 2 launcher. */
+  /** Gateway token file — written 0600 for the launcher hand-off. */
   tokenFile: string;
   /** Loopback HTTP port; 0 = ephemeral (resolved after listen). */
   port: number;
@@ -37,6 +37,8 @@ export interface HostConfig {
   nodeBin: string;
   /** Build identity for the daemon version guard; undefined skips the guard. */
   expectedBuildId?: string;
+  /** Repo root passed to the daemon (ACCOMPLISH_APP_PATH) for CLI resolution. */
+  appPath: string;
 }
 
 export interface HostArgs {
@@ -46,6 +48,20 @@ export interface HostArgs {
   token?: string;
   daemonEntryPath?: string;
   nodeBin?: string;
+  /** accomplish:// deep link captured from argv (.desktop activation). */
+  deepLinkUrl?: string;
+  /** Open Firefox at the gateway URL after startup. */
+  launch?: boolean;
+  /** Launch Firefox in kiosk mode (requires --launch). */
+  kiosk?: boolean;
+  /** Install .desktop launcher + scheme, then exit. */
+  installDesktop?: boolean;
+  /** Remove .desktop launcher + scheme, then exit. */
+  uninstallDesktop?: boolean;
+  /** Register the systemd daemon service (start at login), then exit. */
+  enableAutostart?: boolean;
+  /** Remove the systemd daemon service, then exit. */
+  disableAutostart?: boolean;
 }
 
 /**
@@ -95,6 +111,17 @@ export function resolveNodeBin(explicit?: string): string {
   return process.execPath;
 }
 
+/**
+ * App path passed to the daemon (ACCOMPLISH_APP_PATH). The daemon's CLI
+ * resolver looks for `node_modules/.bin/opencode` in appPath and its
+ * parent directories — pnpm links opencode-ai's bin only into the
+ * workspace package that depends on it (apps/desktop), so dev mode must
+ * point there, exactly like the Electron shell (app.getAppPath()).
+ */
+export function resolveAppPath(): string {
+  return path.resolve(__dirname, '..', '..', 'desktop');
+}
+
 export function parseHostArgs(argv: string[] = process.argv.slice(2)): HostArgs {
   const result: HostArgs = {};
   for (let i = 0; i < argv.length; i++) {
@@ -119,6 +146,20 @@ export function parseHostArgs(argv: string[] = process.argv.slice(2)): HostArgs 
     } else if (argv[i] === '--node-bin' && argv[i + 1]) {
       result.nodeBin = path.resolve(argv[i + 1]);
       i++;
+    } else if (argv[i] === '--launch') {
+      result.launch = true;
+    } else if (argv[i] === '--kiosk') {
+      result.kiosk = true;
+    } else if (argv[i] === '--install-desktop') {
+      result.installDesktop = true;
+    } else if (argv[i] === '--uninstall-desktop') {
+      result.uninstallDesktop = true;
+    } else if (argv[i] === '--enable-autostart') {
+      result.enableAutostart = true;
+    } else if (argv[i] === '--disable-autostart') {
+      result.disableAutostart = true;
+    } else if (argv[i].startsWith('accomplish://')) {
+      result.deepLinkUrl = argv[i];
     }
   }
   return result;
@@ -163,6 +204,7 @@ export function resolveHostConfig(args: HostArgs = {}): HostConfig {
     token,
     daemonEntryPath: args.daemonEntryPath ?? resolveDefaultDaemonEntryPath(),
     nodeBin: resolveNodeBin(args.nodeBin),
+    appPath: resolveAppPath(),
   };
 }
 

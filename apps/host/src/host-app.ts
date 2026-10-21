@@ -18,7 +18,13 @@ import {
   type HostConfig,
 } from './config.js';
 import { DaemonConnector, type DaemonConnectorOptions } from './daemon-connector.js';
-import { createGateway, type GatewayHandle } from './gateway.js';
+import { writeInstanceInfo } from './desktop-integration.js';
+import {
+  createGateway,
+  deepLinkEvent,
+  type GatewayHandle,
+  type GatewayPickers,
+} from './gateway.js';
 import { createConsoleLogger, type HostLogger } from './logger.js';
 import type { RateLimiterOptions } from './rate-limit.js';
 
@@ -52,6 +58,10 @@ export interface StartHostOptions extends HostArgs {
   expectedBuildId?: string;
   rateLimiterOptions?: RateLimiterOptions;
   openExternalImpl?: (url: string) => Promise<void>;
+  /** Native pickers — defaults to the zenity implementation. */
+  pickers?: GatewayPickers;
+  /** accomplish:// URL captured at CLI activation (no prior instance). */
+  deepLinkUrl?: string;
   /** Reconnect/poll tuning — tests shorten the backoff windows. */
   connectorOptions?: Pick<
     DaemonConnectorOptions,
@@ -93,6 +103,7 @@ export async function startHostApp(options: StartHostOptions = {}): Promise<Host
     dataDir: config.dataDir,
     daemonEntryPath: config.daemonEntryPath,
     nodeBin: config.nodeBin,
+    appPath: config.appPath,
     expectedBuildId: options.expectedBuildId,
     logger,
     ...options.connectorOptions,
@@ -113,7 +124,22 @@ export async function startHostApp(options: StartHostOptions = {}): Promise<Host
     logger,
     rateLimiterOptions: options.rateLimiterOptions,
     openExternalImpl: options.openExternalImpl,
+    pickers: options.pickers,
+    appPath: config.appPath,
   });
+
+  // Publish the instance coordinates for the .desktop launcher hand-off
+  // (single-instance detection + deep-link forwarding).
+  writeInstanceInfo(config.dataDir, { port: gateway.port, pid: process.pid });
+
+  // Deep link captured before the gateway existed (launcher activation on
+  // a cold start) — dispatch now that WS clients can receive it.
+  if (options.deepLinkUrl) {
+    const event = deepLinkEvent(options.deepLinkUrl);
+    if (event) {
+      gateway.broadcastControl(event, { url: options.deepLinkUrl });
+    }
+  }
 
   registerNotificationForwarding(client, gateway);
 

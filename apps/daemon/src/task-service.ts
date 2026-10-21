@@ -215,6 +215,10 @@ export class TaskService extends EventEmitter {
     const selectedModel = activeModel || this.storage.getSelectedModel();
     if (selectedModel?.model && !validatedConfig.modelId) {
       validatedConfig.modelId = selectedModel.model;
+      // Without `provider`, OpenCodeAdapter.buildModelParam returns null and
+      // session.prompt omits `model` — opencode's model cascade is then empty
+      // and the task hangs on local providers (e.g. ollama).
+      validatedConfig.provider = selectedModel.provider;
     }
 
     const task = await this._runTask(taskId, validatedConfig);
@@ -312,6 +316,7 @@ export class TaskService extends EventEmitter {
       sessionId,
       taskId,
       modelId: selectedModel?.model,
+      provider: selectedModel?.provider,
       files: attachments,
       workspaceId,
     });

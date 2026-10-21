@@ -103,6 +103,7 @@
   },
   "app": {
     "mustRunInDesktop": "此应用程序必须在 Accomplish 桌面应用内运行。",
+    "openViaLauncher": "此页面在打开时缺少会话令牌。请从应用程序菜单（或桌面启动器）启动 Accomplish，以打开经过身份验证的会话。",
     "unableToStart": "无法启动",
     "updateRequired": "需要更新",
     "schemaNewerMessage": "此数据由更新版本的 Accomplish 创建（数据库版本 v{{version}}）。",

@@ -54,6 +54,10 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'settings.setOnboardingComplete',
   'settings.getSelectedModel',
   'settings.setSelectedModel',
+  // Provider settings — masked metadata only (gateway scrubs secret-looking
+  // fields from the response before it crosses the trust boundary).
+  'provider.getSettings',
+  'provider.getDebugMode',
   // Workspaces & knowledge notes
   'workspace.list',
   'workspace.get',
@@ -78,6 +82,10 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'skills.getContent',
   'skills.getUserSkillsPath',
   'skills.resync',
+  // Secrets — writes only (one-way by design); every plaintext READ stays
+  // on the RPC_METHOD_BLOCKLIST until masked variants exist (Phase 3).
+  'secrets.storeApiKey',
+  'secrets.hasAnyApiKey',
   // Accomplish AI free tier
   'accomplish-ai.connect',
   'accomplish-ai.get-usage',

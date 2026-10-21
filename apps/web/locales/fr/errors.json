@@ -103,6 +103,7 @@
   },
   "app": {
     "mustRunInDesktop": "Cette application doit être exécutée dans l'application de bureau Accomplish.",
+    "openViaLauncher": "Cette page a été ouverte sans jeton de session. Lancez Accomplish depuis le menu des applications (ou le lanceur du bureau) pour ouvrir une session authentifiée.",
     "unableToStart": "Impossible de démarrer",
     "updateRequired": "Mise à jour requise",
     "schemaNewerMessage": "Ces données ont été créées par une version plus récente d'Accomplish (schéma v{{version}}).",

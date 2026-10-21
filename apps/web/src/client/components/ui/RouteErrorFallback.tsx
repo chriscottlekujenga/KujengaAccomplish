@@ -1,13 +1,25 @@
 import { useRouteError, isRouteErrorResponse, Link } from 'react-router';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WarningCircle } from '@phosphor-icons/react';
 import { Button } from './button';
+import { reportClientError } from '@/lib/gateway-bootstrap';
 
 export function RouteErrorFallback() {
   const error = useRouteError();
   const { t } = useTranslation('errors');
   const { t: tCommon } = useTranslation('common');
   const isDev: boolean = import.meta.env.DEV;
+
+  // Forward the real error to the host log so startup failures are
+  // diagnosable from the gateway side (prod hides the message in the UI).
+  useEffect(() => {
+    const detail =
+      error instanceof Error
+        ? `${error.message}\n${error.stack ?? ''}`
+        : (JSON.stringify(error) ?? 'unknown');
+    reportClientError(`Route error: ${detail}`);
+  }, [error]);
 
   let message = t('boundary.unexpectedError');
   if (isRouteErrorResponse(error)) {

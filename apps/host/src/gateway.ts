@@ -32,13 +32,28 @@ import {
   isAllowedOrigin,
   timingSafeTokenEquals,
 } from './auth.js';
-import { HOST_VERSION } from './config.js';
+import { HOST_VERSION, resolveAppPath } from './config.js';
+import { getCliStatus } from './cli-status.js';
+import { pickFiles, pickFolder } from './file-picker.js';
 import { noopLogger, type HostLogger } from './logger.js';
 import { checkMethodPolicy } from './policy.js';
+import { scrubSecretFields } from './provider-settings-scrubber.js';
+import { isDaemonServiceActive, isDaemonServiceEnabled } from './daemon-service.js';
 import { TokenRateLimiter, DEFAULT_RATE_LIMIT, type RateLimiterOptions } from './rate-limit.js';
 
 /** Custom JSON-RPC error code: method exists but is not authorized here. */
 const METHOD_NOT_AUTHORIZED = -32003;
+
+/** Classify an accomplish:// URL the way the Electron protocol handler did. */
+export function deepLinkEvent(url: string): 'mcp-callback' | 'auth-callback' | null {
+  if (url.startsWith('accomplish://callback/mcp')) {
+    return 'mcp-callback';
+  }
+  if (url.startsWith('accomplish://callback')) {
+    return 'auth-callback';
+  }
+  return null;
+}
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_WS_MESSAGE_BYTES = 64 * 1024;
@@ -75,6 +90,12 @@ export interface RpcProxy {
   call(method: string, params?: unknown): Promise<unknown>;
 }
 
+/** Native pickers (zenity) — injectable for tests. */
+export interface GatewayPickers {
+  pickFolder(): Promise<string | null>;
+  pickFiles(): Promise<unknown[]>;
+}
+
 export interface GatewayOptions {
   /** 0 = ephemeral port (resolved on the returned handle). */
   port: number;
@@ -88,6 +109,14 @@ export interface GatewayOptions {
   policySets?: { allow?: ReadonlySet<string>; block?: ReadonlySet<string> };
   /** Injectable so tests never actually launch a browser helper. */
   openExternalImpl?: (url: string) => Promise<void>;
+  /** Native file/folder pickers (Phase 2). */
+  pickers?: GatewayPickers;
+  /** Repo root for CLI resolution (defaults to resolveAppPath()). */
+  appPath?: string;
+  /** Injectable CLI status (tests). */
+  cliStatusImpl?: () => Promise<import('./cli-status.js').CliStatus>;
+  /** Injectable systemd status probe (tests). */
+  autostartStatusImpl?: () => { enabled: boolean; active: boolean };
   maxBodyBytes?: number;
   maxWsMessageBytes?: number;
   wsAuthTimeoutMs?: number;
@@ -97,7 +126,7 @@ export interface GatewayHandle {
   port: number;
   server: Server;
   broadcastNotification(method: string, params: unknown): void;
-  broadcastControl(event: string): void;
+  broadcastControl(event: string, params?: unknown): void;
   close(): Promise<void>;
 }
 
@@ -196,6 +225,10 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
   const wsAuthTimeoutMs = options.wsAuthTimeoutMs ?? WS_AUTH_TIMEOUT_MS;
   const openExternalImpl = options.openExternalImpl ?? defaultOpenExternal;
   const webDist = options.webDist ? resolve(options.webDist) : null;
+  const pickers: GatewayPickers = options.pickers ?? {
+    pickFolder: () => pickFolder(),
+    pickFiles: () => pickFiles(),
+  };
 
   let listeningPort = options.port;
   const sockets = new Set<AuthedSocket>();
@@ -418,6 +451,36 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
       return;
     }
 
+    if (method === 'POST' && url.pathname === '/pick-folder') {
+      await handlePicker(req, res, async () => ({ path: await pickers.pickFolder() }));
+      return;
+    }
+
+    if (method === 'POST' && url.pathname === '/pick-files') {
+      await handlePicker(req, res, async () => ({ files: await pickers.pickFiles() }));
+      return;
+    }
+
+    if (method === 'POST' && url.pathname === '/deep-link') {
+      await handleDeepLink(req, res);
+      return;
+    }
+
+    if (method === 'POST' && url.pathname === '/client-log') {
+      await handleClientLog(req, res);
+      return;
+    }
+
+    if (method === 'GET' && url.pathname === '/cli-status') {
+      await handleCliStatus(req, res);
+      return;
+    }
+
+    if (method === 'GET' && url.pathname === '/autostart-status') {
+      await handleAutostartStatus(req, res);
+      return;
+    }
+
     if (method === 'GET' || method === 'HEAD') {
       serveStatic(res, url.pathname, method === 'HEAD');
       return;
@@ -476,11 +539,164 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
 
     try {
       const result = await options.rpc.call(request.method, request.params);
-      sendJson(res, 200, { jsonrpc: '2.0', id, result });
+      // provider.getSettings crosses the browser trust boundary — scrub
+      // any secret-looking fields before the response leaves.
+      const payload =
+        request.method === 'provider.getSettings' ? scrubSecretFields(result) : result;
+      sendJson(res, 200, { jsonrpc: '2.0', id, result: payload });
     } catch (err) {
       const error = err as Error & { code?: number };
       sendJson(res, 200, jsonRpcError(id, error.code ?? -32603, error.message || 'Internal error'));
     }
+  }
+
+  /**
+   * Shared handler for native-picker endpoints: token + rate limit, then
+   * the injected picker with desktop-handler-style error passthrough.
+   */
+  async function handlePicker(
+    req: IncomingMessage,
+    res: ServerResponse,
+    run: () => Promise<Record<string, unknown>>,
+  ): Promise<void> {
+    if (!authorize(req)) {
+      sendJson(res, 401, jsonRpcError(null, -32603, 'Unauthorized'));
+      return;
+    }
+    const rate = rateLimiter.check(options.token);
+    if (!rate.allowed) {
+      sendJson(res, 429, jsonRpcError(null, -32603, 'Too many requests'));
+      return;
+    }
+    try {
+      sendJson(res, 200, await run());
+    } catch (err) {
+      sendJson(res, 200, jsonRpcError(null, -32603, (err as Error).message || 'Picker failed'));
+    }
+  }
+
+  /**
+   * Deep-link entry: `accomplish://callback/...` URLs forwarded by the
+   * .desktop launcher. Mirrors the Electron protocol-handler dispatch —
+   * `callback/mcp*` is the MCP OAuth callback, other `callback*` hosts are
+   * generic auth callbacks. Everything else is rejected.
+   */
+  async function handleDeepLink(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!authorize(req)) {
+      sendJson(res, 401, jsonRpcError(null, -32603, 'Unauthorized'));
+      return;
+    }
+    const rate = rateLimiter.check(options.token);
+    if (!rate.allowed) {
+      sendJson(res, 429, jsonRpcError(null, -32603, 'Too many requests'));
+      return;
+    }
+    const body = await readBody(req, maxBodyBytes);
+    if (!body.ok) {
+      sendJson(res, 413, jsonRpcError(null, -32603, 'Payload too large'));
+      return;
+    }
+    let url: unknown;
+    try {
+      const parsed: unknown = JSON.parse(body.body);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('not an object');
+      }
+      url = (parsed as { url?: unknown }).url;
+    } catch {
+      sendJson(res, 400, jsonRpcError(null, -32700, 'Parse error'));
+      return;
+    }
+    if (typeof url !== 'string' || !url.startsWith('accomplish://callback')) {
+      sendJson(res, 400, jsonRpcError(null, -32600, 'Not an accomplish:// callback URL'));
+      return;
+    }
+    const event = deepLinkEvent(url);
+    if (!event) {
+      sendJson(res, 400, jsonRpcError(null, -32600, 'Not an accomplish:// callback URL'));
+      return;
+    }
+    broadcast({ type: 'control', event, params: { url } });
+    logger.info('Deep link forwarded', { event });
+    sendJson(res, 200, { accepted: true });
+  }
+
+  /**
+   * Client diagnostics channel — browser-side errors/logs land in the host
+   * log so startup failures are diagnosable without manual console access.
+   * Fire-and-forget semantics; every field is size-capped.
+   */
+  async function handleClientLog(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!authorize(req)) {
+      sendJson(res, 401, jsonRpcError(null, -32603, 'Unauthorized'));
+      return;
+    }
+    const rate = rateLimiter.check(options.token);
+    if (!rate.allowed) {
+      sendJson(res, 429, jsonRpcError(null, -32603, 'Too many requests'));
+      return;
+    }
+    const body = await readBody(req, maxBodyBytes);
+    if (!body.ok) {
+      sendJson(res, 413, jsonRpcError(null, -32603, 'Payload too large'));
+      return;
+    }
+    let entry: { level?: unknown; message?: unknown; context?: unknown };
+    try {
+      const parsed: unknown = JSON.parse(body.body);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('not an object');
+      }
+      entry = parsed as typeof entry;
+    } catch {
+      sendJson(res, 400, jsonRpcError(null, -32700, 'Parse error'));
+      return;
+    }
+    const level = entry.level === 'warn' || entry.level === 'error' ? entry.level : 'info';
+    const message = String(entry.message ?? '').slice(0, 4000);
+    const context = typeof entry.context === 'string' ? entry.context.slice(0, 2000) : undefined;
+    logger[level](`[client] ${message}`, context ? { context } : undefined);
+    sendJson(res, 200, { recorded: true });
+  }
+
+  /**
+   * OpenCode CLI status — host-side equivalent of the Electron
+   * `opencode:check` handler, resolved the same way the daemon resolves it.
+   */
+  async function handleCliStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!authorize(req)) {
+      sendJson(res, 401, jsonRpcError(null, -32603, 'Unauthorized'));
+      return;
+    }
+    const status = options.cliStatusImpl
+      ? await options.cliStatusImpl()
+      : await getCliStatus(options.appPath ?? resolveAppPath());
+    sendJson(res, 200, status);
+  }
+
+  /** systemd autostart status for the settings UI. */
+  function handleAutostartStatus(req: IncomingMessage, res: ServerResponse): void {
+    if (!authorize(req)) {
+      sendJson(res, 401, jsonRpcError(null, -32603, 'Unauthorized'));
+      return;
+    }
+    const status = options.autostartStatusImpl
+      ? options.autostartStatusImpl()
+      : {
+          enabled: isDaemonServiceEnabled({
+            dataDir: '',
+            nodeBin: '',
+            daemonEntryPath: '',
+            appPath: '',
+          }),
+          active: isDaemonServiceActive({
+            dataDir: '',
+            nodeBin: '',
+            daemonEntryPath: '',
+            appPath: '',
+          }),
+        };
+    sendJson(res, 200, status);
   }
 
   async function handleOpenExternal(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -539,8 +755,8 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
     broadcastNotification(method: string, params: unknown): void {
       broadcast({ type: 'notification', method, params });
     },
-    broadcastControl(event: string): void {
-      broadcast({ type: 'control', event });
+    broadcastControl(event: string, params?: unknown): void {
+      broadcast({ type: 'control', event, ...(params !== undefined ? { params } : {}) });
     },
     async close(): Promise<void> {
       for (const entry of sockets) {

@@ -177,6 +177,7 @@ function spawnOpenCodeServer(
   deps: TaskConfigBuilderOptions,
   signal?: AbortSignal,
   onClosed?: () => void,
+  cwd?: string,
 ): Promise<TrackedOpencodeServerHandle> {
   const command = getOpencodeBinPath(deps);
   const args = ['serve', '--hostname=127.0.0.1', '--port=0'];
@@ -187,6 +188,12 @@ function spawnOpenCodeServer(
   // shell script can't `exec node`. The runtime overrides win on conflict.
   const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...runtimeEnv };
   const proc = spawn(command, args, {
+    // Run the serve process inside the task workspace. Without a cwd the
+    // session directory defaults to the daemon's process cwd (homedir), and
+    // opencode's turn-start git snapshot (`git add --all --sparse`) then
+    // walks the entire home directory and never finishes. Absent a known
+    // working directory we keep the previous inherit-process-cwd behaviour.
+    ...(cwd ? { cwd } : {}),
     detached: process.platform !== 'win32',
     env: mergedEnv,
     signal,
@@ -398,15 +405,21 @@ class OpenCodeTaskRuntime {
       const { env: runtimeEnv } = await onBeforeStart(this.deps.storage, this.deps, this.ctx);
       throwIfStartAborted(signal);
 
-      const spawnedServer = await spawnOpenCodeServer(runtimeEnv, this.deps, signal, () => {
-        // Runtime-side `onClosed`: the child exited independently. Flip state
-        // so `isReady()` reflects reality; the adapter consumes its own
-        // `session.error` SDK event stream to report task-level failures.
-        if (this.disposed) return;
-        this.ready = false;
-        this.serverUrl = undefined;
-        this.server = null;
-      });
+      const spawnedServer = await spawnOpenCodeServer(
+        runtimeEnv,
+        this.deps,
+        signal,
+        () => {
+          // Runtime-side `onClosed`: the child exited independently. Flip state
+          // so `isReady()` reflects reality; the adapter consumes its own
+          // `session.error` SDK event stream to report task-level failures.
+          if (this.disposed) return;
+          this.ready = false;
+          this.serverUrl = undefined;
+          this.server = null;
+        },
+        this.ctx.workingDirectory,
+      );
       this.server = spawnedServer;
 
       if (signal.aborted) {
@@ -419,7 +432,7 @@ class OpenCodeTaskRuntime {
       log.info(
         `[OpenCode Server] Task runtime ${this.taskId} ready in ${(
           performance.now() - startedAt
-        ).toFixed(0)}ms at ${this.serverUrl}`,
+        ).toFixed(0)}ms at ${this.serverUrl} (cwd=${this.ctx.workingDirectory ?? '<inherited>'})`,
       );
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {

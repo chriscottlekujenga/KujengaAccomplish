@@ -15,6 +15,7 @@ export default tseslint.config(
       '**/playwright-report/**',
       'scripts/**',
       '**/scripts/**/*.cjs',
+      '**/scripts/**/*.mjs',
       '**/public/theme-init.js',
       '**/out/**',
       '.claude/**',

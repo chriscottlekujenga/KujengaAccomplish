@@ -187,7 +187,9 @@ describe('DaemonConnector', () => {
     const spawnFn = makeSpawnSpy();
     process.env.ELECTRON_RUN_AS_NODE = '1';
     try {
-      const connector = new DaemonConnector(makeConnectorOptions(dataDir, { spawnFn }));
+      const connector = new DaemonConnector(
+        makeConnectorOptions(dataDir, { spawnFn, appPath: '/repo' }),
+      );
       connector.spawnDaemon(dataDir);
       expect(spawnFn).toHaveBeenCalledTimes(1);
       const [command, args, options] = spawnFn.mock.calls[0];
@@ -195,6 +197,9 @@ describe('DaemonConnector', () => {
       expect(args).toEqual(['/fake/daemon/index.js', '--data-dir', dataDir]);
       expect(options.detached).toBe(true);
       expect(options.env?.ELECTRON_RUN_AS_NODE).toBeUndefined();
+      // Credential isolation: opencode auth/data scoped to the data dir.
+      expect(options.env?.XDG_DATA_HOME).toBe(dataDir);
+      expect(options.env?.ACCOMPLISH_APP_PATH).toBe('/repo');
     } finally {
       delete process.env.ELECTRON_RUN_AS_NODE;
     }

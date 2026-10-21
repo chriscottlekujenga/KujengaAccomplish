@@ -36,6 +36,7 @@ import type {
   KnowledgeNoteUpdateInput,
   StoredFavorite,
   FileAttachmentInfo,
+  ApiKeyConfig,
 } from '@accomplish_ai/agent-core';
 import type { ScheduledTask } from '@accomplish_ai/agent-core/common';
 import type { AccomplishAPI } from './accomplish';
@@ -183,17 +184,53 @@ export class HttpTransport {
   }
 
   async openExternal(url: string): Promise<void> {
-    const res = await this.fetchImpl(`${this.baseUrl}/open-external`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.token}`,
-      },
-      body: JSON.stringify({ url }),
+    await this.postJson('/open-external', { url });
+  }
+
+  /** Phase 2 native pickers — served by the host (zenity dialogs). */
+  async pickFolder(): Promise<string | null> {
+    const body = (await this.postJson('/pick-folder', {})) as { path: string | null };
+    return body.path;
+  }
+
+  async pickFiles(): Promise<unknown[]> {
+    const body = (await this.postJson('/pick-files', {})) as { files?: unknown[] };
+    return body.files ?? [];
+  }
+
+  /** Client diagnostics — browser errors/logs land in the host log. */
+  async clientLog(entry: { level?: string; message: string; context?: string }): Promise<void> {
+    await this.postJson('/client-log', entry as unknown as Record<string, unknown>);
+  }
+
+  /** OpenCode CLI status (host-side resolution, mirrors opencode:check). */
+  async cliStatus(): Promise<{
+    installed: boolean;
+    version: string | null;
+    installCommand: string;
+  }> {
+    const res = await this.fetchImpl(`${this.baseUrl}/cli-status`, {
+      headers: { Authorization: `Bearer ${this.token}` },
     });
     if (!res.ok) {
-      throw new GatewayRpcError(res.status, `Failed to open URL (HTTP ${res.status})`);
+      throw new GatewayRpcError(res.status, `CLI status failed (HTTP ${res.status})`);
     }
+    return (await res.json()) as {
+      installed: boolean;
+      version: string | null;
+      installCommand: string;
+    };
+  }
+
+  /** systemd autostart status (settings UI). */
+  async autostartStatus(): Promise<{ enabled: boolean; active: boolean }> {
+    const res = await this.fetchImpl(`${this.baseUrl}/autostart-status`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    if (!res.ok) {
+      throw new GatewayRpcError(res.status, `Autostart status failed (HTTP ${res.status})`);
+    }
+    return (await res.json()) as { enabled: boolean; active: boolean };
   }
 
   async health(): Promise<{ ok: boolean; version: string; platform: string }> {
@@ -202,6 +239,25 @@ export class HttpTransport {
       throw new GatewayRpcError(res.status, `Gateway health check failed (HTTP ${res.status})`);
     }
     return (await res.json()) as { ok: boolean; version: string; platform: string };
+  }
+
+  private async postJson(path: string, payload: Record<string, unknown>): Promise<unknown> {
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json().catch(() => null)) as {
+      error?: { code: number; message: string };
+    } | null;
+    if (!res.ok) {
+      const message = body?.error?.message ?? `Gateway rejected ${path} (HTTP ${res.status})`;
+      throw new GatewayRpcError(body?.error?.code ?? res.status, message);
+    }
+    return body;
   }
 }
 
@@ -234,7 +290,7 @@ export class GatewayEventStream {
   private readonly reconnectInitialMs: number;
   private readonly reconnectMaxMs: number;
   private readonly notificationHandlers = new Map<string, Set<(params: unknown) => void>>();
-  private readonly controlHandlers = new Map<string, Set<() => void>>();
+  private readonly controlHandlers = new Map<string, Set<(params?: unknown) => void>>();
   private socket: GatewaySocket | null = null;
   private authed = false;
   private hadOpenedSession = false;
@@ -262,8 +318,8 @@ export class GatewayEventStream {
     };
   }
 
-  /** Subscribe to a control event (`daemon:disconnected` etc.). */
-  onControlEvent(event: string, callback: () => void): () => void {
+  /** Subscribe to a control event (`daemon:disconnected`, deep links, etc.). */
+  onControlEvent(event: string, callback: (params?: unknown) => void): () => void {
     this.connect();
     const handlers = this.controlHandlers.get(event) ?? new Set();
     handlers.add(callback);
@@ -324,7 +380,7 @@ export class GatewayEventStream {
         return;
       }
       if (message.type === 'control' && message.event) {
-        this.dispatchControl(message.event);
+        this.dispatchControl(message.event, message.params);
       }
     };
 
@@ -367,13 +423,13 @@ export class GatewayEventStream {
     }
   }
 
-  private dispatchControl(event: string): void {
+  private dispatchControl(event: string, params?: unknown): void {
     const handlers = this.controlHandlers.get(event);
     if (!handlers) {
       return;
     }
     for (const handler of handlers) {
-      handler();
+      handler(params);
     }
   }
 }
@@ -507,8 +563,71 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     setSelectedModel: (model: unknown) =>
       call('settings.setSelectedModel', { model }).then(invalidateSettings),
 
+    // ── Logging: real diagnostics channel to the host log ──
+    logEvent: (payload: { level?: string; message: string; context?: Record<string, unknown> }) =>
+      transport.clientLog({
+        level: payload.level,
+        message: payload.message,
+        context: payload.context ? JSON.stringify(payload.context) : undefined,
+      }) as Promise<unknown>,
+
+    // ── Provider settings (masked metadata; gateway scrubs secret-looking
+    //    fields before the response crosses the trust boundary) ──
+    getProviderSettings: () => call('provider.getSettings') as never,
+
+    // ── Skills ──
+    getSkills: () => call('skills.list') as never,
+    getEnabledSkills: () => call('skills.listEnabled') as never,
+    setSkillEnabled: (id: string, enabled: boolean) => call('skills.setEnabled', { id, enabled }),
+    getSkillContent: (id: string) => call('skills.getContent', { id }) as never,
+    resyncSkills: () => call('skills.resync') as never,
+
+    // ── OpenCode CLI status (host-side resolution) ──
+    checkOpenCodeCli: () => transport.cliStatus() as never,
+    getOpenCodeVersion: () =>
+      transport.cliStatus().then((status) => status.version) as Promise<string | null>,
+
+    // ── Speech: honestly unconfigured over the gateway in Phase 2 — the
+    //    voice UI disables itself instead of crashing or lying ──
+    speechIsConfigured: () => Promise.resolve(false),
+    speechGetConfig: () => Promise.resolve({ enabled: false, hasApiKey: false }) as never,
+
+    // ── Build capabilities: OSS build, no analytics in the shim ──
+    getBuildCapabilities: () => Promise.resolve({ hasFreeMode: false, hasAnalytics: false }),
+
+    // ── systemd autostart status (settings UI) ──
+    isAutoStartEnabled: () => transport.autostartStatus().then((s) => s.enabled),
+
+    // ── Accomplish AI usage (allowlisted daemon RPC) ──
+    accomplishAiGetUsage: () => call('accomplish-ai.get-usage') as never,
+
     // ── Daemon (read-only surface; host-side control lands in Phase 2) ──
     daemonPing: () => call('daemon.ping'),
+
+    // ── API key writes (reads stay gateway-blocklisted; masked reads land
+    //    in Phase 3 — storing keys from the browser is one-way by design) ──
+    addApiKey: ((provider: string, key: string, _label?: string) =>
+      call('secrets.storeApiKey', { provider, apiKey: key }).then(
+        () =>
+          ({
+            id: provider,
+            provider,
+            exists: true,
+            prefix: key.slice(0, 4),
+          }) as unknown as ApiKeyConfig,
+      )) as AccomplishAPI['addApiKey'],
+    hasApiKey: () => call('secrets.hasAnyApiKey') as Promise<boolean>,
+    hasAnyApiKey: () => call('secrets.hasAnyApiKey') as Promise<boolean>,
+
+    // ── Native pickers (Phase 2 — host-side zenity dialogs) ──
+    pickFolder: () => transport.pickFolder() as Promise<string | null>,
+    pickFiles: () => transport.pickFiles() as Promise<FileAttachmentInfo[]>,
+
+    // ── Deep-link callbacks (accomplish:// OAuth) ──
+    onMcpAuthCallback: (callback: (url: string) => void): (() => void) =>
+      events.onControlEvent('mcp-callback', (params) => {
+        callback((params as { url: string } | undefined)?.url ?? '');
+      }),
 
     // ── Workspaces ──
     listWorkspaces: () => call('workspace.list') as Promise<Workspace[]>,
@@ -562,9 +681,6 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     deleteSchedule: (scheduleId: string) => call('task.cancelScheduled', { scheduleId }),
     setScheduleEnabled: (scheduleId: string, enabled: boolean) =>
       call('task.setScheduleEnabled', { scheduleId, enabled }),
-
-    // ── Logging (no-op over the gateway in Phase 1) ──
-    logEvent: () => Promise.resolve(undefined),
 
     // ── Event subscriptions (daemon notifications → renderer callbacks) ──
     onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
@@ -660,6 +776,20 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     // ── Debug log channel: no daemon-side source exists in Phase 1. ──
     onDebugLog: (): (() => void) => () => {},
 
+    // ── HuggingFace download progress: HF local-server control is a
+    //    Phase 3 port; the subscription never fires until then. ──
+    onHuggingFaceDownloadProgress: (): (() => void) => () => {},
+
+    // ── Close confirmation: the Electron window-close flow has no browser
+    //    equivalent in Phase 2 — closing the Firefox window is ALWAYS
+    //    "keep daemon" (the daemon is a systemd-managed background service
+    //    by design). The subscription therefore never fires, and
+    //    respondToClose is a harmless no-op. ──
+    onCloseRequested:
+      (_callback: () => void): (() => void) =>
+      () => {},
+    respondToClose: (): void => {},
+
     // ── Analytics: no-op until the Phase 3 batched endpoint. ──
     analytics: new Proxy(
       {},
@@ -668,6 +798,23 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
       },
     ),
   };
+
+  // Optional methods (marked `?` on AccomplishAPI) that the gateway shim
+  // does not implement. The application guards every one of these with a
+  // presence check (e.g. `if (!accomplish.onCloseRequested)`), so the
+  // correct browser-shim shape is ABSENCE — returning a throwing function
+  // here defeats those guards and crashes the effect path (the Phase 2
+  // startup regression: CloseConfirmDialog → RouteErrorFallback).
+  const OPTIONAL_NOT_SUPPORTED = new Set([
+    'onBrowserFrame',
+    'onBrowserNavigate',
+    'onBrowserStatus',
+    'startBrowserPreview',
+    'stopBrowserPreview',
+    'getBrowserPreviewStatus',
+    'onWorkspaceDeleted',
+    'gws',
+  ]);
 
   return new Proxy(core, {
     get(target, prop, receiver) {
@@ -681,6 +828,11 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
       if (prop in target) {
         return Reflect.get(target, prop, receiver);
       }
+      if (OPTIONAL_NOT_SUPPORTED.has(prop)) {
+        // Optional and unimplemented — report absence so guards skip it.
+        return undefined;
+      }
+      // Required but not yet implemented — loud, actionable diagnostic.
       return (..._args: unknown[]) => {
         throw new HttpShimNotSupportedError(String(prop));
       };

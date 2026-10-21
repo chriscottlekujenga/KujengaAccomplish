@@ -24,7 +24,7 @@ const TEST_TOKEN = 'unit-test-gateway-token-1234567890';
 
 class FakeEventStream {
   handlers = new Map<string, Set<(params: unknown) => void>>();
-  controls = new Map<string, Set<() => void>>();
+  controls = new Map<string, Set<(params?: unknown) => void>>();
 
   onNotification(method: string, callback: (params: unknown) => void): () => void {
     const set = this.handlers.get(method) ?? new Set();
@@ -35,7 +35,7 @@ class FakeEventStream {
     };
   }
 
-  onControlEvent(event: string, callback: () => void): () => void {
+  onControlEvent(event: string, callback: (params?: unknown) => void): () => void {
     const set = this.controls.get(event) ?? new Set();
     set.add(callback);
     this.controls.set(event, set);
@@ -50,9 +50,9 @@ class FakeEventStream {
     }
   }
 
-  emitControl(event: string): void {
+  emitControl(event: string, params?: unknown): void {
     for (const handler of this.controls.get(event) ?? []) {
-      handler();
+      handler(params);
     }
   }
 }
@@ -235,7 +235,25 @@ describe('createHttpAccomplishApi', () => {
         return null;
       },
       openExternal: async () => {},
+      pickFolder: async () => '/home/chris/Documents',
+      pickFiles: async () => [
+        {
+          id: 'u1',
+          name: 'a.md',
+          path: '/home/chris/a.md',
+          type: 'text',
+          size: 3,
+          content: 'hi\n',
+        },
+      ],
       health: async () => ({ ok: true, version: '0.1.0', platform: 'linux' }),
+      clientLog: vi.fn(async () => undefined),
+      cliStatus: vi.fn(async () => ({
+        installed: true,
+        version: '1.14.18',
+        installCommand: 'npm i -g opencode-ai',
+      })),
+      autostartStatus: vi.fn(async () => ({ enabled: true, active: true })),
     } as unknown as HttpTransport;
   });
 
@@ -291,8 +309,8 @@ describe('createHttpAccomplishApi', () => {
 
   it('throws a loud error for methods not yet implemented over HTTP', () => {
     const api = makeApi();
-    expect(() => api.pickFolder()).toThrow(HttpShimNotSupportedError);
-    expect(() => api.pickFolder()).toThrow(/pickFolder/);
+    expect(() => api.getDaemonSocketPath()).toThrow(HttpShimNotSupportedError);
+    expect(() => api.getDaemonSocketPath()).toThrow(/getDaemonSocketPath/);
     expect(() => (api as unknown as { daemonRestart: () => void }).daemonRestart()).toThrow(
       HttpShimNotSupportedError,
     );
@@ -349,6 +367,84 @@ describe('createHttpAccomplishApi', () => {
     unsubscribe();
     events.emit('task.progress', { taskId: 'tsk_2' });
     expect(seen).toEqual([{ taskId: 'tsk_1' }]);
+  });
+
+  it('supports native pickers through the gateway', async () => {
+    const api = makeApi();
+    await expect(api.pickFolder()).resolves.toBe('/home/chris/Documents');
+    const files = (await api.pickFiles()) as Array<{ name: string }>;
+    expect(files.map((f) => f.name)).toEqual(['a.md']);
+  });
+
+  it('stores API keys one-way (secrets.storeApiKey)', async () => {
+    const api = makeApi();
+    await api.addApiKey('custom', 'test-key-xyz', 'Dev');
+    expect(calls.at(-1)).toEqual({
+      method: 'secrets.storeApiKey',
+      params: { provider: 'custom', apiKey: 'test-key-xyz' },
+    });
+    await api.hasApiKey();
+    expect(calls.at(-1)?.method).toBe('secrets.hasAnyApiKey');
+  });
+
+  it('routes accomplish:// MCP deep-link callbacks to onMcpAuthCallback', () => {
+    const api = makeApi();
+    const urls: string[] = [];
+    api.onMcpAuthCallback?.((url) => {
+      urls.push(url);
+    });
+    events.emitControl('mcp-callback', { url: 'accomplish://callback/mcp?state=9' });
+    expect(urls).toEqual(['accomplish://callback/mcp?state=9']);
+  });
+
+  it('implements the boot-path provider/settings surface without throwing', async () => {
+    const api = makeApi();
+    await expect(api.getProviderSettings()).resolves.toEqual(null);
+    await expect(api.getEnabledSkills()).resolves.toEqual(null);
+    await expect(api.checkOpenCodeCli()).resolves.toMatchObject({ installed: true });
+    await expect(api.getOpenCodeVersion()).resolves.toBe('1.14.18');
+    await expect(api.speechIsConfigured()).resolves.toBe(false);
+    await expect(api.getBuildCapabilities()).resolves.toEqual({
+      hasFreeMode: false,
+      hasAnalytics: false,
+    });
+    await expect(api.isAutoStartEnabled()).resolves.toBe(true);
+  });
+
+  it('forwards logEvent entries to the client-log channel', async () => {
+    const api = makeApi();
+    await api.logEvent({ level: 'warn', message: 'test event', context: { page: 'home' } });
+    expect(transport.clientLog).toHaveBeenCalledWith(
+      expect.objectContaining({ level: 'warn', message: 'test event' }),
+    );
+  });
+
+  it('implements the close-confirm flow so CloseConfirmDialog boots without crashing', () => {
+    // Regression: the Phase 2 startup crash — the throwing stub made
+    // optional methods truthy functions, defeating the app's presence
+    // guards (CloseConfirmDialog → RouteErrorFallback "Something went wrong").
+    const api = makeApi();
+    expect(api.onCloseRequested).toBeTypeOf('function');
+    const unsubscribe = api.onCloseRequested?.(() => {});
+    expect(typeof unsubscribe).toBe('function');
+    expect(() => unsubscribe?.()).not.toThrow();
+    expect(() => api.respondToClose?.('keep-daemon')).not.toThrow();
+  });
+
+  it('reports unimplemented OPTIONAL methods as absent (undefined), not throwing functions', () => {
+    const api = makeApi() as unknown as Record<string, unknown>;
+    expect(api.startBrowserPreview).toBeUndefined();
+    expect(api.stopBrowserPreview).toBeUndefined();
+    expect(api.getBrowserPreviewStatus).toBeUndefined();
+    expect(api.onBrowserFrame).toBeUndefined();
+    expect(api.onWorkspaceDeleted).toBeUndefined();
+    expect(api.gws).toBeUndefined();
+  });
+
+  it('keeps REQUIRED unknown methods loud with actionable diagnostics', () => {
+    const api = makeApi() as unknown as Record<string, () => unknown>;
+    expect(() => api.daemonRestart()).toThrow(HttpShimNotSupportedError);
+    expect(() => api.captureScreenshot()).toThrow(/captureScreenshot/);
   });
 });
 

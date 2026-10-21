@@ -177,6 +177,50 @@ describe('TaskService parity', () => {
     expect(capturedTaskConfigs[0].config.files).toEqual(attachments);
   });
 
+  // REGRESSION (Phase 2 local-model hang): startTask copied only
+  // `selectedModel.model` into the TaskConfig and left `provider` unset —
+  // OpenCodeAdapter.buildModelParam then returned null, session.prompt
+  // omitted `model`, and opencode's model cascade was empty so the task
+  // never called ollama and hung.
+  it('startTask threads the active provider model into modelId and provider', async () => {
+    const storage = createMockStorage();
+    (storage.getActiveProviderModel as ReturnType<typeof vi.fn>).mockReturnValue({
+      provider: 'ollama',
+      model: 'llama3.2',
+    });
+    const service = new TaskService(storage as never, {
+      userDataPath: '/data',
+      mcpToolsPath: '/tools',
+    });
+
+    await service.startTask({ prompt: 'Run locally', taskId: 'tsk_provider' });
+
+    expect(capturedTaskConfigs).toHaveLength(1);
+    expect(capturedTaskConfigs[0].config.modelId).toBe('llama3.2');
+    expect(capturedTaskConfigs[0].config.provider).toBe('ollama');
+  });
+
+  it('resumeSession threads the active provider model into modelId and provider', async () => {
+    const storage = createMockStorage();
+    (storage.getActiveProviderModel as ReturnType<typeof vi.fn>).mockReturnValue({
+      provider: 'ollama',
+      model: 'llama3.2',
+    });
+    const service = new TaskService(storage as never, {
+      userDataPath: '/data',
+      mcpToolsPath: '/tools',
+    });
+
+    await service.resumeSession({
+      sessionId: 'sess-provider',
+      prompt: 'continue',
+    });
+
+    expect(capturedTaskConfigs).toHaveLength(1);
+    expect(capturedTaskConfigs[0].config.modelId).toBe('llama3.2');
+    expect(capturedTaskConfigs[0].config.provider).toBe('ollama');
+  });
+
   // Regression: `resumeSession` used to not accept `workspaceId` at all,
   // so every follow-up turn in a workspace conversation ran without
   // workspace-scoped knowledge notes. This test pins the explicit forward.

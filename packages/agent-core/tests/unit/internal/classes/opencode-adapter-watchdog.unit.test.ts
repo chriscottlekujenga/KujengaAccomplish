@@ -146,4 +146,42 @@ describe('OpenCodeAdapter watchdog wiring', () => {
     // already saw their success result.
     expect(errorEvents).toHaveLength(0);
   });
+
+  it('handleSdkEvent does not count server.heartbeat keep-alives as progress', () => {
+    const adapter = constructAdapter();
+    const priv = adapter as unknown as {
+      currentSessionId: string | null;
+      handleSdkEvent: (event: unknown) => void;
+      watchdogActivityCounter: number;
+      sampleWatchdogState: () => { fingerprint: string };
+    };
+    priv.currentSessionId = 'ses_hb';
+
+    const before = priv.watchdogActivityCounter;
+    const fingerprintBefore = priv.sampleWatchdogState().fingerprint;
+
+    // `server.heartbeat` arrives on the SSE stream ~1/s even while the task
+    // is hung. Counting it kept the fingerprint advancing forever, so the
+    // inactivity watchdog never fired.
+    priv.handleSdkEvent({ type: 'server.heartbeat', properties: {} });
+    priv.handleSdkEvent({ type: 'server.heartbeat', properties: {} });
+
+    expect(priv.watchdogActivityCounter).toBe(before);
+    expect(priv.sampleWatchdogState().fingerprint).toBe(fingerprintBefore);
+  });
+
+  it('handleSdkEvent still counts real SDK events as progress', () => {
+    const adapter = constructAdapter();
+    const priv = adapter as unknown as {
+      handleSdkEvent: (event: unknown) => void;
+      watchdogActivityCounter: number;
+    };
+
+    const before = priv.watchdogActivityCounter;
+    // A benign real event: session.idle is ignored by the completion gate
+    // while awaitingIdle=false, but it still counts as stream progress.
+    priv.handleSdkEvent({ type: 'session.idle', properties: {} });
+
+    expect(priv.watchdogActivityCounter).toBe(before + 1);
+  });
 });

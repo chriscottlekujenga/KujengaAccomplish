@@ -34,6 +34,13 @@ import { ACCOMPLISH_AGENT_NAME } from '../../../../src/opencode/config-generator
  *   - Continuation prompt → also carries `agent: 'accomplish'`.
  * If a future SDK upgrade or refactor silently drops the field, these
  * tests fail loudly before the PR lands.
+ *
+ * The file also pins the model-ref seam (Phase 2 local-model hang): the
+ * daemon threads `config.provider` + `config.modelId`, and the adapter
+ * must send them as the SDK `model: { providerID, modelID }` field —
+ * mapped through PROVIDER_ID_TO_OPENCODE — on BOTH the initial prompt
+ * and the continuation nudge. Without it opencode's model cascade is
+ * empty and the LLM is never called (task hangs, e.g. ollama).
  */
 describe('OpenCodeAdapter agent selection on session.prompt', () => {
   beforeEach(() => {
@@ -51,6 +58,7 @@ describe('OpenCodeAdapter agent selection on session.prompt', () => {
     agent?: string;
     system?: string;
     text?: string;
+    model?: { providerID: string; modelID: string };
   }
 
   function buildFakeClient(): {
@@ -69,12 +77,14 @@ describe('OpenCodeAdapter agent selection on session.prompt', () => {
           agent?: string;
           system?: string;
           parts: Array<{ text?: string }>;
+          model?: { providerID: string; modelID: string };
         }) => {
           promptCalls.push({
             sessionID: args.sessionID,
             agent: args.agent,
             system: args.system,
             text: args.parts[0]?.text,
+            model: args.model,
           });
           return Promise.resolve();
         },
@@ -98,7 +108,7 @@ describe('OpenCodeAdapter agent selection on session.prompt', () => {
 
   async function runStartTask(
     adapter: OpenCodeAdapter,
-    config: { prompt: string; sessionId?: string },
+    config: { prompt: string; sessionId?: string; provider?: string; modelId?: string },
     fake: ReturnType<typeof buildFakeClient>,
   ): Promise<void> {
     const adapterOpts = (
@@ -251,5 +261,125 @@ describe('OpenCodeAdapter agent selection on session.prompt', () => {
     expect(fake.promptCalls.length).toBe(1);
     expect(fake.promptCalls[0].sessionID).toBe('session_was_created_before_note_was_added');
     expect(fake.promptCalls[0].system).toContain('Reply in haiku form');
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Model ref on session.prompt (Phase 2 local-model hang fix).
+  //
+  // The daemon threads `config.provider` + `config.modelId`; the adapter
+  // must convert them into the SDK `model: { providerID, modelID }` field,
+  // mapping internal provider IDs through PROVIDER_ID_TO_OPENCODE so they
+  // match the provider names in the generated opencode config. The
+  // continuation nudge must reuse the same ref — it fires outside
+  // startTask and used to go out model-less.
+  // ──────────────────────────────────────────────────────────────────────
+  it('initial session.prompt carries model= mapped through PROVIDER_ID_TO_OPENCODE', async () => {
+    const adapter = new OpenCodeAdapter(
+      { platform: 'darwin', isPackaged: false, tempPath: '/tmp' },
+      'tsk_model_zai',
+    );
+    const fake = buildFakeClient();
+    await runStartTask(
+      adapter,
+      { prompt: 'run with zai plan', provider: 'zai', modelId: 'glm-4.7' },
+      fake,
+    );
+
+    expect(fake.promptCalls.length).toBe(1);
+    expect(fake.promptCalls[0].model).toEqual({
+      providerID: 'zai-coding-plan',
+      modelID: 'glm-4.7',
+    });
+  });
+
+  it('initial session.prompt carries the provider verbatim when already an OpenCode registry name (ollama)', async () => {
+    const adapter = new OpenCodeAdapter(
+      { platform: 'darwin', isPackaged: false, tempPath: '/tmp' },
+      'tsk_model_ollama',
+    );
+    const fake = buildFakeClient();
+    await runStartTask(
+      adapter,
+      { prompt: 'run locally', provider: 'ollama', modelId: 'llama3.2' },
+      fake,
+    );
+
+    expect(fake.promptCalls.length).toBe(1);
+    expect(fake.promptCalls[0].model).toEqual({
+      providerID: 'ollama',
+      modelID: 'llama3.2',
+    });
+  });
+
+  it('session.prompt strips the provider prefix from a full model ref (ollama cloud 404 fix)', async () => {
+    // REGRESSION (live Phase 2 verification): storage stores the selected
+    // model as a full ref (`ollama/glm-5.3:cloud`). Opencode forwards
+    // modelID verbatim to the provider's /v1/chat/completions call, and the
+    // server rejects the prefixed name ('model "ollama/glm-5.3" not found')
+    // → session.error at the first turn. modelID must be the bare
+    // server-known name, same splitting normalizeSelectedModelForSdk does.
+    const adapter = new OpenCodeAdapter(
+      { platform: 'darwin', isPackaged: false, tempPath: '/tmp' },
+      'tsk_model_fullref',
+    );
+    const fake = buildFakeClient();
+    await runStartTask(
+      adapter,
+      { prompt: 'run locally', provider: 'ollama', modelId: 'ollama/glm-5.3:cloud' },
+      fake,
+    );
+
+    expect(fake.promptCalls.length).toBe(1);
+    expect(fake.promptCalls[0].model).toEqual({
+      providerID: 'ollama',
+      modelID: 'glm-5.3:cloud',
+    });
+  });
+
+  it('session.prompt omits model= when config carries no provider/modelId', async () => {
+    const adapter = new OpenCodeAdapter(
+      { platform: 'darwin', isPackaged: false, tempPath: '/tmp' },
+      'tsk_model_absent',
+    );
+    const fake = buildFakeClient();
+    await runStartTask(adapter, { prompt: 'no model info' }, fake);
+
+    expect(fake.promptCalls.length).toBe(1);
+    expect(fake.promptCalls[0].model).toBeUndefined();
+  });
+
+  it('continuation prompt reuses the same model ref as the initial prompt', async () => {
+    const adapter = new OpenCodeAdapter(
+      { platform: 'darwin', isPackaged: false, tempPath: '/tmp' },
+      'tsk_model_continuation',
+    );
+    const fake = buildFakeClient();
+    await runStartTask(
+      adapter,
+      { prompt: 'multi-step task', provider: 'ollama', modelId: 'llama3.2' },
+      fake,
+    );
+    expect(fake.promptCalls.length).toBe(1);
+
+    // Drive the completion enforcer into the continuation path the same
+    // way live event flow does: tools were used, the agent stopped without
+    // complete_task (→ CONTINUATION_PENDING), then process exit 0 fires
+    // the nudge.
+    const enforcer = (
+      adapter as unknown as {
+        completionEnforcer: {
+          markToolsUsed: () => void;
+          handleStepFinish: (reason: string) => unknown;
+          handleProcessExit: (code: number) => Promise<void>;
+        };
+      }
+    ).completionEnforcer;
+    enforcer.markToolsUsed();
+    enforcer.handleStepFinish('stop');
+    await enforcer.handleProcessExit(0);
+
+    expect(fake.promptCalls.length).toBe(2);
+    expect(fake.promptCalls[1].agent).toBe(ACCOMPLISH_AGENT_NAME);
+    expect(fake.promptCalls[1].model).toEqual({ providerID: 'ollama', modelID: 'llama3.2' });
   });
 });
