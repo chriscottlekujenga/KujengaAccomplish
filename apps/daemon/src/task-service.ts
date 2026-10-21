@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
-import { tmpdir, homedir } from 'node:os';
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   createTaskManager,
   createTaskId,
@@ -28,6 +30,7 @@ import {
 import { OpenCodeServerManager } from './opencode/server-manager.js';
 
 import { type TaskServiceEvents, type TaskServiceOptions } from './task-service-events.js';
+import { log } from './logger.js';
 
 export type { TaskServiceEvents, TaskServiceOptions };
 
@@ -37,6 +40,14 @@ export class TaskService extends EventEmitter {
   private opts: TaskConfigBuilderOptions;
   private rpcConnectivityProbe: { hasConnectedClients(): boolean };
   private serverManager: OpenCodeServerManager;
+  /**
+   * Dedicated default execution workspace for tasks that do not carry a
+   * user-picked folder. Using the home directory here made `opencode serve`
+   * run its turn-start git snapshot against the entire home tree (~97% CPU,
+   * task hang). Resolved once per TaskService so warm runtime reuse (≤60s)
+   * and resume turns see a stable cwd.
+   */
+  private defaultWorkingDirectory: string;
 
   /**
    * Per-task origin map. Populated at task start, read by the source-based
@@ -56,6 +67,20 @@ export class TaskService extends EventEmitter {
       appPath: options.appPath ?? '',
       accomplishRuntime: options.accomplishRuntime,
     };
+    // Stable default execution workspace under the daemon's data dir.
+    // Created eagerly (idempotent); a failure must not block construction —
+    // user-picked folders still work and the runtime error would surface
+    // at spawn time, so we only log and fall back to the uncreated path.
+    this.defaultWorkingDirectory = path.join(this.opts.userDataPath, 'task-workspace');
+    try {
+      mkdirSync(this.defaultWorkingDirectory, { recursive: true });
+    } catch (err) {
+      log.warn(
+        `[TaskService] Failed to create default task workspace at ${this.defaultWorkingDirectory}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     // Default probe: treat UI as always connected. Tests + tooling that
     // construct TaskService without an RPC server get this default — the
     // no-UI auto-deny path is never triggered, which keeps unit tests
@@ -147,7 +172,7 @@ export class TaskService extends EventEmitter {
         // pure OSS builds (no-op).
         setProxyTaskId: options.setProxyTaskId,
       },
-      defaultWorkingDirectory: homedir(),
+      defaultWorkingDirectory: this.defaultWorkingDirectory,
       maxConcurrentTasks: 10,
       isCliAvailable: () => isCliAvailable(this.opts),
       onBeforeTaskStart: createOnBeforeTaskStart(this.opts),
@@ -199,7 +224,12 @@ export class TaskService extends EventEmitter {
       taskId,
       modelId: params.modelId,
       sessionId: params.sessionId,
-      workingDirectory: params.workingDirectory,
+      // Firefox/desktop UIs omit workingDirectory for ordinary tasks. Inject
+      // the daemon-owned default workspace here (instead of relying solely on
+      // TaskManager's fallback) so the persisted config always carries an
+      // explicit cwd; empty-string params collapse to the default too, which
+      // mirrors TaskManager's `||` semantics.
+      workingDirectory: params.workingDirectory || this.defaultWorkingDirectory,
       workspaceId: params.workspaceId,
       systemPromptAppend: params.systemPromptAppend,
       files: params.attachments,

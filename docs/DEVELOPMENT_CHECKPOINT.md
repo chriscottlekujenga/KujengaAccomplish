@@ -62,15 +62,13 @@ Security model: loopback-only bind, timing-safe bearer token delivered in the la
 
 ## 5. Git Branch & History
 
-- Branch `linux-firefox-ai`, HEAD `7f238d4` (Phase 1), base `b3140a3` (upstream v31)
+- Branch `linux-firefox-ai`, HEAD `52c0373` (Phase 2 commit; parent `7f238d4` = Phase 1, base `b3140a3` = upstream v31)
 - Worktrees: `/home/chris/Accomplish` (`main` @ `690b447`, Kujenga source — READ-ONLY), this repo is the migration target
-- Nothing pushed/merged. Phase 2 is committed on this branch in a single commit (see `git log`); the pre-commit battery (§11) was green at commit time.
+- Nothing pushed/merged/reset. Phase 2 battery was green before each commit. The post-commit live-Firefox failure (§B2) is fixed, regression-tested, and live-verified; its fix commit is on this branch (see `git log`).
 
-## 6. Uncommitted Changes (49 entries: 29 modified, 20 untracked)
+## 6. Default-Workspace Fix (post-`52c0373`, committed — 4 files)
 
-Modified: app+daemon fixes above plus prior-session files — `apps/daemon/src/{task-service.ts, opencode/server-manager.ts}`, `apps/daemon/__tests__/unit/task-service-parity.test.ts`, `packages/agent-core/src/{internal/classes/OpenCodeAdapter.ts, types/task-manager.ts}`, `packages/agent-core/tests/unit/internal/classes/{opencode-adapter-agent-selection,opencode-adapter-watchdog}.unit.test.ts`, `apps/host/src/{gateway,host-app,config,policy,daemon-connector,index}.ts`, `apps/web/src/client/{main.tsx,App.tsx,lib/accomplish-http.ts}`, `apps/web/locales/*/errors.json`, `eslint.config.mjs`, `package.json`, `pnpm-lock.yaml`, web/host test files.
-Untracked: `apps/host/{scripts,src/cli-status.ts,src/provider-settings-scrubber.ts}` + Phase 2 test files, `apps/web/src/client/lib/gateway-bootstrap*.ts`, `.opencode/`.
-Not included/excluded: no credentials, no DB files, no logs, no build artifacts (`dist/`, `node_modules/`, Playwright/browser caches are gitignored).
+`apps/daemon/src/task-service.ts` (default execution workspace resolution + injection), `apps/daemon/__tests__/unit/task-service-parity.test.ts` (+2 tests), `packages/agent-core/tests/unit/opencode/task-manager.test.ts` (real-executeTask working-directory tests replacing inline re-implementation), `docs/DEVELOPMENT_CHECKPOINT.md`. Full battery re-run green immediately before the commit; web integration baseline unchanged (158/61).
 
 ## 7. Current Gateway & Daemon Configuration
 
@@ -109,14 +107,15 @@ Not included/excluded: no credentials, no DB files, no logs, no build artifacts 
 9. `opencode serve` spawned without `cwd` → turn-start VCS snapshot ran `git add --all` over `$HOME` (~41 GB) and blocked the provider call forever (fix: `server-manager.ts` + `OnBeforeStartContext.workingDirectory`)
 10. `normalizeSelectedModelForSdk` rewritten: `buildModelParam` now reuses it — previously the full stored ref `ollama/glm-5.3:cloud` was sent verbatim as `modelID` and the provider 404'd (`model "ollama/glm-5.3" not found`)
 11. `TaskInactivityWatchdog` defeated by `server.heartbeat` keep-alives resetting its activity counter → hangs never errored (fix: explicit keep-alive exclusion set)
+12. **Daemon default task cwd was `homedir()`** (`task-service.ts:150`, upstream since ENG-694): UI tasks without a picked folder resolved to `/home/chris`, so opencode's snapshot swept the whole home tree even after fix #9 (which made the cwd _explicit_). Fix: dedicated default execution workspace `<userDataPath>/task-workspace`, created idempotently at TaskService construction and injected in `startTask` (user-picked folders still override; resume turns resolve the same workspace via the TaskManager fallback) — **the live Firefox failure, now resolved (§B2)**
 
-**Unresolved:** none — AI-task acceptance passed (see §B).
+**Unresolved:** none — AI-task acceptance passed (see §B, §B2).
 
 ## 11. Automated Test Results
 
-**Re-verified after the §B fixes (this session):** daemon **194/194** (+2 new) · agent-core **724 pass / 1 pre-existing skip** (+4 new) · typecheck 5/5 workspaces · ESLint 0 errors (3 pre-existing warnings) · prettier clean (6 stale pre-session files reformatted).
+**After the §B2 default-workspace fix (current):** daemon **196/196** (+2 new: Firefox-exact default-cwd + picked-folder-override) · agent-core **724 pass / 1 pre-existing skip** (working-directory tests now drive the real `TaskManager.executeTask` instead of re-implementing the fallback inline) · typecheck 5/5 · ESLint 0 errors (3 pre-existing warnings) · prettier clean.
 
-**From the prior session (unchanged areas, still valid):** host: **137/137** (13 files, incl. real-daemon integration) · web unit: **398/398** (28 files) · **desktop (Electron regression): 494/494** · web integration: 158 passed / **61 failed = pre-existing upstream baseline** (identical with changes stashed; mocks lack daemon-lifecycle methods; zero new failures). Re-run host/web/desktop suites before the Phase 2 commit as the final gate (§15).
+**Before the §B2 commit (`52c0373` gate):** host **137/137** · web unit **398/398** · daemon **194/194** · agent-core **724+1skip** · **desktop 494/494** · web integration 158 passed / **61 failed = pre-existing upstream baseline** (zero new failures; identical with changes stashed).
 
 ## 12. Manual Verification Results (real machine)
 
@@ -125,7 +124,8 @@ Not included/excluded: no credentials, no DB files, no logs, no build artifacts 
 - Close Firefox → daemon survives; reopen → "Re-using running gateway", WS reconnects
 - `.desktop` + scheme: `xdg-mime query default x-scheme-handler/accomplish` → `accomplish-fox.desktop`
 - systemd: `is-active`/`is-enabled` = active/enabled; host transparently reconnected when daemon moved to systemd ownership
-- AI task via gateway: **PASS** (2026-10-21) — `task.start` with prompt + workingDirectory only; daemon picks the storage selected model itself (ollama / glm-5.3:cloud); permission.request auto-approved; `task.complete` `{"status":"success",...}` in 16 s; `hello_phase2.txt` content exact; `ss` showed ESTAB pairs from the task's own opencode serve pid ↔ 127.0.0.1:11434; serve `/proc/<pid>/cwd` = the task workspace; 60 s idle cleanup reclaimed the serve. Remaining: one manual smoke test from a live Firefox UI (same gateway contract; §15).
+- AI task via gateway: **PASS** (2026-10-21) — with explicit `/tmp` workspace: `task.complete` success in 16 s; `hello_phase2.txt` exact content; live TCP serve pid ↔ 11434
+- **Firefox-replica AI task (§B2): PASS** — `task.start` with `prompt + taskId` ONLY (exactly what the UI sends when no folder is picked); daemon defaults cwd to `~/.local/share/Accomplish/task-workspace` (journal: `ready in 679ms (cwd=/home/chris/.local/share/Accomplish/task-workspace)`; `/proc/<serve-pid>/cwd` confirmed); **no `git ... --work-tree` child process ever appeared** and post-run `ps | grep "work-tree /home/chris"` is empty; live ESTAB to 11434 from the task's own opencode pid; `~/kujenga-test.txt` **created** (empty file — the task prompt specified no content; the agent used `touch` and confirmed "0 bytes" back) with `task.complete status=success` (session `ses_ea07149ffffeAmkowqwwzB9sWC`).
 
 ## 13. Important Files & Directories
 
@@ -134,7 +134,7 @@ Not included/excluded: no credentials, no DB files, no logs, no build artifacts 
 - Web: `apps/web/src/client/lib/{accomplish-http.ts, gateway-bootstrap.ts, gateway-bootstrap-init.ts, accomplish.ts}`, `main.tsx` (bootstrap import), `App.tsx`, `components/ui/RouteErrorFallback.tsx`
 - Daemon/agent-core: `apps/daemon/src/task-config-builder.ts`, `apps/daemon/src/task-service.ts` (model threading), `apps/daemon/src/opencode/server-manager.ts` (serve cwd), `packages/agent-core/src/opencode/{config-generator.ts, config-providers-local.ts, model-runtime-mapping.ts, cli-resolver.ts, cli-path-utils.ts}`, `packages/agent-core/src/internal/classes/OpenCodeAdapter.ts` (`session.prompt` call site ~L486; `buildModelParam` ~L766; watchdog exclusion ~L920)
 - Tests: `apps/host/__tests__/`, `apps/web/__tests__/unit/renderer/lib/`
-- Operator tooling: `apps/host/scripts/setup-dev-provider.mjs`; test harness `/tmp/opencode/phase2-task-test.mjs` (NON-PERSISTENT — recreate from §15)
+- Operator tooling: `apps/host/scripts/setup-dev-provider.mjs`; test harness `/tmp/opencode/phase2-task-test.mjs` (NON-PERSISTENT — Firefox-replica mode: `task.start` with `prompt` + `taskId` ONLY, no workingDirectory/workspaceId; auto-approves `permission.request` over WS; checks final file + journal cwd + ps/ss evidence)
 
 ## 14. Commands to Resume Development
 
@@ -155,10 +155,11 @@ node apps/host/scripts/setup-dev-provider.mjs --provider ollama --server-url htt
 ## 15. Exact Next Steps to Complete Phase 2
 
 1. ✅ ~~Fix the model-passing hang~~ + the two downstream blockers — done and live-verified (§B)
-2. Optional manual smoke test: launch Firefox via `node apps/host/dist/index.js --launch`, send one simple task from the UI, confirm completion + history restore (same gateway contract the harness exercises)
-3. ✅ Full battery (§11) re-run green before the Phase 2 commit (web integration: 61 pre-existing baseline failures, unchanged)
-4. ✅ Phase 2 committed on `linux-firefox-ai` (never push/merge without approval)
+2. ✅ Full battery (§11) green before the Phase 2 commit (`52c0373`; web integration: 61 pre-existing baseline failures, unchanged)
+3. ✅ Phase 2 committed on `linux-firefox-ai` as `52c0373` (never push/merge without approval)
+4. ✅ Post-commit live-Firefox default-cwd failure — traced, fixed, regression-tested, live-verified (§B2); full battery re-run green and fix committed (see `git log`)
 5. Awaiting user approval before Phase 3
+6. Optional manual smoke test from the live Firefox UI (same gateway contract the harness exercises); prompts should specify explicit paths/contents for deterministic results
 
 ## 16. Security & Database Isolation Requirements
 
@@ -179,6 +180,7 @@ node apps/host/scripts/setup-dev-provider.mjs --provider ollama --server-url htt
 - **Gateway rate limiter is a real flake source in dev:** the shared per-token budget (600/60 s) is consumed by web-UI reconnect floods after every daemon restart — caused 429s for harness pre-flight requests and once rejected a `permission.respond`. Harness tolerates it now; consider a higher daemon-local budget or exempting in-session RPCs in Phase 3
 - `resumeSession` turns still don't pass `workingDirectory` — a lazily-respawned runtime on a resumed session inherits the daemon cwd (pre-existing behavior; the common path reuses the existing runtime). Worth threading in Phase 3
 - Watchdog keep-alive exclusion is explicit-but-tiny (`server.heartbeat` only); other high-frequency non-progress event types (e.g. `file.watcher.updated`) could still mask stalls
+- Ordinary tasks now execute with cwd inside the daemon data dir (`~/.local/share/Accomplish/task-workspace`): agents that write relative-path outputs land there — prompts should use explicit paths (the UI attachment flow already does); snapshot history accumulates only under the per-task opencode snapshot area for this small dir
 
 ---
 
@@ -204,3 +206,15 @@ The hang required THREE fixes, discovered in sequence during live verification:
 ### H1/H2/H3 outcome
 
 H1 **confirmed** (split into causes 1+3: missing model param + ref format); H2 **disproven** (config generated and typed correctly; provider loads — the earlier "no outbound connections" was the snapshot stall, not a load failure); H3 **disproven as stated then superseded** (the real mismatch was the full-ref vs bare-name format, fixed via `normalizeSelectedModelForSdk`).
+
+### B2. Post-commit live-Firefox failure — default task cwd was the HOME directory — RESOLVED
+
+**Symptom (user report, real Firefox run):** task "Create ~/kujenga-test.txt and confirm its contents." timed out; journal showed `Task runtime ready in 840ms (cwd=/home/chris)`; the opencode child ran `git --git-dir .../opencode/snapshot/global/... --work-tree /home/chris add --all --sparse` at ~97% CPU for minutes; no Ollama connection from the task; no `~/kujenga-test.txt`.
+
+**Verified root cause (full trace):** the Firefox UI intentionally sends `workingDirectory: undefined` when no folder is picked (`useHomePage.ts:19`; gateway + shim are pure pass-throughs — no injection anywhere in apps/host). The daemon itself supplied the home directory: `task-service.ts:150` set `defaultWorkingDirectory: homedir()` (upstream since ENG-694), applied by `TaskManager.ts:349` (`config.workingDirectory || defaultWorkingDirectory`), threaded through `OnBeforeStartContext` into the `opencode serve` spawn cwd. The earlier fix (#9) made the cwd _explicit_ — it faithfully made this latent/default bug deterministic. The successful `/tmp` harness run masked it because it passed an explicit workspace.
+
+**Fix (daemon-owned, 3 files):** dedicated default execution workspace `<userDataPath>/task-workspace` (`/home/chris/.local/share/Accomplish/task-workspace`), created idempotently (mkdirSync recursive, warned non-fatal failure) at TaskService construction; passed as `createTaskManager`'s `defaultWorkingDirectory`; also injected in `startTask` (`params.workingDirectory || default`) so persisted configs always carry an explicit cwd. User-picked folders still override; resume turns resolve the same stable workspace via the TaskManager fallback. No git functionality disabled; agent file tools still reach authorized paths anywhere (absolute paths in prompts/attachments are cwd-independent — `~/kujenga-test.txt` was written by tools regardless of the session cwd). Covers ALL callers (browser UI, Electron desktop, scheduler, WhatsApp bridge, resume). Workspace "tags" concept (workspace-service/storage) intentionally untouched.
+
+**Regression tests:** daemon `task-service-parity.test.ts` — +2: Firefox-exact params (`{prompt, taskId}` only) assert config carries `<userData>/task-workspace` (~-endswith + `!== homedir()`); explicit folder preserved verbatim. agent-core `task-manager.test.ts` — working-directory describe now drives the REAL `TaskManager.executeTask` with a stub adapter (was inline re-implementation).
+
+**Live verification (Firefox-replica harness, one run):** journal `ready in 679ms (cwd=/home/chris/.local/share/Accomplish/task-workspace)`; `/proc/<serve-pid>/cwd` confirmed; **no git child process observed at t+10s/t+20s and no `--work-tree /home/chris` after the run**; ESTAB to 11434 from the task's own opencode pid; `~/kujenga-test.txt` created (empty — prompt specified no content; agent used `touch` then confirmed "0 bytes"); `task.complete status=success`. Daemon **196/196**, agent-core **724+1skip**, typecheck 5/5, ESLint 0 errors, prettier clean.

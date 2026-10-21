@@ -1,5 +1,39 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { AdapterOptions } from '../../../src/internal/classes/OpenCodeAdapter.js';
+import type { TaskConfig } from '../../../src/common/types/task.js';
+import { TaskManager } from '../../../src/internal/classes/TaskManager.js';
 import { OpenCodeCliNotFoundError } from '../../../src/internal/classes/OpenCodeAdapter.js';
+
+/**
+ * Configs received by the stubbed adapter's `startTask`. Declared via
+ * `vi.hoisted` so it exists before any hoisted mock factory runs.
+ */
+const startTaskCalls = vi.hoisted(() => [] as Array<Record<string, unknown> & { taskId?: string }>);
+
+/**
+ * Drive `TaskManager.executeTask` against a stub OpenCodeAdapter so the REAL
+ * working-directory fallback (`config.workingDirectory || defaultWorkingDirectory`)
+ * runs — earlier versions of these tests re-implemented the fallback inline,
+ * which verified nothing. The stub records what the adapter receives; the
+ * real module is kept via `importOriginal` so `OpenCodeCliNotFoundError`
+ * stays genuine. EventEmitter is imported inside the factory so the factory
+ * is self-contained under vi.mock hoisting.
+ */
+vi.mock('../../../src/internal/classes/OpenCodeAdapter.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/internal/classes/OpenCodeAdapter.js')>();
+  const { EventEmitter } = await import('node:events');
+  class StubOpenCodeAdapter extends EventEmitter {
+    constructor(_options: AdapterOptions, _taskId: string) {
+      super();
+    }
+    async startTask(config: Record<string, unknown>): Promise<void> {
+      startTaskCalls.push(config);
+    }
+    dispose(): void {}
+  }
+  return { ...actual, OpenCodeAdapter: StubOpenCodeAdapter };
+});
 
 /**
  * Tests for TaskManager module.
@@ -271,21 +305,56 @@ describe('TaskManager', () => {
     });
   });
 
-  describe('Working directory handling', () => {
-    it('should use task config working directory if provided', () => {
-      const taskConfig = { prompt: 'test', workingDirectory: '/project/src' };
-      const defaultDir = '/home/user';
+  describe('Working directory handling (real TaskManager.executeTask with stub adapter)', () => {
+    function createTaskManager(defaultWorkingDirectory: string): TaskManager {
+      const adapterOptions = {
+        platform: 'linux',
+        isPackaged: false,
+        tempPath: '/tmp',
+      } as AdapterOptions;
+      return new TaskManager({
+        adapterOptions,
+        defaultWorkingDirectory,
+        isCliAvailable: async () => true,
+      });
+    }
 
-      const workingDirectory = taskConfig.workingDirectory || defaultDir;
-      expect(workingDirectory).toBe('/project/src');
+    function createCallbacks() {
+      return {
+        onProgress: vi.fn(),
+        onPermissionRequest: vi.fn(),
+        onComplete: vi.fn(),
+        onError: vi.fn(),
+      };
+    }
+
+    it('should pass the manager default working directory to the adapter when config omits it', async () => {
+      startTaskCalls.length = 0;
+      const manager = createTaskManager('/data/task-workspace');
+
+      await manager.startTask(
+        'tsk_default_cwd',
+        { prompt: 'test' } as TaskConfig,
+        createCallbacks(),
+      );
+      await vi.waitFor(() => expect(startTaskCalls).toHaveLength(1));
+
+      expect(startTaskCalls[0].taskId).toBe('tsk_default_cwd');
+      expect(startTaskCalls[0].workingDirectory).toBe('/data/task-workspace');
     });
 
-    it('should fall back to default working directory', () => {
-      const taskConfig = { prompt: 'test' };
-      const defaultDir = '/home/user';
+    it('should pass the explicit config working directory through to the adapter', async () => {
+      startTaskCalls.length = 0;
+      const manager = createTaskManager('/data/task-workspace');
 
-      const workingDirectory = taskConfig.workingDirectory || defaultDir;
-      expect(workingDirectory).toBe('/home/user');
+      await manager.startTask(
+        'tsk_explicit_cwd',
+        { prompt: 'test', workingDirectory: '/project/src' } as TaskConfig,
+        createCallbacks(),
+      );
+      await vi.waitFor(() => expect(startTaskCalls).toHaveLength(1));
+
+      expect(startTaskCalls[0].workingDirectory).toBe('/project/src');
     });
   });
 

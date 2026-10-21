@@ -6,6 +6,8 @@
  * - per-task config file isolation under concurrency
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import path from 'node:path';
+import { homedir } from 'node:os';
 import type { TaskConfig, Task, FileAttachmentInfo } from '@accomplish_ai/agent-core';
 
 // Track what TaskManager.startTask receives
@@ -312,6 +314,56 @@ describe('TaskService parity', () => {
     // `includeUnassigned` flag (default `false`). `toHaveBeenCalledWith`
     // checks the full argument list, so the assertion must include the flag.
     expect(storage.getTasks).toHaveBeenCalledWith('ws-filter', false);
+  });
+
+  // REGRESSION (Firefox default-cwd home-dir hang): the Firefox UI submits
+  // task.start params with NO workingDirectory for ordinary tasks (no folder
+  // picked). TaskService used to hand TaskManager `defaultWorkingDirectory:
+  // homedir()`, so `opencode serve` ran in /home/chris and its turn-start git
+  // snapshot swept the entire home directory (~97% CPU, task hang, no model
+  // call). The daemon must own a dedicated, stable execution workspace under
+  // its userDataPath and inject it into the config handed to TaskManager.
+  describe('default working directory resolution', () => {
+    it('startTask with NO workingDirectory (exact Firefox UI params) defaults to <userDataPath>/task-workspace, never homedir', async () => {
+      const storage = createMockStorage();
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      // Precisely what the Firefox UI sends: prompt + taskId only —
+      // no workingDirectory, no workspaceId, no model/provider.
+      await service.startTask({
+        prompt: 'Create ~/kujenga-test.txt and confirm its contents.',
+        taskId: 'tsk_fox_no_cwd',
+      });
+
+      expect(capturedTaskConfigs).toHaveLength(1);
+      const wd = capturedTaskConfigs[0].config.workingDirectory;
+      expect(typeof wd).toBe('string');
+      expect(wd?.endsWith('task-workspace')).toBe(true);
+      expect(wd).toBe(path.join('/data', 'task-workspace'));
+      expect(wd).not.toBe(homedir());
+    });
+
+    it('startTask preserves an explicitly provided workingDirectory verbatim (user-picked folder)', async () => {
+      const storage = createMockStorage();
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      await service.startTask({
+        prompt: 'Work in my project',
+        taskId: 'tsk_fox_picked_cwd',
+        workingDirectory: '/home/chris/some-picked-project',
+      });
+
+      expect(capturedTaskConfigs).toHaveLength(1);
+      expect(capturedTaskConfigs[0].config.workingDirectory).toBe(
+        '/home/chris/some-picked-project',
+      );
+    });
   });
 
   // REGRESSION (Codex review P1): `stopTask` used to only update storage
