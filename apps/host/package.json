@@ -1,0 +1,31 @@
+{
+  "name": "@accomplish/host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Accomplish host gateway — serves the web UI over loopback HTTP and bridges browsers (Firefox) to the daemon",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run __tests__/unit",
+    "test:integration": "vitest run __tests__/integration",
+    "test:watch": "vitest watch",
+    "clean": "node -e \"import('fs').then(fs=>fs.rmSync('dist',{recursive:true,force:true}))\""
+  },
+  "dependencies": {
+    "@accomplish_ai/agent-core": "workspace:*",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.10",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.0.17"
+  }
+}

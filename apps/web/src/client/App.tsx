@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useOutlet, useLocation } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { isRunningInElectron, getAccomplish } from './lib/accomplish';
+import { isRunningInElectron, hasShellApiAccess, getAccomplish } from './lib/accomplish';
 import { logger } from './lib/logger';
 import { springs, variants } from './lib/animations';
 import type { ProviderId } from '@accomplish_ai/agent-core/common';
@@ -124,7 +124,7 @@ export function App() {
 
   useEffect(() => {
     const checkStatus = async () => {
-      if (!isRunningInElectron()) {
+      if (!hasShellApiAccess()) {
         setErrorMessage(t('app.mustRunInDesktop'));
         setStatus('error');
         return;

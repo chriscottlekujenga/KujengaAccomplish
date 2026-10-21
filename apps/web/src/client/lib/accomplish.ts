@@ -45,8 +45,9 @@ import type {
   OAuthProviderId,
   ConnectorAuthStatus,
 } from '@accomplish_ai/agent-core/common';
+import { isHttpGatewayAvailable, tryCreateHttpAccomplishApi } from './accomplish-http';
 
-interface GwsAPI {
+export interface GwsAPI {
   listAccounts(): Promise<GoogleAccount[]>;
   startAuth(label: string): Promise<{ state: string; authUrl: string }>;
   completeAuth(state: string, code: string): Promise<GoogleAccount>;
@@ -63,7 +64,7 @@ interface GwsAPI {
 }
 
 // Define the API interface
-interface AccomplishAPI {
+export interface AccomplishAPI {
   // App info
   getVersion(): Promise<string>;
   getPlatform(): Promise<string>;
@@ -800,15 +801,17 @@ declare global {
 }
 
 /**
- * Get the accomplish API
- * Throws if not running in Electron
+ * Build the Electron-path API wrapper: the preload bridge plus
+ * JSON-serializing adapters for the Bedrock/Vertex credential methods.
+ *
+ * The returned structural type (not plain AccomplishAPI) widens those
+ * methods from `string` to their typed credential objects — components
+ * like the Vertex provider flow depend on that. The gateway shim is cast
+ * to this same type so callers keep a single stable signature.
  */
-export function getAccomplish() {
-  if (!window.accomplish) {
-    throw new Error('Accomplish API not available - not running in Electron');
-  }
+function buildElectronAccomplishApi() {
   return {
-    ...window.accomplish,
+    ...window.accomplish!,
 
     validateBedrockCredentials: async (
       credentials: BedrockCredentials,
@@ -909,6 +912,38 @@ export function getAccomplish() {
   };
 }
 
+/** Structural type of the Electron wrapper — the stable getAccomplish() signature. */
+type ElectronAccomplishApi = ReturnType<typeof buildElectronAccomplishApi>;
+
+/**
+ * Get the accomplish API.
+ *
+ * Prefers the Electron preload bridge (`window.accomplish`) so the desktop
+ * shell is unchanged. Falls back to the HTTP gateway shim when the page is
+ * served by the host on a loopback origin with a session token (Firefox
+ * migration). Throws when neither surface is available.
+ */
+export function getAccomplish(): ElectronAccomplishApi {
+  if (window.accomplish) {
+    return buildElectronAccomplishApi();
+  }
+
+  const httpApi = tryCreateHttpAccomplishApi();
+  if (httpApi) {
+    return httpApi as unknown as ElectronAccomplishApi;
+  }
+
+  throw new Error('Accomplish API not available - not running in Electron');
+}
+
+/**
+ * Whether any shell API surface is usable: the Electron preload bridge or
+ * the host's HTTP gateway (Firefox migration). Gates the app-startup check.
+ */
+export function hasShellApiAccess(): boolean {
+  return isRunningInElectron() || isHttpGatewayAvailable();
+}
+
 /**
  * Check if running in Electron shell
  */
@@ -935,8 +970,10 @@ export function getShellPlatform(): string | null {
  */
 export function useAccomplish(): AccomplishAPI {
   const api = window.accomplish;
-  if (!api) {
-    throw new Error('Accomplish API not available - not running in Electron');
+  if (api) {
+    return api;
   }
-  return api;
+  // Preserve the Electron behaviour (returns the preload object as-is);
+  // otherwise fall through to the gateway shim or throw.
+  return getAccomplish() as unknown as AccomplishAPI;
 }

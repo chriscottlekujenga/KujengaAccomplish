@@ -63,6 +63,7 @@ const mockAccomplish = {
 vi.mock('@/lib/accomplish', () => ({
   getAccomplish: () => mockAccomplish,
   isRunningInElectron: () => true,
+  hasShellApiAccess: () => true,
 }));
 
 // Mock framer-motion to simplify testing animations
