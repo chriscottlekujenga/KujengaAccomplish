@@ -573,14 +573,16 @@ export function registerRpcMethods(services: RouteServices): void {
     }),
   );
 
-  // ── Dev-browser preview bridge (Phase 3 M1) ─────────────────────────────
-  // INTERNAL host↔daemon methods answering from the daemon-owned sidecar
-  // state. Deliberately NOT in apps/host/src/policy.ts's allowlist (untouched
-  // file, default-deny) so a browser can never reach them — same trust level
-  // as daemon.setClientType/setUiPresence above. The bearer token never
-  // crosses RPC; only the loopback wsEndpoint URL and page names do. Results
-  // degrade to nulls (no throw) when the sidecar is down so the desktop
-  // preview keeps its non-crashing fallback semantics.
+  // ── Dev-browser preview bridge (Phase 3 M1; expanded Phase 3 M2 T4) ──────
+  // Answers from the daemon-owned sidecar state. `getPreviewInfo` stays an
+  // INTERNAL host↔daemon method (never in apps/host/src/policy.ts's
+  // allowlist — it exposes the raw CDP endpoint); `openPreviewPage`,
+  // `captureFrame` and `shutdown` are allowlisted for the browser preview
+  // shim (§5.4-paired in the host suite). The sidecar bearer token never
+  // crosses RPC: responses carry loopback URLs, page names, JPEG frame data
+  // ({ data, width, height }) and booleans only. Results degrade to nulls /
+  // false (no throw) when the sidecar is down so callers keep their
+  // non-crashing fallback semantics.
   rpc.registerMethod(
     'devBrowser.getPreviewInfo',
     safeHandler(() => devBrowserService.getPreviewInfo()),
@@ -597,6 +599,20 @@ export function registerRpcMethods(services: RouteServices): void {
       );
       return devBrowserService.openPreviewPage(v);
     }),
+  );
+  rpc.registerMethod(
+    'devBrowser.captureFrame',
+    safeHandler((params) => {
+      const v = validate(
+        z.object({ taskId: z.string().min(1), pageName: z.string().min(1).optional() }),
+        params,
+      );
+      return devBrowserService.captureFrame(v);
+    }),
+  );
+  rpc.registerMethod(
+    'devBrowser.shutdown',
+    safeHandler(() => devBrowserService.shutdown()),
   );
 
   rpc.registerMethod(

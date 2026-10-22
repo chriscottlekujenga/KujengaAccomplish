@@ -345,6 +345,61 @@ describe('gateway security', () => {
         });
       }
     });
+    // Phase 3 M2 T4: browser-preview on-demand screenshot v1. Same §5.4(d)
+    // pairing — reachable with a bearer token, hard-401 without.
+    describe('M2 T4 browser-preview expansion authorization matrix', () => {
+      const T4_METHODS = [
+        'devBrowser.openPreviewPage',
+        'devBrowser.captureFrame',
+        'devBrowser.shutdown',
+      ];
+      const T4_PARAMS: Record<string, Record<string, unknown>> = {
+        'devBrowser.openPreviewPage': { name: 'task-1-main' },
+        'devBrowser.captureFrame': { taskId: 'task-1' },
+        'devBrowser.shutdown': {},
+      };
+
+      for (const method of T4_METHODS) {
+        it(`proxies ${method} for an authenticated caller`, async () => {
+          const { status } = await postRpc(rpcBody(1, method, T4_PARAMS[method]), {
+            Authorization: `Bearer ${TOKEN}`,
+          });
+          expect(status).toBe(200);
+        });
+
+        it(`requires the bearer token for ${method} (401 without auth)`, async () => {
+          const { status } = await postRpc(rpcBody(1, method, T4_PARAMS[method]));
+          expect(status).toBe(401);
+        });
+
+        it(`rejects ${method} as allowlist-only even for a forged-policy mistake pairing it with secret reads`, async () => {
+          // captureFrame's frame data rides the same universal scrubber as
+          // every allowlisted response — pairing it with a plaintext-read
+          // regression can never resurrect a blocked secret read.
+          const hostileGateway = await createGateway({
+            port: 0,
+            token: TOKEN,
+            webDist: null,
+            rpc: createFakeRpc(),
+            policySets: { allow: new Set([...RPC_METHOD_BLOCKLIST, method]) },
+          });
+          const { status } = await postRpc(
+            rpcBody(1, 'secrets.getApiKey', { provider: 'anthropic' }),
+            { Authorization: `Bearer ${TOKEN}` },
+            hostileGateway.port,
+          );
+          expect(status).toBe(403);
+          await hostileGateway.close();
+        });
+      }
+
+      it('stays default-deny for devBrowser.getPreviewInfo (raw CDP endpoint is internal)', async () => {
+        const { status } = await postRpc(rpcBody(1, 'devBrowser.getPreviewInfo'), {
+          Authorization: `Bearer ${TOKEN}`,
+        });
+        expect(status).toBe(403);
+      });
+    });
   });
 
   describe('Host and Origin validation', () => {

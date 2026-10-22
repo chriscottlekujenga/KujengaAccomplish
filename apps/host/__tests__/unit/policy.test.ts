@@ -164,17 +164,35 @@ describe('checkMethodPolicy', () => {
     expect(RPC_METHOD_BLOCKLIST).toContain('connectors.authEntry.read');
   });
 
+  it('authorizes the M2 T4 browser-preview methods and keeps getPreviewInfo internal', () => {
+    // Phase 3 M2 T4 (on-demand screenshot v1): the browser shim polls
+    // devBrowser.captureFrame and lazily ensures pages via
+    // devBrowser.openPreviewPage; devBrowser.shutdown serves the desktop
+    // quit-time clean fix through the same surface. Documented response
+    // shapes (§5.4a): captureFrame → { data, width, height } | null —
+    // base64 JPEG + CSS size, NEVER token material (the sidecar token stays
+    // daemon-side); openPreviewPage → { targetId } | null; shutdown →
+    // { stopped }. devBrowser.getPreviewInfo returns the raw CDP endpoint
+    // and therefore stays OFF the allowlist (internal daemon↔desktop only).
+    expect(RPC_METHOD_ALLOWLIST).toContain('devBrowser.openPreviewPage');
+    expect(RPC_METHOD_ALLOWLIST).toContain('devBrowser.captureFrame');
+    expect(RPC_METHOD_ALLOWLIST).toContain('devBrowser.shutdown');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('devBrowser.getPreviewInfo');
+  });
+
   it('pins the allowlist count (M2 tripwire — every addition needs §5.4 tests)', () => {
     // 62 M1 baseline + 21 M2 provider/model-management + masked-listing
     // entries (Phase 3 M2 T1a) + 2 T1b bedrock/vertex credential entries
     // (provider.validateCredentials + secrets.storeBedrockCredentials)
     // + 9 T2 skills/connector-CRUD entries (skills.addFromPath,
     // skills.addFromGitHub, skills.delete, connectors.list/upsert/
-    // setEnabled/setStatus/delete/deleteTokens).
+    // setEnabled/setStatus/delete/deleteTokens)
+    // + 3 T4 browser-preview entries (devBrowser.openPreviewPage promotes
+    // from M1's internal set to allowlisted; captureFrame + shutdown new).
     // This pin is deliberate: growing it further requires the §5.4
     // expansion policy — documented response shape, scrubber/no-secret-field
     // proof, paired authorization + redaction tests.
-    expect(RPC_METHOD_ALLOWLIST).toHaveLength(94);
+    expect(RPC_METHOD_ALLOWLIST).toHaveLength(97);
     expect(RPC_METHOD_BLOCKLIST).toHaveLength(7);
   });
 

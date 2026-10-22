@@ -39,6 +39,7 @@ import type {
   ApiKeyConfig,
   Skill,
   McpConnector,
+  BrowserFramePayload,
 } from '@accomplish_ai/agent-core';
 import { sanitizeString, validateHttpUrl } from '@accomplish_ai/agent-core';
 import type { ScheduledTask } from '@accomplish_ai/agent-core/common';
@@ -555,6 +556,155 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
       invalidateSettings();
       callback();
     });
+
+  // ── Browser preview v1 (Phase 3 M2 T4): shim-local on-demand poll ────────
+  // No live screencast over the gateway (migration plan §8.5): the poll is
+  // fully shim-local. `startBrowserPreview` first ensures the page exists via
+  // `devBrowser.openPreviewPage` (daemon-side this triggers the sidecar's
+  // lazy Chrome launch), then a per-task timer ticks every 750 ms calling
+  // `devBrowser.captureFrame` and fans non-null frames out to local
+  // `onBrowserFrame` subscribers as `BrowserFramePayload & { taskId }`.
+  //
+  // Error tolerance: consecutive misses (null frame / rejected RPC) are
+  // tracked per task — the sidecar may relaunch mid-task — and after 3 in a
+  // row one clientLog breadcrumb is sent (the poll never stops on its own; a
+  // captured frame resets the counter). The daemon resolves the page target
+  // per tick (openPreviewPage-first ordering), so a restarted sidecar
+  // self-heals without shim-side state beyond this timer.
+  //
+  // Lifecycle note (accepted v1 limitation): this shim layer has no
+  // stream-close hook, so timers persist until `stopBrowserPreview` — the
+  // preview panel stops them on unmount/taskId change
+  // (useBrowserPreviewIpc) — or until the page itself goes away.
+  const BROWSER_PREVIEW_POLL_MS = 750;
+  const BROWSER_PREVIEW_LOG_AFTER_FAILURES = 3;
+  const BROWSER_PREVIEW_DEFAULT_PAGE = 'main';
+  const BROWSER_PREVIEW_VIEWPORT = { width: 1280, height: 720 };
+
+  const previewTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; pageName: string; generation: number }
+  >();
+  const previewFailureCounts = new Map<string, number>();
+  const previewFrameListeners = new Set<
+    (event: BrowserFramePayload & { taskId: string }) => void
+  >();
+  let previewGeneration = 0;
+
+  /** Deps every poll tick rides — thread through so the poll logic stays a
+   *  pure function of its gateway-bound dependencies. */
+  type PreviewDeps = {
+    call: (method: string, params?: unknown) => Promise<unknown>;
+    clientLog: (entry: { level?: string; message: string; context?: string }) => Promise<unknown>;
+  };
+
+  const dispatchPreviewFrame = (event: BrowserFramePayload & { taskId: string }): void => {
+    for (const listener of [...previewFrameListeners]) {
+      listener(event);
+    }
+  };
+
+  const previewCaptureOnce = async (
+    deps: PreviewDeps,
+    taskId: string,
+    pageName: string,
+  ): Promise<void> => {
+    try {
+      const result = (await deps.call(
+        'devBrowser.captureFrame',
+        omitUndefined({ taskId, pageName }),
+      )) as {
+        data?: string;
+        width?: number | null;
+        height?: number | null;
+      } | null;
+      if (!result?.data) {
+        throw new Error('dev-browser frame unavailable (sidecar may be relaunching)');
+      }
+      previewFailureCounts.delete(taskId);
+      dispatchPreviewFrame({
+        frame: result.data,
+        pageName,
+        timestamp: Date.now(),
+        taskId,
+        ...(typeof result.width === 'number' ? { width: result.width } : {}),
+        ...(typeof result.height === 'number' ? { height: result.height } : {}),
+      });
+    } catch (err) {
+      const failures = (previewFailureCounts.get(taskId) ?? 0) + 1;
+      previewFailureCounts.set(taskId, failures);
+      if (failures === BROWSER_PREVIEW_LOG_AFTER_FAILURES) {
+        void deps
+          .clientLog({
+            level: 'warn',
+            message: `Browser preview poll missed ${failures} consecutive captures (task ${taskId})`,
+            context: err instanceof Error ? err.message : String(err),
+          })
+          .catch(() => {});
+      }
+    }
+  };
+
+  /**
+   * One poll generation = one `setTimeout` slot per task; the next tick is
+   * scheduled only after the current capture settles (no overlapping RPCs)
+   * and only while the SAME generation is still registered — a stop/restart
+   * never resurrects a stale poll.
+   */
+  const previewTick = (
+    deps: PreviewDeps,
+    taskId: string,
+    pageName: string,
+    generation: number,
+  ): void => {
+    void previewCaptureOnce(deps, taskId, pageName).finally(() => {
+      const entry = previewTimers.get(taskId);
+      if (!entry || entry.generation !== generation) {
+        return;
+      }
+      entry.timer = setTimeout(
+        () => previewTick(deps, taskId, pageName, generation),
+        BROWSER_PREVIEW_POLL_MS,
+      );
+    });
+  };
+
+  const startBrowserPreviewPolling = (
+    deps: PreviewDeps,
+    taskId: string,
+    pageName?: string,
+  ): Promise<{ success: boolean }> => {
+    const normalizedPageName =
+      typeof pageName === 'string' && pageName.trim()
+        ? pageName.trim()
+        : BROWSER_PREVIEW_DEFAULT_PAGE;
+    previewTimers.delete(taskId);
+    previewFailureCounts.delete(taskId);
+    return (async () => {
+      // Ensure the page exists first (desktop resolveTargetId parity): this is
+      // the call that triggers the sidecar's lazy Chrome launch. Best-effort —
+      // captureFrame re-resolves the page every tick, so a rejection here only
+      // means the first frames will count as tolerated misses.
+      try {
+        await deps.call('devBrowser.openPreviewPage', {
+          name: `${taskId}-${normalizedPageName}`,
+          viewport: BROWSER_PREVIEW_VIEWPORT,
+        });
+      } catch {
+        // Daemon/sidecar not ready yet — the poll tolerates it.
+      }
+      const generation = ++previewGeneration;
+      previewTimers.set(taskId, {
+        timer: setTimeout(
+          () => previewTick(deps, taskId, normalizedPageName, generation),
+          BROWSER_PREVIEW_POLL_MS,
+        ),
+        pageName: normalizedPageName,
+        generation,
+      });
+      return { success: true };
+    })();
+  };
 
   const core: Record<string, unknown> = {
     // ── App info ──
@@ -1151,6 +1301,35 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     setScheduleEnabled: (scheduleId: string, enabled: boolean) =>
       call('task.setScheduleEnabled', { scheduleId, enabled }),
 
+    // ── Browser preview v1 (Phase 3 M2 T4 — on-demand screenshot poll) ──
+    // The poll machinery above is rooted in the gateway-bound deps pair
+    // ({ call, clientLog → transport.clientLog }); all four optional
+    // methods route through it.
+    // `onBrowserNavigate`/`onBrowserStatus` stay ABSENT (v1 defer below) —
+    // the poll has no navigation/status stream per migration plan §8.5.
+    onBrowserFrame: (callback: (event: BrowserFramePayload & { taskId: string }) => void) => {
+      previewFrameListeners.add(callback);
+      return () => {
+        previewFrameListeners.delete(callback);
+      };
+    },
+    startBrowserPreview: (taskId: string, pageName?: string) =>
+      startBrowserPreviewPolling(
+        { call, clientLog: (entry) => transport.clientLog(entry) },
+        taskId,
+        pageName,
+      ),
+    stopBrowserPreview: (taskId: string) => {
+      const entry = previewTimers.get(taskId);
+      previewTimers.delete(taskId);
+      previewFailureCounts.delete(taskId);
+      if (entry) {
+        clearTimeout(entry.timer);
+      }
+      return Promise.resolve({ stopped: Boolean(entry) });
+    },
+    getBrowserPreviewStatus: () => Promise.resolve({ active: previewTimers.size > 0 }),
+
     // ── Event subscriptions (daemon notifications → renderer callbacks) ──
     onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
       const offComplete = events.onNotification('task.complete', (params) => {
@@ -1277,13 +1456,14 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
   // correct browser-shim shape is ABSENCE — returning a throwing function
   // here defeats those guards and crashes the effect path (the Phase 2
   // startup regression: CloseConfirmDialog → RouteErrorFallback).
+  //
+  // onBrowserNavigate / onBrowserStatus intentionally remain ABSENT (v1
+  // defer): the on-demand screenshot poll has no navigation/status stream
+  // (no live screencast — migration plan §8.5), and the preview panel's
+  // guards skip both subscriptions accordingly.
   const OPTIONAL_NOT_SUPPORTED = new Set([
-    'onBrowserFrame',
     'onBrowserNavigate',
     'onBrowserStatus',
-    'startBrowserPreview',
-    'stopBrowserPreview',
-    'getBrowserPreviewStatus',
     'onWorkspaceDeleted',
     'gws',
   ]);

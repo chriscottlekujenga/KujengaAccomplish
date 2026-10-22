@@ -4,7 +4,11 @@
  */
 
 import { app } from 'electron';
-import { cleanupVertexServiceAccountKey, stopDevBrowserServer } from './opencode';
+import {
+  cleanupVertexServiceAccountKey,
+  stopDevBrowserServer,
+  stopDevBrowserServerViaDaemon,
+} from './opencode';
 import { stopAllBrowserPreviewStreams } from './services/browserPreview';
 // Phase 4a of the SDK cutover port deleted the desktop-side PTY OAuth flow —
 // the OpenAI OAuth orchestration lives in the daemon now and its lifecycle is
@@ -59,6 +63,24 @@ export async function shutdownApp(logger: AppLogger): Promise<void> {
   // is designed to outlive Electron, so closing the client socket later is
   // harmless; the daemon keeps handling scheduled tasks / background token
   // refresh regardless of when we disconnect.
+
+  // Clean quit first (Phase 3 M2 T4, checkpoint §18.3.6): the daemon owns the
+  // dev-browser sidecar AND its bearer token, so the `devBrowser.shutdown`
+  // RPC performs the real graceful teardown (POST /shutdown + context close)
+  // that the desktop's own token-less handshake cannot (it 401s and degrades
+  // to the forced port-kill, orphaning Chrome). Exactly the same client-call
+  // pattern as the `daemon.shutdown` branch below: best-effort — the daemon
+  // may already be gone, and the forced fallback below still runs in every
+  // outcome so the non-crashing M1 semantics are preserved unchanged.
+  try {
+    await raceTimeout(
+      stopDevBrowserServerViaDaemon(),
+      6000,
+      'Daemon dev-browser shutdown (graceful)',
+    );
+  } catch (error: unknown) {
+    logger?.logEnv('INFO', `[Main] Daemon dev-browser shutdown skipped: ${String(error)}`);
+  }
 
   try {
     await raceTimeout(stopDevBrowserServer(), 5000, 'Dev-browser shutdown');

@@ -84,6 +84,17 @@
  *     The T2 scrubber also grew SECRET_FIELD_NAMES by 'clientSecret'
  *     (DCR-issued OAuth client secret riding clientRegistration in
  *     connectors.list rows).
+ *     T4 wires browser-preview on-demand screenshot v1: 4 optional entries
+ *     (onBrowserFrame/startBrowserPreview/stopBrowserPreview/
+ *     getBrowserPreviewStatus) promote to implemented over a shim-local
+ *     captureFrame poll (onBrowserNavigate/onBrowserStatus stay
+ *     optional-absent — no live screencast per §8.5). Daemon +2
+ *     (devBrowser.captureFrame, devBrowser.shutdown); allowlist +3
+ *     (devBrowser.openPreviewPage promotes from M1's internal set to
+ *     allowlisted, captureFrame + shutdown added; getPreviewInfo stays
+ *     internal). devBrowser.shutdown is allowlisted but has no shim
+ *     mapping — consumed by the desktop quit path over the daemon socket
+ *     (Appendix C).
  *   M2 T3 wires file-attachment drops through the AUTHORIZED host picker:
  *     processDroppedFiles promotes to implemented via transport.pickFiles
  *     (host /pick-files — no new RPC, no allowlist delta), while
@@ -164,9 +175,15 @@ function parseMethods(body, indent) {
 
 // ── reference/no-op detection ────────────────────────────────────────────────
 
-/** Local bindings whose use means the entry delegates to real transport or events. */
+/** Local bindings whose use means the entry delegates to real transport or events.
+ *  Browser-preview v1 (Phase 3 M2 T4) adds one more honest root: the shim-local
+ *  capture-poll state (`previewTimers` / `previewFailureCounts` /
+ *  `previewFrameListeners`). Every timer tick rides `transport.call`
+ *  (devBrowser.captureFrame), so entries reading or mutating the poll state
+ *  are real functionality even when the entry's own body touches local state
+ *  (subscribe/unsubscribe, timer clear, status read). */
 const LOCAL_REF_RE =
-  /\btransport\b|\bcall\s*\(|\bevents\b|\bloadSettings\b|\binvalidateSettings\b|\bonSettingsChanged\b/;
+  /\btransport\b|\bcall\s*\(|\bevents\b|\bloadSettings\b|\binvalidateSettings\b|\bonSettingsChanged\b|\bpreviewTimers\b|\bpreviewFailureCounts\b|\bpreviewFrameListeners\b/;
 
 // ── domain tables (hand-maintained; stale entries are self-checked) ─────────
 
@@ -783,16 +800,28 @@ const SHIM_RPC_MAP = {
     note: 'T3 wired — re-opens the authorized host /pick-files flow (browser drops cannot reveal local paths, so the paths argument is ignored off-Electron)',
   },
 
-  // ── browser-preview ────────────────────────────────────────────────────
-  onBrowserFrame: { rpc: null, note: 'M2 on-demand screenshot v1 (dev-browser bridge)' },
-  onBrowserNavigate: { rpc: null, note: 'M2 — no live screencast per migration plan §8.5' },
-  onBrowserStatus: { rpc: null, note: 'M2 on-demand screenshot v1' },
-  startBrowserPreview: {
-    rpc: null,
-    note: 'M2 on-demand screenshot v1 — new daemon methods as needed',
+  // ── browser-preview ─────────────────────────────────────────────────────
+  // Phase 3 M2 T4 — on-demand screenshot v1 (poll-driven, no live screencast
+  // per migration plan §8.5). The shim holds NO wsEndpoint (getPreviewInfo
+  // stays internal); frames ride the allowlisted devBrowser.captureFrame.
+  onBrowserFrame: {
+    rpc: 'devBrowser.captureFrame',
+    note: 'T4 wired — shim-local emitter fanned out by the captureFrame poll (no WS notification)',
   },
-  stopBrowserPreview: { rpc: null, note: 'M2 on-demand screenshot v1' },
-  getBrowserPreviewStatus: { rpc: null, note: 'M2 on-demand screenshot v1' },
+  onBrowserNavigate: { rpc: null, note: 'v1 defer — no live screencast per migration plan §8.5' },
+  onBrowserStatus: { rpc: null, note: 'v1 defer — no live screencast per migration plan §8.5' },
+  startBrowserPreview: {
+    rpc: 'devBrowser.openPreviewPage',
+    note: 'T4 wired — ensures the page (lazy Chrome launch), then starts the shim-local captureFrame poll (~750 ms)',
+  },
+  stopBrowserPreview: {
+    rpc: 'devBrowser.captureFrame',
+    note: 'T4 wired — clears the shim-local poll timer (frames stop; the poll state is captureFrame-driven)',
+  },
+  getBrowserPreviewStatus: {
+    rpc: 'devBrowser.captureFrame',
+    note: 'T4 wired — { active } reflects the shim-local captureFrame poll timers',
+  },
 
   // ── daemon-control ─────────────────────────────────────────────────────
   getDaemonSocketPath: { rpc: null, note: 'M6 — host-owned (socket path stays loopback-internal)' },
@@ -1311,6 +1340,15 @@ const EXPECTED = {
   // to implemented via the existing host /pick-files surface (getFilePath
   // stays unavailable by design) — no new daemon RPC, no allowlist delta.
   m2T3Implemented: 1,
+  // Phase 3 M2 T4: browser-preview on-demand screenshot v1. Four optional
+  // entries promote to implemented (shim-local captureFrame poll + emitter);
+  // onBrowserNavigate/onBrowserStatus stay optional-absent (no live
+  // screencast per §8.5). Daemon gains devBrowser.captureFrame + .shutdown
+  // (+ .openPreviewPage promotes from M1's internal set to the allowlist);
+  // devBrowser.getPreviewInfo stays internal.
+  m2T4Implemented: 4,
+  m2T4Registered: 2,
+  m2T4AllowlistDelta: 3,
 };
 
 const SANITY_CHECKS = [
@@ -1351,9 +1389,26 @@ const SANITY_CHECKS = [
     },
   },
   {
-    label: 'startBrowserPreview optional-absent',
+    label:
+      'browser-preview v1 implemented ×4 with allowlisted backings, navigate/status deferred (M2 T4)',
     when: (rows) => {
-      return rows.find((x) => x.name === 'startBrowserPreview').shimStatus === 'optional-absent';
+      const wantImplemented = [
+        'onBrowserFrame',
+        'startBrowserPreview',
+        'stopBrowserPreview',
+        'getBrowserPreviewStatus',
+      ];
+      const wantAbsent = ['onBrowserNavigate', 'onBrowserStatus'];
+      return (
+        wantImplemented.every((name) => {
+          const r = rows.find((x) => x.name === name);
+          return r.shimStatus === 'implemented' && r.backingStatus === 'allowlisted';
+        }) &&
+        wantAbsent.every((name) => {
+          const r = rows.find((x) => x.name === name);
+          return r.shimStatus === 'optional-absent' && r.backingStatus === 'no-backing';
+        })
+      );
     },
   },
   {
@@ -1588,13 +1643,15 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.planImplemented +
       EXPECTED.m2T1bImplemented +
       EXPECTED.m2T2Implemented +
-      EXPECTED.m2T3Implemented;
+      EXPECTED.m2T3Implemented +
+      EXPECTED.m2T4Implemented;
   check(
     implInvariant,
     `plan "129 implemented" = ${totals.implemented} functional + ${totals['no-op']} no-op, where ` +
       `functional = 84 pre-T1b + ${EXPECTED.m2T1bImplemented} T1b-shim-wired entries + ` +
       `${EXPECTED.m2T2Implemented} T2 skills/connector-CRUD entries + ` +
-      `${EXPECTED.m2T3Implemented} T3 file-attachment-drop entry (processDroppedFiles → host picker) ` +
+      `${EXPECTED.m2T3Implemented} T3 file-attachment-drop entry (processDroppedFiles → host picker) + ` +
+      `${EXPECTED.m2T4Implemented} T4 browser-preview entries (on-demand captureFrame poll ×4) ` +
       `and measured no-op ${totals['no-op']} = ` +
       `8 top-level no-ops + 37 analytics.*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op ` +
       'family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). ' +
@@ -1605,13 +1662,15 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.planUnavailable -
       EXPECTED.m2T1bImplemented -
       EXPECTED.m2T2Implemented -
-      EXPECTED.m2T3Implemented;
+      EXPECTED.m2T3Implemented -
+      EXPECTED.m2T4Implemented;
   check(
     unavailInvariant,
     `plan "120 unavailable" = ${totals.unavailable} unavailable + ${totals['optional-absent']} optional-absent ` +
-      `(browser-preview 6 + onWorkspaceDeleted), minus the ${EXPECTED.m2T1bImplemented} entries T1b promoted to ` +
-      `implemented, the ${EXPECTED.m2T2Implemented} entries T2 promoted (skills CRUD + connector CRUD), and the ` +
-      `${EXPECTED.m2T3Implemented} entry T3 promoted (processDroppedFiles via the host picker). ` +
+      `(browser-preview onBrowserNavigate/onBrowserStatus 2 + onWorkspaceDeleted), minus the ${EXPECTED.m2T1bImplemented} entries T1b promoted to ` +
+      `implemented, the ${EXPECTED.m2T2Implemented} entries T2 promoted (skills CRUD + connector CRUD), the ` +
+      `${EXPECTED.m2T3Implemented} entry T3 promoted (processDroppedFiles via the host picker), and the ` +
+      `${EXPECTED.m2T4Implemented} entries T4 promoted (browser-preview poll ×4). ` +
       'Plan\'s "GWS (8)" = the 8 gws.* sub-methods (shim-side they throw while the parent namespace ' +
       'is absent). ' +
       (unavailInvariant ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
@@ -1620,13 +1679,15 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.planAllowlist +
     EXPECTED.m2T1aAllowlistDelta +
     EXPECTED.m2T1bAllowlistDelta +
-    EXPECTED.m2T2AllowlistDelta;
+    EXPECTED.m2T2AllowlistDelta +
+    EXPECTED.m2T4AllowlistDelta;
   const allowOk = parsed.allowlist.length === m2ExpectedAllowlist;
   check(
     allowOk,
     `allowlist ${parsed.allowlist.length} vs plan 62 + ${EXPECTED.m2T1aAllowlistDelta} M2 T1a entries + ` +
       `${EXPECTED.m2T1bAllowlistDelta} T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + ` +
-      `${EXPECTED.m2T2AllowlistDelta} T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) = ` +
+      `${EXPECTED.m2T2AllowlistDelta} T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + ` +
+      `${EXPECTED.m2T4AllowlistDelta} T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) = ` +
       `${m2ExpectedAllowlist} — ` +
       `${allowOk ? 'matches the M2 expansion' : 'MISMATCH — allowlist changed since the M2 tripwire'}`,
   );
@@ -1635,16 +1696,18 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.m1InternalRegistered +
     EXPECTED.m2T1aRegistered +
     EXPECTED.m2T1bRegistered +
-    EXPECTED.m2T2Registered;
+    EXPECTED.m2T2Registered +
+    EXPECTED.m2T4Registered;
   const planDelta = parsed.registered.size;
   check(
     planDelta === m2ExpectedRegistered,
     `daemon registered ${parsed.registered.size} (${routeCount(parsed)} daemon-routes.ts + ${indexCount(parsed)} daemon/index.ts daemon.shutdown + ${builtinCount(parsed)} builtin daemon.ping) ` +
       `vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods ` +
-      '(daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), ' +
+      '(daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage), ' +
       `+${EXPECTED.m2T1aRegistered} M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) ` +
       `+${EXPECTED.m2T1bRegistered} T1b method (provider.validateCredentials) ` +
-      `+${EXPECTED.m2T2Registered} T2 method (skills.addFromGitHub) = ${m2ExpectedRegistered}. ` +
+      `+${EXPECTED.m2T2Registered} T2 method (skills.addFromGitHub) ` +
+      `+${EXPECTED.m2T4Registered} T4 methods (devBrowser.captureFrame, devBrowser.shutdown) = ${m2ExpectedRegistered}. ` +
       (planDelta === m2ExpectedRegistered ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   push();

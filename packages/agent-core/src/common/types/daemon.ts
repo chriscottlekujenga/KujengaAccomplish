@@ -459,16 +459,18 @@ export interface DaemonMethodMap {
   };
   'daemon.setUiPresence': { params: { count: number }; result: { ok: true } };
 
-  // Dev-browser preview bridge (Phase 3 M1 — Electron desktop preview fix).
-  // INTERNAL to the host↔daemon socket and deliberately NOT in the gateway's
-  // browser-facing method allowlist (apps/host/src/policy.ts is untouched) so
-  // a browser can never reach them. The sidecar bearer token NEVER crosses
-  // RPC: `getPreviewInfo` returns the loopback CDP WebSocket endpoint the
-  // sidecar reports (null when the sidecar is down / token mismatch) plus the
-  // tracked page names; `openPreviewPage` ensures (create-or-reuse) a named
-  // page via the sidecar's POST /pages — the call that triggers the lazy
-  // Chrome launch. Both degrade to null results instead of throwing so the
-  // desktop preview keeps its non-crashing fallback semantics.
+  // Dev-browser preview bridge (Phase 3 M1 — Electron desktop preview fix;
+  // Phase 3 M2 T4 adds the on-demand screenshot + shutdown pair). The sidecar
+  // bearer token NEVER crosses RPC — responses carry loopback URLs, page
+  // names, JPEG frame data, and booleans only, and the gateway scrubber
+  // applies to every browser-facing response on top.
+  //
+  // Gateway allowlist surface (apps/host/src/policy.ts):
+  //   - `openPreviewPage` / `captureFrame` / `shutdown` are allowlisted
+  //     (Phase 3 M2 T4 — the browser preview shim polls captureFrame).
+  //   - `getPreviewInfo` stays INTERNAL (never allowlisted): it returns the
+  //     raw CDP WebSocket endpoint, which is daemon-side plumbing the shim
+  //     must not need.
   'devBrowser.getPreviewInfo': {
     params: undefined;
     result: { wsEndpoint: string | null; pages: string[] | null };
@@ -476,6 +478,14 @@ export interface DaemonMethodMap {
   'devBrowser.openPreviewPage': {
     params: { name: string; viewport?: { width: number; height: number } };
     result: { targetId: string } | null;
+  };
+  'devBrowser.captureFrame': {
+    params: { taskId: string; pageName?: string };
+    result: { data: string; width: number | null; height: number | null } | null;
+  };
+  'devBrowser.shutdown': {
+    params: undefined;
+    result: { stopped: boolean };
   };
 
   // Accomplish AI free tier

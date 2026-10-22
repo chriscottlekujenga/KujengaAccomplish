@@ -7,7 +7,7 @@
  * getAccomplish() fallback chain that preserves Electron behaviour.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   GatewayEventStream,
   HttpShimNotSupportedError,
@@ -433,10 +433,11 @@ describe('createHttpAccomplishApi', () => {
 
   it('reports unimplemented OPTIONAL methods as absent (undefined), not throwing functions', () => {
     const api = makeApi() as unknown as Record<string, unknown>;
-    expect(api.startBrowserPreview).toBeUndefined();
-    expect(api.stopBrowserPreview).toBeUndefined();
-    expect(api.getBrowserPreviewStatus).toBeUndefined();
-    expect(api.onBrowserFrame).toBeUndefined();
+    // Phase 3 M2 T4 implemented the four browser-preview poll methods (they
+    // are now real shim methods, tested below); the remaining optional
+    // methods stay absent.
+    expect(api.onBrowserNavigate).toBeUndefined();
+    expect(api.onBrowserStatus).toBeUndefined();
     expect(api.onWorkspaceDeleted).toBeUndefined();
     expect(api.gws).toBeUndefined();
   });
@@ -1545,6 +1546,230 @@ describe('M2 T3 file-attachment shim (accomplish-http)', () => {
     const api = makeApi() as unknown as Record<string, (file: File) => string>;
     expect(() => api.getFilePath(new File([], 'dropped.txt'))).toThrow(HttpShimNotSupportedError);
     expect(() => api.getFilePath(new File([], 'dropped.txt'))).toThrow(errMessageRe('getFilePath'));
+  });
+});
+
+// ── M2 T4: browser-preview on-demand screenshot v1 (shim-local poll) ────────
+
+describe('M2 T4 browser-preview poll shim (accomplish-http)', () => {
+  let calls: { method: string; params?: unknown }[];
+  let responses: Map<string, unknown>;
+  let callBehavior: null | ((method: string) => unknown);
+  let clientLog: ReturnType<typeof vi.fn>;
+  let transport: HttpTransport;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls = [];
+    responses = new Map();
+    callBehavior = null;
+    clientLog = vi.fn(async () => undefined);
+    transport = {
+      call: async (method: string, params?: unknown) => {
+        calls.push({ method, params });
+        if (callBehavior) {
+          return callBehavior(method);
+        }
+        return responses.get(method) ?? null;
+      },
+      openExternal: async () => {},
+      pickFolder: async () => null,
+      pickFiles: async () => [],
+      health: async () => ({ ok: true, version: '0.1.0', platform: 'linux' }),
+      clientLog,
+      cliStatus: async () => ({ installed: true, version: '1', installCommand: '' }),
+      autostartStatus: async () => ({ enabled: false, active: false }),
+    } as unknown as HttpTransport;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function makeApi() {
+    return createHttpAccomplishApi({
+      baseUrl: 'http://127.0.0.1:8123',
+      token: TEST_TOKEN,
+      transport,
+      events: new FakeEventStream() as unknown as GatewayEventStream,
+    });
+  }
+
+  const callCount = (method: string): number => calls.filter((c) => c.method === method).length;
+
+  it('ensures the page exists first (openPreviewPage) and defaults pageName to main', async () => {
+    const api = makeApi();
+    await expect(api.startBrowserPreview?.('task-1')).resolves.toEqual({ success: true });
+    expect(calls[0]).toEqual({
+      method: 'devBrowser.openPreviewPage',
+      params: { name: 'task-1-main', viewport: { width: 1280, height: 720 } },
+    });
+  });
+
+  it('polls captureFrame (~750ms) and emits frames to onBrowserFrame subscribers', async () => {
+    responses.set('devBrowser.captureFrame', { data: 'frame-A', width: 800, height: 600 });
+    const api = makeApi();
+    const frames: Array<Record<string, unknown>> = [];
+    api.onBrowserFrame?.((event) => {
+      frames.push(event as Record<string, unknown>);
+    });
+
+    await api.startBrowserPreview?.('task-1', 'side');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(calls[1]).toEqual({
+      method: 'devBrowser.captureFrame',
+      params: { taskId: 'task-1', pageName: 'side' },
+    });
+    await vi.advanceTimersByTimeAsync(750);
+    expect(callCount('devBrowser.captureFrame')).toBe(2); // one per advanced tick
+    const expectedFrame = {
+      frame: 'frame-A',
+      pageName: 'side',
+      timestamp: expect.any(Number),
+      taskId: 'task-1',
+      width: 800,
+      height: 600,
+    };
+    expect(frames).toEqual([expectedFrame, expectedFrame]);
+  });
+
+  it('skips null frames without emitting them', async () => {
+    responses.set('devBrowser.captureFrame', null);
+    const api = makeApi();
+    const frames: unknown[] = [];
+    api.onBrowserFrame?.((event) => {
+      frames.push(event);
+    });
+
+    await api.startBrowserPreview?.('task-1');
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(callCount('devBrowser.captureFrame')).toBe(2);
+    expect(frames).toEqual([]);
+  });
+
+  it('stopBrowserPreview clears the poll (no further transport calls)', async () => {
+    responses.set('devBrowser.captureFrame', { data: 'frame-B', width: 640, height: 480 });
+    const api = makeApi();
+    await api.startBrowserPreview?.('task-1');
+    await vi.advanceTimersByTimeAsync(750);
+    const callsAtStop = calls.length;
+
+    await expect(api.stopBrowserPreview?.('task-1')).resolves.toEqual({ stopped: true });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls.length).toBe(callsAtStop);
+  });
+
+  it('stopBrowserPreview reports stopped:false when no poll is running for the task', async () => {
+    const api = makeApi();
+    await expect(api.stopBrowserPreview?.('task-never-started')).resolves.toEqual({
+      stopped: false,
+    });
+  });
+
+  it('getBrowserPreviewStatus reflects the shim-local poll state', async () => {
+    const api = makeApi();
+    await expect(api.getBrowserPreviewStatus?.()).resolves.toEqual({ active: false });
+    await api.startBrowserPreview?.('task-1');
+    await expect(api.getBrowserPreviewStatus?.()).resolves.toEqual({ active: true });
+    await api.stopBrowserPreview?.('task-1');
+    await expect(api.getBrowserPreviewStatus?.()).resolves.toEqual({ active: false });
+  });
+
+  it('onBrowserFrame unsubscribe stops delivery', async () => {
+    responses.set('devBrowser.captureFrame', { data: 'frame-C', width: 100, height: 100 });
+    const api = makeApi();
+    const frames: Array<Record<string, unknown>> = [];
+    const off = api.onBrowserFrame?.((event) => {
+      frames.push(event as Record<string, unknown>);
+    });
+    await api.startBrowserPreview?.('task-1');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(frames.length).toBe(1);
+
+    off?.();
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(frames.length).toBe(1);
+    // Poll itself keeps running until stopBrowserPreview (subscriber-only removal).
+    expect(callCount('devBrowser.captureFrame')).toBe(3);
+    await api.stopBrowserPreview?.('task-1');
+  });
+
+  it('tolerates consecutive poll failures: logs one breadcrumb at 3, keeps polling', async () => {
+    const api = makeApi();
+    await api.startBrowserPreview?.('task-1');
+    // Every tick misses (sidecar may be relaunching)…
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(callCount('devBrowser.captureFrame')).toBe(3);
+    expect(clientLog).toHaveBeenCalledTimes(1);
+    expect(clientLog.mock.calls[0][0].level).toBe('warn');
+
+    // …and the poll is still alive afterwards (6 more ticks, no new log).
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(callCount('devBrowser.captureFrame')).toBe(9);
+    await api.stopBrowserPreview?.('task-1');
+    expect(clientLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('a successful frame resets the failure counter before tolerating more misses', async () => {
+    let fail = true;
+    callBehavior = (method) => {
+      if (method !== 'devBrowser.captureFrame') {
+        return null;
+      }
+      return fail ? null : { data: 'recovered', width: 1, height: 1 };
+    };
+    const api = makeApi();
+    const frames: unknown[] = [];
+    api.onBrowserFrame?.((event) => {
+      frames.push(event);
+    });
+    await api.startBrowserPreview?.('task-1');
+    await vi.advanceTimersByTimeAsync(750); // miss 1
+    await vi.advanceTimersByTimeAsync(750); // miss 2
+    fail = false;
+    await vi.advanceTimersByTimeAsync(750); // success → counter reset
+    expect(frames.length).toBe(1);
+    fail = true;
+    // Fresh misses start counting from zero → no new log for 2 more.
+    await vi.advanceTimersByTimeAsync(750); // miss 1
+    await vi.advanceTimersByTimeAsync(750); // miss 2
+    expect(clientLog).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(750); // miss 3 → new breadcrumb
+    expect(clientLog).toHaveBeenCalledTimes(1);
+    await api.stopBrowserPreview?.('task-1');
+    callBehavior = null;
+  });
+
+  it('an openPreviewPage failure never blocks the poll (best-effort ensure)', async () => {
+    callBehavior = (method) => {
+      if (method === 'devBrowser.openPreviewPage') {
+        throw new Error('sidecar unavailable');
+      }
+      return { data: 'frame-D', width: 100, height: 100 };
+    };
+    const api = makeApi();
+    const frames: unknown[] = [];
+    api.onBrowserFrame?.((event) => frames.push(event));
+    await expect(api.startBrowserPreview?.('task-1')).resolves.toEqual({ success: true });
+    await vi.advanceTimersByTimeAsync(750);
+    expect(frames.length).toBeGreaterThan(0);
+    await api.stopBrowserPreview?.('task-1');
+    callBehavior = null;
+  });
+
+  it('the onBrowserNavigate/onBrowserStatus subscriptions stay optional-absent (v1 defer)', () => {
+    const api = makeApi() as unknown as Record<string, unknown>;
+    expect(api.onBrowserNavigate).toBeUndefined();
+    expect(api.onBrowserStatus).toBeUndefined();
   });
 });
 

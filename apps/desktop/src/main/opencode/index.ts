@@ -26,7 +26,7 @@ export type {
 } from '@accomplish_ai/agent-core/desktop-main';
 
 export { cleanupVertexServiceAccountKey } from './vertex-cleanup';
-export { stopDevBrowserServer } from './dev-browser-shutdown';
+export { stopDevBrowserServer, stopDevBrowserServerViaDaemon } from './dev-browser-shutdown';
 export {
   getOpenCodeCliPath,
   isOpenCodeCliAvailable,

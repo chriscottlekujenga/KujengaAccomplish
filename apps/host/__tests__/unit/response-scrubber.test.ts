@@ -103,6 +103,45 @@ describe('universal response scrubber — SECRET_FIELD_NAMES coverage', () => {
     });
   }
 
+  it('scrubs the M2 T4 browser-preview responses but keeps their documented payload fields (§5.4a)', () => {
+    // devBrowser.captureFrame → { data, width, height } | null: the base64
+    // JPEG + CSS size is the whole payload — and if a compromised sidecar
+    // ever smuggled token-shaped fields into a frame result, the universal
+    // scrubber removes them before the response crosses the gateway.
+    const frame = {
+      data: 'ZmFrZS1qcGVnLWJ5dGVz',
+      width: 800,
+      height: 600,
+      token: 'ghp_bearerTokenValue123456',
+      accessToken: 'ya29.a0AfB_accessTokenValue',
+      apiKey: 'sk-live-aa11bb22cc33dd44',
+    };
+    const scrubbed = scrubResponse('devBrowser.captureFrame', frame) as Record<string, unknown>;
+    expect(scrubbed.data).toBe('ZmFrZS1qcGVnLWJ5dGVz');
+    expect(scrubbed.width).toBe(800);
+    expect(scrubbed.height).toBe(600);
+    expect(JSON.stringify(scrubbed)).not.toContain('ghp_bearerTokenValue123456');
+    expect(JSON.stringify(scrubbed)).not.toContain('ya29.a0AfB_accessTokenValue');
+    expect(JSON.stringify(scrubbed)).not.toContain('sk-live-aa11bb22cc33dd44');
+    // null degradation (sidecar/browser/page absent) passes through as null.
+    expect(scrubResponse('devBrowser.captureFrame', null)).toBeNull();
+
+    // devBrowser.openPreviewPage → { targetId } | null; devBrowser.shutdown →
+    // { stopped } — boolean only; both survive the scrubber verbatim.
+    expect(scrubResponse('devBrowser.openPreviewPage', { targetId: 'T1' })).toEqual({
+      targetId: 'T1',
+    });
+    expect(scrubResponse('devBrowser.shutdown', { stopped: true })).toEqual({ stopped: true });
+    // Even hypothetical token material inside those shapes is removed.
+    const hostilePage = scrubResponse('devBrowser.openPreviewPage', {
+      targetId: 'T1',
+      wsEndpoint: 'ws://127.0.0.1:9225/devtools/browser/abc',
+      token: 'ghp_bearerTokenValue123456',
+    }) as Record<string, unknown>;
+    expect(hostilePage.targetId).toBe('T1');
+    expect(JSON.stringify(hostilePage)).not.toContain('ghp_bearerTokenValue123456');
+  });
+
   it('keeps display-safe masked metadata that the UI renders', () => {
     // audit: provider.getSettings returns keyPrefix/apiKeyPrefix/hasApiKey
     // by design — these lookalikes are exact-name distinct from secrets.

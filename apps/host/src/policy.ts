@@ -182,6 +182,26 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   // storeApiKey — the response is void. Its plaintext sibling read stays
   // blocklisted below.
   'secrets.storeBedrockCredentials',
+  // Browser-preview v1 (Phase 3 M2 T4 — on-demand screenshot, no live
+  // screencast per migration plan §8.5). The shim polls `captureFrame`
+  // (~750 ms) and lazily ensures the page via `openPreviewPage`; `shutdown`
+  // is the quit-time clean fix (checkpoint §18.3.6) that lets the desktop
+  // stop the daemon-owned sidecar gracefully. DOCUMENTED RESPONSE SHAPES:
+  //   openPreviewPage  { name, viewport? } → { targetId } | null — page-name
+  //                     + target id only.
+  //   captureFrame     { taskId, pageName? } → { data, width, height } | null
+  //                     — base64 JPEG frame + CSS content size; null when
+  //                     the sidecar/browser/page is absent. No token fields
+  //                     exist in this shape (the sidecar bearer token stays
+  //                     daemon-side) and the universal scrubber applies as
+  //                     defense in depth.
+  //   shutdown         {} → { stopped } — boolean only.
+  // `devBrowser.getPreviewInfo` is deliberately NOT allowlisted: it returns
+  // the raw CDP WebSocket endpoint, which is daemon-side plumbing the shim
+  // must never need (that is the point of keeping the token daemon-side).
+  'devBrowser.openPreviewPage',
+  'devBrowser.captureFrame',
+  'devBrowser.shutdown',
   // Accomplish AI free tier
   'accomplish-ai.connect',
   'accomplish-ai.get-usage',

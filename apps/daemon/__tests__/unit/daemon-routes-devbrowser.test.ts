@@ -1,12 +1,14 @@
 /**
- * Unit tests for the `devBrowser.*` RPC route registration (Phase 3 M1).
+ * Unit tests for the `devBrowser.*` RPC route registration.
  *
- * Verifies the two preview-bridge methods are registered on the daemon RPC
- * server with the documented payload contracts and that the handlers
- * delegate to DevBrowserService. Trust-boundary guard: the host gateway
- * policy (apps/host/src/policy.ts) must stay default-deny for `devBrowser.*`
- * — the file is asserted as text here so an accidental allowlist edit
- * regresses this suite.
+ * Phase 3 M1: preview-bridge pair (`getPreviewInfo`/`openPreviewPage`).
+ * Phase 3 M2 T4: adds `captureFrame` (on-demand screenshot v1) and
+ * `shutdown` (graceful sidecar teardown for the desktop quit path). Verifies
+ * all four are registered with the documented payload contracts and that
+ * handlers delegate to DevBrowserService. Trust-boundary guard: the host
+ * gateway policy (apps/host/src/policy.ts) must allowlist exactly the three
+ * browser-facing methods (`openPreviewPage`, `captureFrame`, `shutdown`) and
+ * keep `getPreviewInfo` — which returns the raw CDP endpoint — internal.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -23,6 +25,8 @@ function buildServices() {
       pages: ['task-1-main'],
     })),
     openPreviewPage: vi.fn(async () => ({ targetId: 'T1' })),
+    captureFrame: vi.fn(async () => ({ data: 'ZmFrZQ==', width: 800, height: 600 })),
+    shutdown: vi.fn(async () => ({ stopped: true })),
   };
   const services = {
     rpc: {
@@ -52,11 +56,13 @@ function buildServices() {
   return { services, registered, devBrowserService };
 }
 
-describe('devBrowser.* daemon RPC routes (Phase 3 M1 preview bridge)', () => {
+describe('devBrowser.* daemon RPC routes (Phase 3 M1 preview bridge; T4 capture/shutdown)', () => {
   let registered: Map<string, RpcHandler>;
   let devBrowserService: {
     getPreviewInfo: ReturnType<typeof vi.fn>;
     openPreviewPage: ReturnType<typeof vi.fn>;
+    captureFrame: ReturnType<typeof vi.fn>;
+    shutdown: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -72,6 +78,14 @@ describe('devBrowser.* daemon RPC routes (Phase 3 M1 preview bridge)', () => {
 
   it("registers 'devBrowser.openPreviewPage'", () => {
     expect(registered.has('devBrowser.openPreviewPage')).toBe(true);
+  });
+
+  it("registers 'devBrowser.captureFrame'", () => {
+    expect(registered.has('devBrowser.captureFrame')).toBe(true);
+  });
+
+  it("registers 'devBrowser.shutdown'", () => {
+    expect(registered.has('devBrowser.shutdown')).toBe(true);
   });
 
   it('getPreviewInfo delegates to DevBrowserService with no params', async () => {
@@ -107,6 +121,35 @@ describe('devBrowser.* daemon RPC routes (Phase 3 M1 preview bridge)', () => {
     await expect(handler?.(null)).rejects.toThrow(/Invalid payload/);
   });
 
+  it('captureFrame validates taskId and forwards pageName optionality', async () => {
+    const handler = registered.get('devBrowser.captureFrame');
+    await expect(handler?.({ taskId: 't1', pageName: 'search' })).resolves.toEqual({
+      data: 'ZmFrZQ==',
+      width: 800,
+      height: 600,
+    });
+    expect(devBrowserService.captureFrame).toHaveBeenCalledWith({
+      taskId: 't1',
+      pageName: 'search',
+    });
+    await expect(handler?.({ taskId: 't1' })).resolves.not.toBeNull();
+    expect(devBrowserService.captureFrame).toHaveBeenCalledWith({ taskId: 't1' });
+  });
+
+  it('captureFrame rejects missing/empty taskId (zod validation)', async () => {
+    const handler = registered.get('devBrowser.captureFrame');
+    await expect(handler?.(undefined)).rejects.toThrow(/Invalid payload/);
+    await expect(handler?.({ taskId: '' })).rejects.toThrow(/Invalid payload/);
+    await expect(handler?.({ taskId: 't1', pageName: '' })).rejects.toThrow(/Invalid payload/);
+    expect(devBrowserService.captureFrame).not.toHaveBeenCalled();
+  });
+
+  it('shutdown delegates and returns the { stopped } verdict', async () => {
+    const handler = registered.get('devBrowser.shutdown');
+    await expect(handler?.(undefined)).resolves.toEqual({ stopped: true });
+    expect(devBrowserService.shutdown).toHaveBeenCalledTimes(1);
+  });
+
   it('sanitizes daemon-side errors before they cross the socket', async () => {
     const handler = registered.get('devBrowser.getPreviewInfo');
     devBrowserService.getPreviewInfo.mockRejectedValueOnce(new Error('secret: /home/chris/data'));
@@ -114,10 +157,19 @@ describe('devBrowser.* daemon RPC routes (Phase 3 M1 preview bridge)', () => {
   });
 });
 
-describe('trust boundary — devBrowser methods must stay off the browser allowlist', () => {
-  it('apps/host/src/policy.ts contains no devBrowser methods', () => {
-    const policyPath = path.resolve(__dirname, '../../../host/src/policy.ts');
-    const policy = readFileSync(policyPath, 'utf8');
-    expect(policy).not.toMatch(/devBrowser\./);
+describe('trust boundary — devBrowser gateway allowlist surface (Phase 3 M2 T4)', () => {
+  const policyPath = path.resolve(__dirname, '../../../host/src/policy.ts');
+  const readPolicy = (): string => readFileSync(policyPath, 'utf8');
+
+  it('allowlists exactly the three browser-facing devBrowser methods', () => {
+    const policy = readPolicy();
+    expect(policy).toMatch(/'devBrowser\.openPreviewPage',/);
+    expect(policy).toMatch(/'devBrowser\.captureFrame',/);
+    expect(policy).toMatch(/'devBrowser\.shutdown',/);
+  });
+
+  it('keeps `devBrowser.getPreviewInfo` internal (raw CDP endpoint never crosses the gateway)', () => {
+    const policy = readPolicy();
+    expect(policy).not.toMatch(/'devBrowser\.getPreviewInfo'/);
   });
 });
