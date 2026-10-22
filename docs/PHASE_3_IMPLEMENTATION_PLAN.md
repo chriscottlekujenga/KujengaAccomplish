@@ -1,7 +1,7 @@
 # PHASE 3 IMPLEMENTATION PLAN — KujengaAccomplish Firefox Migration (Rev. 2)
 
 **Date:** 2026-10-21 · **Branch:** `linux-firefox-ai` · **HEAD:** `9ad4b5e`
-**Status:** Rev. 2 approved; **M1 (security foundation) committed `d644f92`** — results in `docs/DEVELOPMENT_CHECKPOINT.md` §18. M2–M6 await separate approval. No implementation beyond M1.
+**Status:** Rev. 2 approved; **M1 (security foundation) committed `d644f92`** — results in `docs/DEVELOPMENT_CHECKPOINT.md` §18. **M2 (essential API functionality) complete 2026-10-22, commits `fcd4cc6`…`fa0e377` + docs commit** — results in checkpoint §19 (parity gate per `docs/PARITY_INVENTORY.md`). M3–M6 await separate approval. No implementation beyond M2.
 **Inputs:** `.opencode/plans/FIREFOX_MIGRATION_PLAN.md` (six-phase roadmap), `docs/DEVELOPMENT_CHECKPOINT.md` (Phase 2 complete, AI-task acceptance PASSED), capability inventories (2026-10-21).
 
 **Rev. 2 changes from Rev. 1 (per review):** security foundation moved ahead of all API expansion; permission-gate design corrected (presence must not be inferred from the gateway's persistent socket); milestone order = M1 security → M2 essential API → M3 desktop-control feasibility → M4 reliability → M5 E2E → M6 remaining parity; desktop-control feasibility added as a Phase 3 planning milestone (prototype not implemented); incremental parity rules; preservation constraints codified.

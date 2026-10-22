@@ -1,7 +1,7 @@
-# Development Checkpoint — Firefox Migration, Phase 2 / Phase 3 M1
+# Development Checkpoint — Firefox Migration, Phase 2 / Phase 3 M1·M2
 
-**Date:** 2026-10-21 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `d644f92`
-**Status:** Phase 2 complete (see §B) AND Phase 3 M1 (security foundation) complete — committed `d644f92` (see §18). Awaiting approval before M2.
+**Date:** 2026-10-22 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `docs-commit (M2)`
+**Status:** Phase 2 complete (§B) AND Phase 3 M1 (security foundation) committed `d644f92` (§18) AND Phase 3 M2 (essential API functionality) complete (§19, 8 implementation commits + this docs commit). Awaiting approval before M3.
 
 ---
 
@@ -25,14 +25,14 @@ Security model: loopback-only bind, timing-safe bearer token delivered in the la
 
 ## 2. Six-Phase Roadmap (`.opencode/plans/FIREFOX_MIGRATION_PLAN.md`)
 
-| Phase | Scope                                                                                              | Status                                                                                 |
-| ----- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 1     | Browser gateway foundation (host, connector, shim)                                                 | ✅ committed `7f238d4`                                                                 |
-| 2     | Ubuntu ARM64 shell (launcher, .desktop, systemd, pickers, deep links)                              | ✅ done + AI-task acceptance PASSED (uncommitted)                                      |
-| 3     | Full API parity + hardening + Firefox E2E harness                                                  | in progress — M1 security foundation committed `d644f92` (§18); M2–M6 pending approval |
-| 4     | Kujenga feature port (SFTP, WordPress, orchestration, messaging, renaming) from `main` @ `690b447` | not started                                                                            |
-| 5     | Firefox WebDriver BiDi automation backend (port from `backup-arm64-bidi` @ `be1415e`)              | not started                                                                            |
-| 6     | Packaging (deb/AppImage arm64), updater, Electron retirement                                       | not started                                                                            |
+| Phase | Scope                                                                                              | Status                                                                                                             |
+| ----- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1     | Browser gateway foundation (host, connector, shim)                                                 | ✅ committed `7f238d4`                                                                                             |
+| 2     | Ubuntu ARM64 shell (launcher, .desktop, systemd, pickers, deep links)                              | ✅ done + AI-task acceptance PASSED (uncommitted)                                                                  |
+| 3     | Full API parity + hardening + Firefox E2E harness                                                  | in progress — M1 security foundation `d644f92` (§18); **M2 essential APIs complete (§19)**; M3–M6 pending approval |
+| 4     | Kujenga feature port (SFTP, WordPress, orchestration, messaging, renaming) from `main` @ `690b447` | not started                                                                                                        |
+| 5     | Firefox WebDriver BiDi automation backend (port from `backup-arm64-bidi` @ `be1415e`)              | not started                                                                                                        |
+| 6     | Packaging (deb/AppImage arm64), updater, Electron retirement                                       | not started                                                                                                        |
 
 ## 3. Current Phase & Acceptance Criteria (Phase 2)
 
@@ -275,3 +275,75 @@ Pre-existing failures (NOT introduced by M1, documented separately): **web integ
 
 - M1 implementation: **`d644f92`** (`feat(daemon): UI-presence permission gate and security hardening (Firefox migration phase 3 M1)`) on `linux-firefox-ai`; parent `9ad4b5e`. Nothing pushed/merged; `/home/chris/Accomplish` untouched; Electron bridge green throughout.
 - Checkpoint/plan docs committed separately (docs commit follows this one).
+
+---
+
+## 19. Phase 3 — M2 Essential API Functionality (2026-10-22, 8 commits `fcd4cc6`…`fa0e377` + this docs commit)
+
+Approved scope: plan §6 M2 (Rev. 2) — provider/model management → skills/MCP → file attachments → browser automation → remaining essentials, all under the §5.4 expansion policy (every allowlist expansion paired with response-shape docs, scrubber/no-secret proof, 401-authorization tests, redaction tests). M1 protections preserved throughout (blocklist 7 untouched, universal scrubber, log redaction, presence gate, socket 0600). Electron byte-identical: desktop suite green at every gate. No push/merge; `/home/chris/Accomplish` untouched.
+
+### 19.1 Commits (chronological, all verified green before committing)
+
+| Commit    | Task | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fcd4cc6` | T0   | `apps/host/scripts/parity-audit.mjs` + generated `docs/PARITY_INVENTORY.md` — static parity measurer (249 declared ↔ shim ↔ daemon ↔ gateway policy), deterministic, self-checked; baseline: shim 84 functional / 45 no-op / 7 optional-absent / 113 unavailable · allowlist 62 · daemon 129                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `780301f` | T1a  | Daemon provider RPCs: `provider.testConnection`, `provider.fetchModels` (stored-key/OAuth resolution daemon-side), `provider.validateKey`, `secrets.listApiKeys` (masked `{exists,prefix}`); dispatch reuses agent-core provider library (`testOllamaConnection`, `fetchProviderModels`…); `redactProviderError` (exact-substring + pattern); allowlist 62→83; +96 paired tests                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `4bd6817` | T1b  | Shim ×42 methods: all provider-config get/set (ollama/litellm/lmstudio/azure-foundry/openai-baseurl), model-discovery (`saveAzureFoundryConfig` mirrors desktop's validate→store→set flow), api-key mgmt (`getApiKeys`/`getAllApiKeys` masked via `listApiKeys`, `setApiKey`/`removeApiKey`/`clearApiKey`→`deleteApiKey('anthropic')` desktop-parity, `validateApiKey(ForProvider)`, bedrock/vertex save via `secrets.storeBedrockCredentials`/`storeApiKey('vertex')` + NEW RPC `provider.validateCredentials {bedrock                                                                                                                                                                                                                                                                      | vertex, credentials}`), provider-settings (`setActiveProvider`, `setConnectedProvider`(request-body secret, one-way),`removeConnectedProvider`, `updateProviderModel`, `get/setProviderDebugMode`, `getConnectedProvider`derived from scrubbed`provider.getSettings`). HuggingFace get/set DEFERRED M6 (documented UI degradation). `getApiKey`/`getBedrockCredentials`/`getVertexCredentials` stay plaintext-blocked (zero UI call sites — no crash path). Allowlist 83→85; detectVertexProject/listVertexProjects → M6. +64 tests                                                                                                                                                                                                                         |
+| `6ab738f` | T2   | Skills + connectors: shim `getUserSkillsPath`, `pickSkillFolder` (host zenity reuse), `addSkillFromFolder`→`skills.addFromPath`, `addSkillFromGitHub`→NEW RPC (agent-core `resolveGithubRawUrl`/`addFromUrl` reused — no duplication; https+github-host zod gate), `deleteSkill`→`skills.delete`; connectors CRUD (`connectors.list/upsert/setEnabled/delete`) + `disconnectConnector`→`deleteTokens+setStatus` (audited pure-RPC); **latent-bug fix**: shim `skills.setEnabled/getContent` `{id}`→`{skillId}` (daemon zod schema — first browser toggle would have failed); scrubber +`clientSecret` (DCR `clientRegistration` can ride `connectors.list`); openSkillInEditor/showSkillInFolder + all OAuth methods DEFERRED M6 (UI try/catch-guards confirmed). Allowlist 85→94; ×32 tests |
+| `09cea4f` | T3   | File attachments: shim `processDroppedFiles` → authorized `/pick-files` host picker (browser `File` objects cannot reveal paths); `getFilePath` stays loud-unavailable; UI `useExecutionAttachments` re-routes path-less browser drops to the picker ONCE guarded by `!isRunningInElectron()` (Electron path byte-identical); `/pick-files` shape proven 1:1 with `FileAttachmentInfo`. +11 tests                                                                                                                                                                                                                                                                                                                                                                                            |
+| `40146e2` | T4   | Browser preview v1: daemon `devBrowser.captureFrame {taskId,pageName?}`→`{data,width,height}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | null`(new minimal daemon CDP-over-WS client on Node-global WebSocket, zero runtime deps; openPreviewPage-first ordering lesson applied) +`devBrowser.shutdown {stopped}`; shim start/stop/status/onBrowserFrame via shim-local 750 ms poll (generation-guarded, 3-miss clientLog breadcrumb; no WS frame notifications in v1); browser-preview panel AUTO-ACTIVATES in Firefox (`useBrowserPreview`guards bind); desktop quit now tries RPC`devBrowser.shutdown` (6 s race) before the unchanged forced-port-kill fallback (M1 18.3.6 closed); allowlist +3 (`openPreviewPage`, `captureFrame`, `shutdown`) — `getPreviewInfo`stays internal (CDP endpoint/token never cross the boundary);`ws` added as daemon devDependency for CDP stub tests. ×46 tests |
+| `03658c0` | T5   | M1-finding root fix: legacy import routes electron-store `credentials` into AES-256-GCM secure storage (api keys, bedrock docs, vertex SA docs; skip-if-exists idempotency, live-key clobber protection) and strips all 10 secret-shaped fields from the persisted blob at every depth — `settings.getAll` is clean at the SOURCE now, gateway scrubber = defense-in-depth; `task.stop` allowlisted (98; no new shim method — UI `cancelTask`→`task.cancel`, MCP-flow parity). ×9 tests                                                                                                                                                                                                                                                                                                      |
+| `fa0e377` | live | Live-verification fix: `upsertConnector` (agent-core storage) now defaults `created_at`/`updated_at` server-side (`?? now()`) — timestampless connector payloads no longer hit `NOT NULL constraint failed: connectors.created_at`; INSERT-only default, update path and all timestamp-supplying callers byte-identical (every caller audited); +7 tests                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+### 19.2 Test results (current HEAD, all green · web integration = pre-existing upstream debt)
+
+| Suite        | Result (Δ vs M1)                                                                 |
+| ------------ | -------------------------------------------------------------------------------- |
+| daemon       | **325/325** (+26 files-inclusive; M2 +95 tests vs M1's 230)                      |
+| agent-core   | **785 pass / 1 pre-existing skip** (+3 — connector storage)                      |
+| host         | **320/320** (allowlist 98·blocklist-7 tripwire, auth-matrix, scrubber/redaction) |
+| web unit     | **485/485** (+87 — shim/hook per-method transport-mock tests)                    |
+| desktop      | **522/522** (+10 — quit RPC order; Electron bridge preserved)                    |
+| typecheck    | all 5 workspaces ✓                                                               |
+| lint:eslint  | 0 errors (3 pre-existing warnings in `useExecutionEffects.ts`)                   |
+| format:check | clean                                                                            |
+| parity audit | self-checks PASS (incl. shim-call ⊆ allowlist, allowlist ⊆ registered)           |
+
+Pre-existing failures (NOT introduced by M2, documented separately): web integration **61** (upstream baseline; verified identical when M2 stashed) · dev-browser-mcp `integration.test.ts` 1 (rebrowser-playwright regression) · lint 3 warnings.
+
+### 19.3 Live verification (real daemon + built host, 2026-10-22)
+
+Harness `/tmp/opencode/m2-verif.mjs` (non-persistent; gateway HTTP+WS, bearer token from `gateway-info.json`): **21/21 PASS** —
+
+- Security negatives: unauthenticated 401; `secrets.getApiKey`/`getAllApiKeys` still 403.
+- Provider: `daemon.ping` · `settings.getOllamaConfig` read (null cfg: ollama config lives in provider settings, interface-consistent) + `setOllamaConfig` null-echo accepted · secret-shape scan clean.
+- **`provider.testConnection('ollama', http://127.0.0.1:11434)` → `success:true` + 3 live models** (local ollama).
+- `provider.fetchModels('ollama')` → clean `{success:false, models:0}` — correct semantics (UI never calls it for ollama: `useProviderModels` gates on `modelsEndpoint`; ollama models flow via testConnection/config) — recorded, not a defect.
+- `secrets.listApiKeys` → masked `{exists,prefix?}` only (plaintext scan clean).
+- Skills: `addFromPath(/tmp skill fixture)` → id `custom-demo-skill` → `skills.list` contains it → `skills.delete` cleaned.
+- Connectors: upsert (void RPC, client-built row) → list (row carries timestamps) → setEnabled → deleteTokens → delete — **after the `fa0e377` timestamp fix**.
+- Browser: `devBrowser.captureFrame` → `null` pre-sidecar (correct) · `devBrowser.shutdown` → `{stopped:false}` (sidecar not running — correct).
+
+**Dev-browser task (M2 acceptance item), Firefox-replica harness `/tmp/opencode/m2-browser-task.mjs`: PASS** — `task.start` with `prompt+taskId` ONLY → permission auto-approve over WS → **`task.complete status=success`** (session `ses_e9c51d8ecffewV17Wwzq7R1VL7`); task rows prove `dev-browser-mcp_browser_navigate` executed: `Navigation successful. URL: https://example.com/ Title: Example Domain Viewport: 1280x720`; agent reported the exact title "Example Domain". The 26-tool dev-browser stack works unchanged from daemon-spawned tasks.
+
+M2 manual-Firefox checklist status: ollama config ✓ (RPC live) · fetch models ✓ (live) · add user skill from folder ✓ (live) · attach file via picker — shape + auth verified, dialog itself interactive-only (zenity needs display/user; pick-folder mechanism live-proven in Phase 2) · dev-browser task ✓ (live).
+
+### 19.4 Remaining risks & deferred (M3+)
+
+- `connectors.upsert` payload is `z.unknown()`: other malformed fields (missing `name`, non-string `url`) can still surface sanitized raw SQLite errors. Timestamp-tolerant, not fully schema-validated — candidate for a full `McpConnector` zod schema in M4/M6 hardening.
+- Hostile-path UX degradations (logged, no crash): `getFilePath`/`openSkillInEditor`/`showSkillInFolder` unavailable; HF get/set deferred; OAuth family (connectors/gws/openai/slack/copilot) M6; `getBedrockCredentials`/`getVertexCredentials` null-derive (no UI call sites).
+- `devBrowser.shutdown` from an authenticated browser CAN stop the shared sidecar (equivalent surface to `daemon.shutdown`; next task lazily relaunches — self-heal tested).
+- `devBrowser.captureFrame` polling is shim-local; closed pages kill timers only via panel unmount (no stream-cleanup hook; v1-accepted).
+- Audit-script comments are lexically quote-sensitive (an apostrophe in a §5.4 comment breaks its parser — hardened to be comment-blind in T5).
+- daemon tests carry a `ws` devDependency (stub CDP server only; runtime uses Node-global WebSocket).
+- Masked-key prefix convention: daemon 4-char (`slice(0,4)`) vs desktop display 8-char+`…` — display-only drift, no consumer today.
+- Rate-limit 600/60s shared-budget flake remains scheduled for M4 (untouched in M2).
+- `resumeSession` workingDirectory threading still M4.
+
+### 19.5 Parity gate numbers (M2 acceptance)
+
+Provider/model + skills + file-attach + browser-preview domains green per `docs/PARITY_INVENTORY.md`: provider-settings **9/9** · provider-configs **11/11** · model-discovery **15/17** (detectVertexProject/listVertexProjects → M6) · api-keys-secrets **12/15** (3 intentional plaintext-blocked reads) · skills **10/12** (2 editor-launchers → M6) · connectors **6/23** (17 OAuth-family → M6) · file-attachments **3/4** (getFilePath documented-can't-work) · browser-preview **4/6** (navigate/status events → M6+). Totals: implemented **141**, unavailable **60**, optional-absent 3, no-op 45 · allowlist **98** · blocklist **7** · daemon registered **137**.
+
+### 19.6 Git
+
+M2 implementation on `linux-firefox-ai`: `fcd4cc6`·`780301f`·`4bd6817`·`6ab738f`·`09cea4f`·`40146e2`·`03658c0`·`fa0e377` + docs commit. Nothing pushed/merged/reset; `/home/chris/Accomplish` untouched; working tree clean after this commit.
