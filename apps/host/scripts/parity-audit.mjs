@@ -68,10 +68,12 @@
  *     8 gws.* sub-methods (their shim path throws while the parent namespace
  *     is absent).
  *   plan "125 daemon methods"     = pre-M1 123 (daemon-routes.ts) + builtin
- *     daemon.shutdown (index.ts) + daemon.ping (rpc-server.ts); today routes
- *     = 127 → total 129 (+4 M1-internal: daemon.setClientType, daemon.setUiPresence,
- *     devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not
- *     allowlisted). Allowlist 62 unchanged (M1 tripwire).
+ *     daemon.shutdown (index.ts) + daemon.ping (rpc-server.ts); M1 adds 4
+ *     internal methods (daemon.setClientType, daemon.setUiPresence,
+ *     devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately NOT
+ *     allowlisted); M2 T1a adds 4 (provider.testConnection, provider.fetchModels,
+ *     provider.validateKey, secrets.listApiKeys). Allowlist: plan 62 → M2 T1a
+ *     +21 (provider trio, 5 provider writes, 2 secrets, 11 provider configs).
  *
  * ── Self-checks (exit 1 on failure) ────────────────────────────────────────
  *   - parse-unknown: any declared entry without a domain → loud failure.
@@ -446,7 +448,7 @@ const DOMAIN_NOTES = {
   'provider-configs':
     'Config writes carry the API key and read paths must return masked data only (plan §5.4) — every M2 allowlist addition needs paired secrets tests.',
   'model-discovery':
-    'No daemon registerMethod exists for any test/fetch/validate — M2 item 1 must add blocklist-safe masked paths (plan §6 M2.1).',
+    'M2 T1a: connection tests + model fetches (incl. bedrock/vertex via daemon-side stored credentials) are backed by `provider.testConnection`/`provider.fetchModels`, keys never cross the socket; shim call-site wiring lands in T1b. `validateBedrockCredentials`/`validateVertexCredentials` keep their separate desktop flows — no T1a RPC yet.',
   gws: '`gws` namespace is optional-absent; sub-methods are unreachable while the parent is absent.',
   analytics:
     'All analytics.* entries resolve through the shim no-op Proxy today; M6 adds a local batched JSONL endpoint.',
@@ -534,8 +536,8 @@ const SHIM_RPC_MAP = {
 
   // ── api-keys-secrets ───────────────────────────────────────────────────
   getApiKeys: {
-    rpc: 'secrets.getAllApiKeys',
-    note: 'blocklisted plaintext read — M2 must add a masked variant (plan §5.4)',
+    rpc: 'secrets.listApiKeys',
+    note: 'M2 T1a masked backing (daemon RPC + allowlist); shim call-site wiring lands in T1b',
   },
   addApiKey: { rpc: 'secrets.storeApiKey' },
   removeApiKey: { rpc: 'secrets.deleteApiKey' },
@@ -543,17 +545,17 @@ const SHIM_RPC_MAP = {
   setApiKey: { rpc: 'secrets.storeApiKey' },
   getApiKey: {
     rpc: 'secrets.getApiKey',
-    note: 'blocklisted — must STAY blocked (masked variant required for UI display)',
+    note: 'blocklisted — must STAY blocked (masked variant `secrets.listApiKeys` ships in M2 T1a for UI display)',
   },
-  validateApiKey: { rpc: null, note: 'no validation RPC registered — M2 provider validation path' },
+  validateApiKey: { rpc: 'provider.validateKey', note: 'M2 T1a — provider.validateKey' },
   validateApiKeyForProvider: {
-    rpc: null,
-    note: 'no validation RPC registered — M2 provider validation path',
+    rpc: 'provider.validateKey',
+    note: 'M2 T1a — provider.validateKey (desktop api-key:validate-provider parity)',
   },
   clearApiKey: { rpc: 'secrets.clear' },
   getAllApiKeys: {
-    rpc: 'secrets.getAllApiKeys',
-    note: 'blocklisted plaintext read — M2 masked variant required',
+    rpc: 'secrets.listApiKeys',
+    note: 'M2 T1a masked backing (daemon RPC + allowlist); shim call-site wiring lands in T1b',
   },
   hasAnyApiKey: { rpc: 'secrets.hasAnyApiKey' },
   saveBedrockCredentials: { rpc: 'secrets.storeBedrockCredentials' },
@@ -580,24 +582,37 @@ const SHIM_RPC_MAP = {
   getLMStudioConfig: { rpc: 'settings.getLMStudioConfig' },
   setLMStudioConfig: { rpc: 'settings.setLMStudioConfig' },
 
-  // ── model-discovery (no daemon RPC exists for any — M2 item 1) ─────────
-  testOllamaConnection: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  testAzureFoundryConnection: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchProviderModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchOpenRouterModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  testLiteLLMConnection: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchLiteLLMModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  testLMStudioConnection: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchLMStudioModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  testNimConnection: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchNimModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  testCustomConnection: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  validateBedrockCredentials: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchBedrockModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  validateVertexCredentials: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  fetchVertexModels: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  detectVertexProject: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
-  listVertexProjects: { rpc: null, note: 'M2 must add blocklist-safe masked path' },
+  // ── model-discovery (M2 T1a: provider.testConnection / provider.fetchModels
+  //     back the per-provider shim methods; T1b wires the shim call sites) ──
+  testOllamaConnection: { rpc: 'provider.testConnection', note: 'M2 T1a' },
+  testAzureFoundryConnection: { rpc: 'provider.testConnection', note: 'M2 T1a' },
+  fetchProviderModels: { rpc: 'provider.fetchModels', note: 'M2 T1a' },
+  fetchOpenRouterModels: { rpc: 'provider.fetchModels', note: 'M2 T1a' },
+  testLiteLLMConnection: { rpc: 'provider.testConnection', note: 'M2 T1a' },
+  fetchLiteLLMModels: { rpc: 'provider.fetchModels', note: 'M2 T1a' },
+  testLMStudioConnection: { rpc: 'provider.testConnection', note: 'M2 T1a' },
+  fetchLMStudioModels: { rpc: 'provider.fetchModels', note: 'M2 T1a' },
+  testNimConnection: { rpc: 'provider.testConnection', note: 'M2 T1a' },
+  fetchNimModels: { rpc: 'provider.fetchModels', note: 'M2 T1a' },
+  testCustomConnection: { rpc: 'provider.testConnection', note: 'M2 T1a' },
+  validateBedrockCredentials: {
+    rpc: null,
+    note: 'separate desktop flow (bedrock:validate) — no T1a RPC; defer to T1b/M3',
+  },
+  fetchBedrockModels: {
+    rpc: 'provider.fetchModels',
+    note: 'M2 T1a — daemon-side stored credentials',
+  },
+  validateVertexCredentials: {
+    rpc: null,
+    note: 'separate desktop flow (vertex:validate) — no T1a RPC; defer to T1b/M3',
+  },
+  fetchVertexModels: {
+    rpc: 'provider.fetchModels',
+    note: 'M2 T1a — daemon-side stored credentials',
+  },
+  detectVertexProject: { rpc: null, note: 'host-side gcloud flow — defer to T1b/M6' },
+  listVertexProjects: { rpc: null, note: 'host-side gcloud flow — defer to T1b/M6' },
 
   // ── huggingface ────────────────────────────────────────────────────────
   getHuggingFaceLocalConfig: { rpc: 'provider.getHuggingFaceLocalConfig' },
@@ -1208,6 +1223,10 @@ const EXPECTED = {
   planUnavailable: 120, // plan §2.2
   planAllowlist: 62,
   planDaemonRegistered: 125, // plan §2.2 (pre-M1 bookkeeping: routes + shutdown + ping)
+  // Milestone deltas measured against the plan figures:
+  m1InternalRegistered: 4, // daemon.setClientType/setUiPresence + devBrowser.* (never allowlisted)
+  m2T1aRegistered: 4, // provider.testConnection/fetchModels/validateKey + secrets.listApiKeys
+  m2T1aAllowlistDelta: 21, // provider trio + 5 provider writes + 2 secrets + 11 settings configs
 };
 
 const SANITY_CHECKS = [
@@ -1232,10 +1251,32 @@ const SANITY_CHECKS = [
     },
   },
   {
-    label: 'setOllamaConfig unavailable, backing settings.setOllamaConfig registered-blocked',
+    label: 'setOllamaConfig unavailable, backing settings.setOllamaConfig allowlisted (M2 T1a)',
     when: (rows) => {
       const r = rows.find((x) => x.name === 'setOllamaConfig');
-      return r.shimStatus === 'unavailable' && r.backingStatus === 'registered-blocked';
+      return r.shimStatus === 'unavailable' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label: 'testOllamaConnection unavailable, backing provider.testConnection allowlisted (M2 T1a)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'testOllamaConnection');
+      return r.shimStatus === 'unavailable' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label: 'fetchOpenRouterModels unavailable, backing provider.fetchModels allowlisted (M2 T1a)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'fetchOpenRouterModels');
+      return r.shimStatus === 'unavailable' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label:
+      'validateApiKeyForProvider unavailable, backing provider.validateKey allowlisted (M2 T1a)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'validateApiKeyForProvider');
+      return r.shimStatus === 'unavailable' && r.backingStatus === 'allowlisted';
     },
   },
 ];
@@ -1378,18 +1419,23 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
       'while the parent namespace is absent). ' +
       (unavailInvariant ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
-  const allowOk = parsed.allowlist.length === EXPECTED.planAllowlist;
+  const m2ExpectedAllowlist = EXPECTED.planAllowlist + EXPECTED.m2T1aAllowlistDelta;
+  const allowOk = parsed.allowlist.length === m2ExpectedAllowlist;
   check(
     allowOk,
-    `allowlist ${parsed.allowlist.length} vs plan 62 — ${allowOk ? 'matches' : 'MISMATCH — allowlist changed since plan'}`,
+    `allowlist ${parsed.allowlist.length} vs plan 62 + ${EXPECTED.m2T1aAllowlistDelta} M2 T1a entries = ${m2ExpectedAllowlist} — ` +
+      `${allowOk ? 'matches the M2 T1a expansion' : 'MISMATCH — allowlist changed since the M2 T1a tripwire'}`,
   );
-  const planDelta = parsed.registered.size - EXPECTED.planDaemonRegistered;
+  const m2ExpectedRegistered =
+    EXPECTED.planDaemonRegistered + EXPECTED.m1InternalRegistered + EXPECTED.m2T1aRegistered;
+  const planDelta = parsed.registered.size;
   check(
-    planDelta === 4,
-    `daemon registered ${parsed.registered.size} (127 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) ` +
-      `vs plan 125 = pre-M1 123 routes + shutdown + ping → today's +4 are the M1-internal methods ` +
-      '(daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted). ' +
-      (planDelta === 4 ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
+    planDelta === m2ExpectedRegistered,
+    `daemon registered ${parsed.registered.size} (${routeCount(parsed)} daemon-routes.ts + ${indexCount(parsed)} daemon/index.ts daemon.shutdown + ${builtinCount(parsed)} builtin daemon.ping) ` +
+      `vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods ` +
+      '(daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), ' +
+      `+${EXPECTED.m2T1aRegistered} M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) = ${m2ExpectedRegistered}. ` +
+      (planDelta === m2ExpectedRegistered ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   push();
   for (const line of rec) {

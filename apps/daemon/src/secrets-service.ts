@@ -17,6 +17,15 @@
  */
 import type { StorageAPI } from '@accomplish_ai/agent-core';
 
+/** Masked per-provider key info — the ONLY key-shaped shape that may cross
+ *  the RPC boundary as a read. `prefix` is a 4-char display fragment
+ *  (matching the shim-side local prefix derivation); the plaintext value is
+ *  never included. */
+export interface MaskedApiKeyInfo {
+  exists: boolean;
+  prefix?: string;
+}
+
 export class SecretsService {
   constructor(private readonly storage: StorageAPI) {}
 
@@ -34,6 +43,21 @@ export class SecretsService {
 
   async getAllApiKeys(): Promise<Record<string, string | null>> {
     return this.storage.getAllApiKeys();
+  }
+
+  /**
+   * Masked sibling of `getAllApiKeys` (Phase 3 M2): safe to serve over the
+   * gateway as `secrets.listApiKeys`. Maps the plaintext provider → key
+   * record down to `{ exists, prefix? }` entries; the plaintext value never
+   * leaves this method.
+   */
+  async listApiKeysMasked(): Promise<Record<string, MaskedApiKeyInfo>> {
+    const keys = await this.getAllApiKeys();
+    const masked: Record<string, MaskedApiKeyInfo> = {};
+    for (const [provider, key] of Object.entries(keys)) {
+      masked[provider] = key ? { exists: true, prefix: key.slice(0, 4) } : { exists: false };
+    }
+    return masked;
   }
 
   async hasAnyApiKey(): Promise<boolean> {

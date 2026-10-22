@@ -176,7 +176,7 @@ describe('gateway security', () => {
 
   describe('method authorization', () => {
     it('rejects methods outside the allowlist', async () => {
-      const { status } = await postRpc(rpcBody(1, 'secrets.deleteApiKey', { provider: 'x' }), {
+      const { status } = await postRpc(rpcBody(1, 'secrets.clear', { provider: 'x' }), {
         Authorization: `Bearer ${TOKEN}`,
       });
       expect(status).toBe(403);
@@ -204,6 +204,70 @@ describe('gateway security', () => {
         expect(status).toBe(403);
       }
       await hostileGateway.close();
+    });
+
+    // Phase 3 M2 T1a: every newly allowlisted method is reachable for an
+    // authenticated browser and hard-401s without the bearer token — the
+    // §5.4(d) authorization-test counterpart to the M1 matrix above.
+    describe('M2 expansion authorization matrix', () => {
+      const M2_METHODS = [
+        'provider.testConnection',
+        'provider.fetchModels',
+        'provider.validateKey',
+        'provider.setActive',
+        'provider.setConnected',
+        'provider.removeConnected',
+        'provider.updateModel',
+        'provider.setDebugMode',
+        'secrets.listApiKeys',
+        'secrets.deleteApiKey',
+        'settings.getOpenAiBaseUrl',
+        'settings.setOpenAiBaseUrl',
+        'settings.getOllamaConfig',
+        'settings.setOllamaConfig',
+        'settings.getLiteLLMConfig',
+        'settings.setLiteLLMConfig',
+        'settings.getLMStudioConfig',
+        'settings.setLMStudioConfig',
+        'settings.getAzureFoundryConfig',
+        'settings.setAzureFoundryConfig',
+        'settings.setNimConfig',
+      ];
+
+      for (const method of M2_METHODS) {
+        it(`proxies ${method} for an authenticated caller`, async () => {
+          const { status } = await postRpc(rpcBody(1, method, { providerId: 'openai' }), {
+            Authorization: `Bearer ${TOKEN}`,
+          });
+          expect(status).toBe(200);
+        });
+
+        it(`requires the bearer token for ${method} (401 without auth)`, async () => {
+          const { status } = await postRpc(rpcBody(1, method, { providerId: 'openai' }));
+          expect(status).toBe(401);
+        });
+      }
+
+      it('blocklist still wins over an allowlist mistake for plaintext secret reads', async () => {
+        const hostileGateway = await createGateway({
+          port: 0,
+          token: TOKEN,
+          webDist: null,
+          rpc: createFakeRpc(),
+          policySets: { allow: new Set([...RPC_METHOD_BLOCKLIST, 'provider.validateKey']) },
+        });
+        for (const method of ['secrets.getApiKey', 'secrets.getAllApiKeys']) {
+          const { status } = await postRpc(
+            rpcBody(1, method, { provider: 'anthropic' }),
+            {
+              Authorization: `Bearer ${TOKEN}`,
+            },
+            hostileGateway.port,
+          );
+          expect(status).toBe(403);
+        }
+        await hostileGateway.close();
+      });
     });
   });
 

@@ -39,6 +39,30 @@ function capturingLogger(lines: LogLine[]): HostLogger {
   };
 }
 
+/** Assert none of the captured log lines carry any of the plain secret
+ *  strings — the §5.4 key-leak check for M2 request params. */
+function assertNoSecretKeys(lines: LogLine[], secrets: string[]): void {
+  for (const line of lines) {
+    for (const secret of secrets) {
+      expect(line.text, `log line leaked a secret: ${line.text}`).not.toContain(secret);
+    }
+  }
+}
+
+/** Gateway-parameterized /rpc POST for the M2 describe blocks below. */
+async function postRpcOn(
+  gateway: GatewayHandle,
+  method: string,
+  params?: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await fetch(`http://127.0.0.1:${gateway.port}/rpc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
 /** Provider settings shape the audit pulled from the daemon service. */
 const PROVIDER_SETTINGS = {
   activeProviderId: 'anthropic',
@@ -166,6 +190,165 @@ describe('gateway universal response scrubbing', () => {
     expect(json).not.toContain('rt_LIVE_TOKEN');
     expect(json).not.toContain('at_LIVE_TOKEN');
     expect(json).not.toContain('"refreshToken"');
+  });
+
+  // Phase 3 M2 T1a (§5.4(b) scrubber counterpart for the expansion): even
+  // if a daemon-side handler regression packed secret-shaped fields into a
+  // config-write response, the universal scrubber strips them at the
+  // boundary.
+  describe('M2 method responses are scrubbed (hypothetical leak defense-in-depth)', () => {
+    let scrubGateway: GatewayHandle;
+
+    beforeAll(async () => {
+      scrubGateway = await createGateway({
+        port: 0,
+        token: TOKEN,
+        webDist: null,
+        rpc: createFakeRpc({
+          'provider.setConnected': {
+            providerId: 'anthropic',
+            saved: true,
+            apiKey: 'sk-ant-SHOULD-NOT-LEAK',
+            credentials: { apiKey: 'sk-ant-NESTED-LEAK', connectionStatus: 'connected' },
+          },
+          'settings.setOllamaConfig': {
+            ok: true,
+            apiKey: 'ollama-not-a-real-key-but-scrubbed-by-name',
+          },
+          'provider.validateKey': {
+            valid: true,
+            apiKey: 'sk-ant-VALIDATE-LEAK-FIELD',
+          },
+          'provider.testConnection': {
+            success: true,
+            models: [{ id: 'llama3', name: 'llama3', token: 'field-scrub-me' }],
+          },
+        }),
+      });
+    });
+
+    afterAll(async () => {
+      await scrubGateway.close();
+    });
+
+    it('scrubs provider.setConnected responses carrying an apiKey field', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'provider.setConnected', {
+        providerId: 'anthropic',
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('sk-ant-SHOULD-NOT-LEAK');
+      expect(json).not.toContain('sk-ant-NESTED-LEAK');
+      expect(json).not.toContain('"apiKey"');
+      expect(json).toContain('"providerId":"anthropic"');
+    });
+
+    it('scrubs settings.setOllamaConfig responses carrying an apiKey field', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'settings.setOllamaConfig', {
+        config: null,
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('ollama-not-a-real-key-but-scrubbed-by-name');
+      expect(json).not.toContain('"apiKey"');
+    });
+
+    it('scrubs a hypothetical apiKey field from provider.validateKey responses', async () => {
+      // String-level redaction of validateKey error TEXT is the daemon's
+      // `redactProviderError` contract (daemon suite); the gateway scrubber
+      // owns field-SHAPED leaks of any method's response.
+      const { body } = await postRpcOn(scrubGateway, 'provider.validateKey', {
+        providerId: 'anthropic',
+        key: 'irrelevant',
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('sk-ant-VALIDATE-LEAK-FIELD');
+      expect(json).not.toContain('"apiKey"');
+      const result = body.result as Record<string, unknown>;
+      expect(result.valid).toBe(true);
+    });
+
+    it('scrubs key-shaped fields out of provider.testConnection model metadata', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'provider.testConnection', {
+        providerId: 'ollama',
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('field-scrub-me');
+      expect(json).not.toContain('"token"');
+      expect(json).toContain('"id":"llama3"');
+    });
+  });
+
+  describe('M2 secret-bearing request params never reach the host log (§5.4(d))', () => {
+    let logGateway: GatewayHandle;
+    const lines: LogLine[] = [];
+    const LIVE_TEST_KEY = 'sk-provider-live-secret-key-0123456789';
+    const LIVE_VALIDATE_KEY = 'sk-validate-live-secret-key-9876543210';
+
+    beforeAll(async () => {
+      logGateway = await createGateway({
+        port: 0,
+        token: TOKEN,
+        webDist: null,
+        rpc: createFakeRpc({
+          'provider.testConnection': { success: true, models: [] },
+          'provider.validateKey': { valid: true },
+        }),
+        logger: capturingLogger(lines),
+        rateLimiterOptions: { limit: 10_000, windowMs: 1000 },
+      });
+    });
+
+    afterAll(async () => {
+      await logGateway.close();
+    });
+
+    it('provider.testConnection params (url + plaintext key) are not logged', async () => {
+      const res = await fetch(`http://127.0.0.1:${logGateway.port}/rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'provider.testConnection',
+          params: {
+            providerId: 'litellm',
+            url: 'http://127.0.0.1:4000',
+            apiKey: LIVE_TEST_KEY,
+          },
+        }),
+      });
+      expect(res.status).toBe(200);
+      assertNoSecretKeys(lines, [LIVE_TEST_KEY, LIVE_VALIDATE_KEY]);
+    });
+
+    it('provider.validateKey params (plaintext key) are not logged', async () => {
+      const res = await fetch(`http://127.0.0.1:${logGateway.port}/rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'provider.validateKey',
+          params: { providerId: 'anthropic', key: LIVE_VALIDATE_KEY },
+        }),
+      });
+      expect(res.status).toBe(200);
+      assertNoSecretKeys(lines, [LIVE_TEST_KEY, LIVE_VALIDATE_KEY]);
+    });
+
+    it('denied M2 requests log the method name only — never params', async () => {
+      const res = await fetch(`http://127.0.0.1:${logGateway.port}/rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'secrets.getApiKey',
+          params: { provider: 'anthropic', key: LIVE_VALIDATE_KEY },
+        }),
+      });
+      expect(res.status).toBe(403);
+      assertNoSecretKeys(lines, [LIVE_TEST_KEY, LIVE_VALIDATE_KEY]);
+    });
   });
 });
 

@@ -11,8 +11,36 @@ import {
   resumeSessionSchema,
   authOpenAiAwaitCompletionSchema,
   validate,
+  ALLOWED_API_KEY_PROVIDERS,
+  DEFAULT_PROVIDERS,
+  STANDARD_VALIDATION_PROVIDERS,
+  ZAI_ENDPOINTS,
+  fetchBedrockModels,
+  fetchLiteLLMModels,
+  fetchLMStudioModels,
+  fetchNimModels,
+  fetchOpenRouterModels,
+  fetchProviderModels,
+  fetchVertexModels,
+  redact,
+  safeParseJson,
+  sanitizeString,
+  testAzureFoundryConnection,
+  testCustomConnection,
+  testLiteLLMConnection,
+  testLMStudioConnection,
+  testNimConnection,
+  testOllamaConnection,
+  validateApiKey,
+  validateAzureFoundry,
 } from '@accomplish_ai/agent-core';
 import type { AccomplishRuntime, StorageDeps } from '@accomplish_ai/agent-core';
+import type {
+  BedrockCredentials,
+  ProviderType,
+  VertexCredentials,
+  ZaiRegion,
+} from '@accomplish_ai/agent-core';
 import { z } from 'zod';
 import { homedir } from 'node:os';
 import type { TaskService } from './task-service.js';
@@ -67,6 +95,349 @@ export function safeHandler(
       throw new Error(sanitizeErrorMessage(err));
     }
   };
+}
+
+// ── Provider connection testing / model discovery (Phase 3 M2 T1a) ───────
+// Timeout parity with the desktop's API_KEY_VALIDATION_TIMEOUT_MS
+// (apps/desktop/src/main/ipc/handlers/utils.ts).
+const PROVIDER_CONNECTION_TIMEOUT_MS = 15000;
+
+interface ProviderTestConnectionParams {
+  providerId: string;
+  url?: string;
+  apiKey?: string;
+  endpoint?: string;
+  deploymentName?: string;
+  authType?: 'api-key' | 'entra-id';
+}
+
+interface ProviderFetchModelsParams {
+  providerId: string;
+  options?: { baseUrl?: string; zaiRegion?: string };
+}
+
+interface ProviderRouteServices {
+  secretsService: Pick<SecretsService, 'getApiKey' | 'getBedrockCredentials'>;
+  settingsService: Pick<
+    SettingsService,
+    | 'getLiteLLMConfig'
+    | 'getLMStudioConfig'
+    | 'getNimConfig'
+    | 'getAzureFoundryConfig'
+    | 'getOpenAiBaseUrl'
+  >;
+  openAiOauthManager: Pick<OpenAiOauthManager, 'getAccessToken'>;
+}
+
+/**
+ * Run a provider error message through redaction so it can safely cross the
+ * RPC boundary: pattern-based redaction covers credential-shaped strings
+ * (sk-…, Bearer …, key=…), and an exact-substring pass guarantees the
+ * provided-in-request `apiKey` itself never echoes back (URL-embedded
+ * credentials, hostile server error echo).
+ */
+export function redactProviderError(message: string, apiKey?: string): string {
+  const withoutKey = apiKey ? message.split(apiKey).join('[REDACTED]') : message;
+  return redact(withoutKey);
+}
+
+const PROVIDER_TEST_URL_REQUIRED = 'URL is required for this provider';
+
+function normalizeProviderOptions(raw: Record<string, unknown> | undefined): {
+  baseUrl?: string;
+  zaiRegion?: ZaiRegion;
+  deploymentName?: string;
+  authType?: 'api-key' | 'entra-id';
+} {
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const opts: {
+    baseUrl?: string;
+    zaiRegion?: ZaiRegion;
+    deploymentName?: string;
+    authType?: 'api-key' | 'entra-id';
+  } = {};
+  if (typeof raw.baseUrl === 'string') {
+    opts.baseUrl = raw.baseUrl;
+  }
+  // Both fieldnames accepted; zaiRegion wins if both are present (desktop
+  // normalizeProviderOptions parity).
+  const regionValue = raw.zaiRegion ?? raw.region;
+  if (typeof regionValue === 'string') {
+    opts.zaiRegion = regionValue as ZaiRegion;
+  }
+  if (typeof raw.deploymentName === 'string') {
+    opts.deploymentName = raw.deploymentName;
+  }
+  if (typeof raw.authType === 'string') {
+    opts.authType = raw.authType as 'api-key' | 'entra-id';
+  }
+  return opts;
+}
+
+/**
+ * Mirror of the desktop per-provider test-connection handlers
+ * (provider-config-handlers/*): provider-native result shapes are preserved
+ * and every response error is redacted before it crosses the socket — the
+ * provided-in-request `apiKey` must never echo back in an error.
+ */
+export async function testProviderConnection(
+  params: ProviderTestConnectionParams,
+  services: ProviderRouteServices,
+): Promise<{ success: boolean; models?: unknown[]; error?: string }> {
+  const { apiKey } = params;
+  const raw = await testProviderConnectionRaw(params, services);
+  if (raw.error) {
+    return { ...raw, error: redactProviderError(raw.error, apiKey) };
+  }
+  return raw;
+}
+
+async function testProviderConnectionRaw(
+  params: ProviderTestConnectionParams,
+  services: ProviderRouteServices,
+): Promise<{ success: boolean; models?: unknown[]; error?: string }> {
+  const { providerId, apiKey } = params;
+  switch (providerId) {
+    case 'ollama': {
+      if (!params.url) {
+        return { success: false, error: PROVIDER_TEST_URL_REQUIRED };
+      }
+      return testOllamaConnection(params.url);
+    }
+    case 'litellm': {
+      if (!params.url) {
+        return { success: false, error: PROVIDER_TEST_URL_REQUIRED };
+      }
+      const key = params.apiKey ?? services.secretsService.getApiKey('litellm') ?? undefined;
+      return testLiteLLMConnection(params.url, key);
+    }
+    case 'lmstudio': {
+      if (!params.url) {
+        return { success: false, error: PROVIDER_TEST_URL_REQUIRED };
+      }
+      return testLMStudioConnection({ url: params.url });
+    }
+    case 'nim': {
+      if (!params.url) {
+        return { success: false, error: PROVIDER_TEST_URL_REQUIRED };
+      }
+      // The key may arrive pre-store from the UI or resolve to the stored one.
+      const key = params.apiKey ?? services.secretsService.getApiKey('nim') ?? '';
+      return testNimConnection(params.url, key);
+    }
+    case 'custom': {
+      if (!params.url) {
+        return { success: false, error: PROVIDER_TEST_URL_REQUIRED };
+      }
+      const key = params.apiKey ?? services.secretsService.getApiKey('custom') ?? undefined;
+      return testCustomConnection(params.url, key);
+    }
+    case 'azure-foundry': {
+      if (!params.endpoint || !params.deploymentName || !params.authType) {
+        return {
+          success: false,
+          error: 'endpoint, deploymentName and authType are required for this provider',
+        };
+      }
+      return testAzureFoundryConnection({
+        endpoint: params.endpoint,
+        deploymentName: params.deploymentName,
+        authType: params.authType,
+        apiKey,
+        timeout: PROVIDER_CONNECTION_TIMEOUT_MS,
+      });
+    }
+    default:
+      return { success: false, error: `Unsupported provider: ${providerId}` };
+  }
+}
+
+/**
+ * Mirror of desktop model-discovery-handlers.ts with one hard invariant:
+ * keys resolve daemon-side (`secretsService.getApiKey` / OAuth manager) and
+ * NEVER cross the socket — the shim/UI half sends provider id + options only.
+ * Error strings are pattern-redacted before crossing back (a hostile fetch
+ * target cannot echo stored key material into the UI).
+ */
+export async function fetchProviderModelsOverRpc(
+  providerId: string,
+  options: ProviderFetchModelsParams['options'],
+  services: ProviderRouteServices,
+): Promise<{ success: boolean; models?: unknown[]; error?: string }> {
+  const { raw, apiKey } = await fetchProviderModelsRaw(providerId, options, services);
+  if (raw.error) {
+    return { ...raw, error: redactProviderError(raw.error, apiKey ?? undefined) };
+  }
+  return raw;
+}
+
+async function fetchProviderModelsRaw(
+  providerId: string,
+  options: ProviderFetchModelsParams['options'],
+  services: ProviderRouteServices,
+): Promise<{ raw: { success: boolean; models?: unknown[]; error?: string }; apiKey?: string }> {
+  const storedKey = services.secretsService.getApiKey(providerId);
+  switch (providerId) {
+    case 'openrouter': {
+      return {
+        raw: await fetchOpenRouterModels(storedKey ?? '', PROVIDER_CONNECTION_TIMEOUT_MS),
+        apiKey: storedKey ?? undefined,
+      };
+    }
+    case 'litellm': {
+      return {
+        raw: await fetchLiteLLMModels({
+          config: services.settingsService.getLiteLLMConfig(),
+          apiKey: storedKey || undefined,
+        }),
+        apiKey: storedKey ?? undefined,
+      };
+    }
+    case 'lmstudio': {
+      const config = services.settingsService.getLMStudioConfig();
+      if (!config || !config.baseUrl) {
+        return { raw: { success: false, error: 'No LM Studio configured' } };
+      }
+      return { raw: await fetchLMStudioModels({ baseUrl: config.baseUrl }) };
+    }
+    case 'nim': {
+      return {
+        raw: await fetchNimModels({
+          config: services.settingsService.getNimConfig(),
+          apiKey: storedKey || undefined,
+        }),
+        apiKey: storedKey ?? undefined,
+      };
+    }
+    case 'bedrock': {
+      const credentials = services.secretsService.getBedrockCredentials();
+      if (!credentials) {
+        return { raw: { success: false, error: 'No API key found for this provider' } };
+      }
+      // StorageAPI types the parsed JSON as Record<string, string> — the
+      // recorded shape is BedrockCredentials (desktop bedrock:get-credentials
+      // does the same JSON round-trip).
+      return { raw: await fetchBedrockModels(credentials as unknown as BedrockCredentials) };
+    }
+    case 'vertex': {
+      if (!storedKey) {
+        return { raw: { success: false, error: 'No API key found for this provider' } };
+      }
+      const parsed = safeParseJson<VertexCredentials>(storedKey);
+      if (!parsed.success) {
+        return {
+          raw: { success: false, error: 'Stored Vertex AI credentials could not be parsed' },
+        };
+      }
+      return { raw: await fetchVertexModels(parsed.data) };
+    }
+  }
+
+  // Config-driven providers (openai, zai, anthropic, google, ...).
+  const providerConfig = DEFAULT_PROVIDERS.find((p) => p.id === providerId);
+  if (!providerConfig?.modelsEndpoint) {
+    return { raw: { success: false, error: 'No models endpoint configured for this provider' } };
+  }
+
+  let apiKey: string | null = storedKey;
+  if (!apiKey && providerId === 'openai') {
+    apiKey = services.openAiOauthManager.getAccessToken();
+  }
+  if (!apiKey) {
+    return { raw: { success: false, error: 'No API key found for this provider' } };
+  }
+
+  let urlOverride: string | undefined;
+  let endpointConfig = providerConfig.modelsEndpoint;
+  if (providerId === 'openai' && typeof options?.baseUrl === 'string' && options.baseUrl) {
+    urlOverride = `${options.baseUrl.replace(/\/+$/, '')}/models`;
+    endpointConfig = { ...endpointConfig, modelFilter: undefined };
+  }
+  if (providerId === 'zai' && options?.zaiRegion) {
+    const zaiUrl = ZAI_ENDPOINTS[options.zaiRegion as ZaiRegion];
+    if (zaiUrl) {
+      urlOverride = `${zaiUrl}/models`;
+    }
+  }
+
+  return {
+    raw: await fetchProviderModels({
+      endpointConfig,
+      apiKey,
+      urlOverride,
+      timeout: PROVIDER_CONNECTION_TIMEOUT_MS,
+    }),
+    apiKey,
+  };
+}
+
+/**
+ * Mirror of desktop `api-key:validate-provider` (api-key-validation-handlers):
+ * ALLOWED/STANDARD provider gating, sanitize + stored-URL fallback for
+ * standard providers, azure-foundry against stored config, and a
+ * skip-validation pass-through for local/custom providers. Errors are
+ * redacted before crossing the socket.
+ */
+export async function validateProviderKey(
+  providerId: string,
+  key: string,
+  rawOptions: Record<string, unknown> | undefined,
+  services: ProviderRouteServices,
+): Promise<{ valid: boolean; error?: string }> {
+  if (!ALLOWED_API_KEY_PROVIDERS.has(providerId)) {
+    return { valid: false, error: 'Unsupported provider' };
+  }
+
+  const options = normalizeProviderOptions(rawOptions);
+
+  if (STANDARD_VALIDATION_PROVIDERS.has(providerId)) {
+    let sanitizedKey: string;
+    try {
+      sanitizedKey = sanitizeString(key, 'apiKey', 256);
+    } catch (e) {
+      return { valid: false, error: e instanceof Error ? e.message : 'Invalid API key' };
+    }
+
+    // OpenAI-compatible providers fall back to the user-configured base URL
+    // when the caller didn't supply one — desktop parity, the URL lives in
+    // the daemon's app-settings.
+    let openAiBaseUrlFallback: string | undefined;
+    if (providerId === 'openai') {
+      const rawBaseUrl = options.baseUrl;
+      if (typeof rawBaseUrl === 'string' && rawBaseUrl.trim()) {
+        openAiBaseUrlFallback = rawBaseUrl.trim();
+      } else {
+        try {
+          openAiBaseUrlFallback = services.settingsService.getOpenAiBaseUrl().trim() || undefined;
+        } catch {
+          openAiBaseUrlFallback = undefined;
+        }
+      }
+    }
+
+    const result = await validateApiKey(providerId as ProviderType, sanitizedKey, {
+      timeout: PROVIDER_CONNECTION_TIMEOUT_MS,
+      baseUrl: openAiBaseUrlFallback,
+      zaiRegion: providerId === 'zai' ? options.zaiRegion || 'international' : undefined,
+    });
+    return result.error ? { ...result, error: redactProviderError(result.error, key) } : result;
+  }
+
+  if (providerId === 'azure-foundry') {
+    const config = services.settingsService.getAzureFoundryConfig();
+    const result = await validateAzureFoundry(config, {
+      apiKey: key,
+      baseUrl: typeof options.baseUrl === 'string' ? options.baseUrl : undefined,
+      deploymentName: options.deploymentName,
+      authType: options.authType,
+      timeout: PROVIDER_CONNECTION_TIMEOUT_MS,
+    });
+    return result.error ? { ...result, error: redactProviderError(result.error, key) } : result;
+  }
+
+  return { valid: true };
 }
 
 export interface RouteServices {
@@ -500,6 +871,12 @@ export function registerRpcMethods(services: RouteServices): void {
     'secrets.hasAnyApiKey',
     safeHandler(() => secretsService.hasAnyApiKey()),
   );
+  // Masked read (Phase 3 M2): `{ provider: { exists, prefix? } }` — plaintext
+  // siblings (`secrets.getApiKey`/`secrets.getAllApiKeys`) stay plaintext-never.
+  rpc.registerMethod(
+    'secrets.listApiKeys',
+    safeHandler(() => secretsService.listApiKeysMasked()),
+  );
   rpc.registerMethod(
     'secrets.storeBedrockCredentials',
     safeHandler((params) => {
@@ -817,6 +1194,68 @@ export function registerRpcMethods(services: RouteServices): void {
         v.config as Parameters<typeof settingsService.setHuggingFaceLocalConfig>[0],
       );
       return Promise.resolve();
+    }),
+  );
+
+  // ── Provider connection testing / model discovery (Phase 3 M2 T1a) ──────
+  // Dispatchers above (testProviderConnection / fetchProviderModelsOverRpc /
+  // validateProviderKey) mirror the desktop per-provider IPC handlers. Keys
+  // resolve daemon-side; request-embedded keys pass one-way to the daemon
+  // (testConnection / validateKey) and never appear in responses.
+  const providerTestConnectionSchema = z.object({
+    providerId: providerIdSchema,
+    url: z.string().optional(),
+    apiKey: z.string().optional(),
+    endpoint: z.string().optional(),
+    deploymentName: z.string().optional(),
+    authType: z.enum(['api-key', 'entra-id']).optional(),
+  });
+  rpc.registerMethod(
+    'provider.testConnection',
+    safeHandler(async (params) => {
+      const v = validate(providerTestConnectionSchema, params);
+      return testProviderConnection(v, {
+        secretsService,
+        settingsService,
+        openAiOauthManager,
+      });
+    }),
+  );
+  rpc.registerMethod(
+    'provider.fetchModels',
+    safeHandler((params) => {
+      const v = validate(
+        z.object({
+          providerId: providerIdSchema,
+          options: z
+            .object({ baseUrl: z.string().optional(), zaiRegion: z.string().optional() })
+            .optional(),
+        }),
+        params,
+      );
+      return fetchProviderModelsOverRpc(v.providerId, v.options, {
+        secretsService,
+        settingsService,
+        openAiOauthManager,
+      });
+    }),
+  );
+  rpc.registerMethod(
+    'provider.validateKey',
+    safeHandler(async (params) => {
+      const v = validate(
+        z.object({
+          providerId: providerIdSchema,
+          key: z.string().min(1),
+          options: z.record(z.unknown()).optional(),
+        }),
+        params,
+      );
+      return validateProviderKey(v.providerId, v.key, v.options, {
+        secretsService,
+        settingsService,
+        openAiOauthManager,
+      });
     }),
   );
 

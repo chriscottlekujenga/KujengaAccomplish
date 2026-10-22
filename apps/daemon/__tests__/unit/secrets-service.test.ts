@@ -87,3 +87,61 @@ describe('SecretsService', () => {
     expect(storage.clearSecureStorage).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('SecretsService.listApiKeysMasked (Phase 3 M2 masked read)', () => {
+  let storage: StorageAPI;
+  let service: SecretsService;
+
+  beforeEach(() => {
+    storage = makeStorageStub();
+    service = new SecretsService(storage);
+  });
+
+  it('maps stored keys to { exists: true, prefix } with a 4-char prefix', async () => {
+    vi.mocked(storage.getAllApiKeys).mockResolvedValue({
+      anthropic: 'sk-ant-abcdefghijklmnop',
+      openai: null,
+    });
+    await expect(service.listApiKeysMasked()).resolves.toEqual({
+      anthropic: { exists: true, prefix: 'sk-a' },
+      openai: { exists: false },
+    });
+  });
+
+  it('NEVER includes plaintext values — every entry exposes only exists/prefix', async () => {
+    const SECRET = 'sk-super-secret-plaintext-value-9999';
+    vi.mocked(storage.getAllApiKeys).mockResolvedValue({
+      anthropic: SECRET,
+      openai: null,
+      litellm: 'another-plaintext-key',
+    });
+    const masked = await service.listApiKeysMasked();
+    const json = JSON.stringify(masked);
+    expect(json).not.toContain(SECRET);
+    expect(json).not.toContain('another-plaintext-key');
+    for (const entry of Object.values(masked)) {
+      expect(Object.keys(entry).sort()).toEqual(
+        ['exists', 'prefix'].slice(0, Object.keys(entry).length),
+      );
+      if ('prefix' in entry) {
+        expect(entry.prefix?.length).toBe(4);
+      }
+    }
+  });
+
+  it('a 4-char prefix matches the shim-side local derivation convention', async () => {
+    // accomplish-http.ts `addApiKey` derives `key.slice(0, 4)` locally — this
+    // masked read must hand back the same prefix shape for the same key.
+    const key = 'abcdEFGH-remainder';
+    vi.mocked(storage.getAllApiKeys).mockResolvedValue({ anthropic: key, openai: null });
+    const masked = await service.listApiKeysMasked();
+    expect(masked.anthropic).toEqual({ exists: true, prefix: key.slice(0, 4) });
+  });
+
+  it('absent keys carry no prefix at all', async () => {
+    vi.mocked(storage.getAllApiKeys).mockResolvedValue({ anthropic: null, openai: null });
+    const masked = await service.listApiKeysMasked();
+    expect(masked.anthropic).toEqual({ exists: false });
+    expect('prefix' in masked.anthropic).toBe(false);
+  });
+});

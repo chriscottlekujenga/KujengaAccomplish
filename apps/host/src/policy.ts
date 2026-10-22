@@ -54,10 +54,48 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'settings.setOnboardingComplete',
   'settings.getSelectedModel',
   'settings.setSelectedModel',
+  // Provider runtime configs (Phase 3 M2 T1a): ollama / LiteLLM / LMStudio /
+  // Azure Foundry / NIM / OpenAI base URL. Writes carry config (and any
+  // provider keys) one-way to the daemon; reads return config metadata the
+  // settings UI renders — the universal scrubber still applies to reads.
+  // NOTE: no `settings.getNimConfig` — AccomplishAPI has no Nim getter, the
+  // UI resolves NIM config through `provider.getSettings` instead.
+  'settings.getOpenAiBaseUrl',
+  'settings.setOpenAiBaseUrl',
+  'settings.getOllamaConfig',
+  'settings.setOllamaConfig',
+  'settings.getLiteLLMConfig',
+  'settings.setLiteLLMConfig',
+  'settings.getLMStudioConfig',
+  'settings.setLMStudioConfig',
+  'settings.getAzureFoundryConfig',
+  'settings.setAzureFoundryConfig',
+  'settings.setNimConfig',
   // Provider settings — masked metadata only (gateway scrubs secret-looking
   // fields from the response before it crosses the trust boundary).
   'provider.getSettings',
   'provider.getDebugMode',
+  // Provider management writes (Phase 3 M2 T1a) — empty/echo-scoped
+  // responses; the universal scrubber still applies to whatever the daemon
+  // returns, so a hypothetical secret-shaped field cannot leak by accident.
+  'provider.setActive',
+  'provider.setConnected',
+  'provider.removeConnected',
+  'provider.updateModel',
+  'provider.setDebugMode',
+  // Provider model management (Phase 3 M2 T1a):
+  //   testConnection  → { success, models?: [{id, name, ...}], error? } —
+  //                     provider-native shape, errors redacted daemon-side;
+  //                     the REQUEST may carry a plaintext key (one-way to
+  //                     the daemon).
+  //   fetchModels     → { success, models?: [{id, name, ...}], error? } —
+  //                     no key material anywhere: keys resolve daemon-side
+  //                     (stored secrets / OpenAI OAuth token).
+  //   validateKey     → { valid, error? } — the REQUEST carries the
+  //                     plaintext key (one-way); errors redacted daemon-side.
+  'provider.testConnection',
+  'provider.fetchModels',
+  'provider.validateKey',
   // Workspaces & knowledge notes
   'workspace.list',
   'workspace.get',
@@ -86,6 +124,11 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   // on the RPC_METHOD_BLOCKLIST until masked variants exist (Phase 3).
   'secrets.storeApiKey',
   'secrets.hasAnyApiKey',
+  // Masked read (Phase 3 M2): `{ provider: { exists, prefix? } }` entries
+  // only — never plaintext. Plaintext siblings stay on the blocklist below.
+  'secrets.listApiKeys',
+  // Delete is a write; response is `true`/`false`.
+  'secrets.deleteApiKey',
   // Accomplish AI free tier
   'accomplish-ai.connect',
   'accomplish-ai.get-usage',
