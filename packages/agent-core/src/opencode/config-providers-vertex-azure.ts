@@ -1,7 +1,7 @@
 /** Vertex AI and Azure Foundry provider config builders. */
 import type { VertexProviderCredentials } from '../common/types/providerSettings.js';
 import { getAzureFoundryConfig } from '../storage/repositories/index.js';
-import { ensureAzureFoundryProxy } from './proxies/index.js';
+import { ensureAzureFoundryProxy, PROXY_TOKEN_HEADER } from './proxies/index.js';
 import { createConsoleLogger } from '../utils/logging.js';
 import type { ProviderConfig, ProviderModelConfig } from './config-generator.js';
 import type { ProviderBuildContext, ProviderBuildResult } from './config-provider-context.js';
@@ -18,18 +18,32 @@ async function buildAzureFoundryProviderConfig(
   const baseUrl = endpoint.replace(/\/$/, '');
   const targetBaseUrl = `${baseUrl}/openai/v1`;
   const proxyInfo = await ensureAzureFoundryProxy(targetBaseUrl);
-  const azureOptions: ProviderConfig['options'] = { baseURL: proxyInfo.baseURL };
+  // Phase 3 M1 §5.3 — the proxy requires the per-task token in a dedicated
+  // header (Authorization stays reserved for the upstream credential, which
+  // the proxy forwards byte-identically).
+  const proxyHeaders: Record<string, string> = {
+    [PROXY_TOKEN_HEADER]: proxyInfo.token,
+  };
+  if (authMethod === 'entra-id') {
+    if (!azureFoundryToken) {
+      return null;
+    }
+    proxyHeaders['Authorization'] = `Bearer ${azureFoundryToken}`;
+  }
+
+  const azureOptions: ProviderConfig['options'] = {
+    baseURL: proxyInfo.baseURL,
+    headers: proxyHeaders,
+  };
   if (authMethod === 'api-key') {
     const azureApiKey = getApiKey('azure-foundry');
     if (azureApiKey) {
       azureOptions.apiKey = azureApiKey;
     }
   } else if (authMethod === 'entra-id') {
-    if (!azureFoundryToken) {
-      return null;
-    }
+    // Preserve the pre-token behavior: no SDK apiKey; the Bearer header
+    // carries the Entra token.
     azureOptions.apiKey = '';
-    azureOptions.headers = { Authorization: `Bearer ${azureFoundryToken}` };
   }
   return {
     id: 'azure-foundry',

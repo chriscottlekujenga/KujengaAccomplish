@@ -19,11 +19,14 @@ import { createTaskCallbacks } from '../../src/task-callbacks.js';
  *   2. `source === 'whatsapp'` AND bridge NOT attached (listenerCount ≤ 1)
  *      → auto-deny immediately (prevents task hang when WhatsApp is
  *      configured by source but the runtime bridge is not attached).
- *   3. `!'whatsapp'` AND no UI client connected → auto-deny.
- *   4. `!'whatsapp'` AND UI connected → emit.
+ *   3. `!'whatsapp'` AND no interactive UI attached → auto-deny.
+ *      (Phase 3 M1: the probe is now `hasInteractiveClients` — legacy
+ *      socket clients OR fresh gateway-reported browser counts — never the
+ *      gateway's own persistent socket.)
+ *   4. `!'whatsapp'` AND interactive UI attached → emit.
  */
 
-function buildFixture(options: { source: TaskSource; hasConnectedClients: boolean }) {
+function buildFixture(options: { source: TaskSource; hasInteractiveClients: boolean }) {
   const emitter = new EventEmitter();
   // Mirror the daemon's real wiring: task-event-forwarding attaches ONE
   // listener on 'permission' to forward to RPC. That baseline listener is
@@ -49,7 +52,9 @@ function buildFixture(options: { source: TaskSource; hasConnectedClients: boolea
   } as unknown as TaskManagerAPI;
 
   const callbacks = createTaskCallbacks('tsk_abc', emitter, storage, taskManager, {
-    rpc: { hasConnectedClients: () => options.hasConnectedClients },
+    // Phase 3 M1: the probe is now interactive presence (legacy clients OR
+    // gateway-reported browser counts), not raw socket connectivity.
+    presence: { hasInteractiveClients: () => options.hasInteractiveClients },
     getTaskSource: () => options.source,
     sendPermissionResponse,
   });
@@ -68,7 +73,7 @@ const fakeRequest: PermissionRequest = {
 
 describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
   it("source='ui', UI connected → emits 'permission' (does NOT auto-deny)", () => {
-    const f = buildFixture({ source: 'ui', hasConnectedClients: true });
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
     // Attach a listener so listenerCount > 1 would also pass a whatsapp
     // check (shouldn't matter here; asserting the UI path is emit-only).
     const bridgeListener = vi.fn();
@@ -82,7 +87,7 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
   });
 
   it("source='ui', no UI connected → auto-denies (does NOT emit bridge-side)", () => {
-    const f = buildFixture({ source: 'ui', hasConnectedClients: false });
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: false });
 
     f.callbacks.onPermissionRequest?.(fakeRequest);
 
@@ -98,7 +103,7 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
   });
 
   it("source='whatsapp', bridge attached (listenerCount > 1) → emits 'permission'", () => {
-    const f = buildFixture({ source: 'whatsapp', hasConnectedClients: false });
+    const f = buildFixture({ source: 'whatsapp', hasInteractiveClients: false });
     const bridgeListener = vi.fn();
     f.emitter.on('permission', bridgeListener);
 
@@ -112,7 +117,7 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
 
   it("source='whatsapp', bridge NOT attached → auto-denies here (plan decision #10)", () => {
     // Only the baseline RPC forwarder is attached. listenerCount === 1.
-    const f = buildFixture({ source: 'whatsapp', hasConnectedClients: false });
+    const f = buildFixture({ source: 'whatsapp', hasInteractiveClients: false });
 
     f.callbacks.onPermissionRequest?.(fakeRequest);
 
@@ -124,7 +129,7 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
   });
 
   it("source='scheduler', no UI connected → auto-denies", () => {
-    const f = buildFixture({ source: 'scheduler', hasConnectedClients: false });
+    const f = buildFixture({ source: 'scheduler', hasInteractiveClients: false });
 
     f.callbacks.onPermissionRequest?.(fakeRequest);
 
@@ -136,7 +141,7 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
   });
 
   it("source='scheduler', UI connected → emits 'permission' (user can still approve)", () => {
-    const f = buildFixture({ source: 'scheduler', hasConnectedClients: true });
+    const f = buildFixture({ source: 'scheduler', hasInteractiveClients: true });
 
     f.callbacks.onPermissionRequest?.(fakeRequest);
 
@@ -151,7 +156,7 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
     // path (startTask → onPermissionRequest → sendResponse) but the
     // callback's dispatch is the only piece we can unit-test without a
     // full daemon stack.
-    const f = buildFixture({ source: 'scheduler', hasConnectedClients: false });
+    const f = buildFixture({ source: 'scheduler', hasInteractiveClients: false });
 
     const started = Date.now();
     f.callbacks.onPermissionRequest?.(fakeRequest);

@@ -11,12 +11,36 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { createConsoleLogger } from '../utils/logging.js';
+import { ACCOMPLISH_DEV_BROWSER_TOKEN_ENV, getDevBrowserToken } from './dev-browser-token.js';
 
 export interface BrowserServerConfig {
   mcpToolsPath: string;
   bundledNodeBinPath?: string;
   devBrowserPort: number;
   devBrowserCdpPort?: number;
+  /**
+   * Bearer token the sidecar requires on every HTTP request (Phase 3 M1 §5.3).
+   * When omitted, a per-process token is generated (the value must match the
+   * one distributed to the dev-browser-mcp MCP tool child).
+   */
+  devBrowserToken?: string;
+}
+
+function resolveBrowserToken(explicit: string | undefined): string {
+  return explicit ?? getDevBrowserToken();
+}
+
+export function buildBrowserSpawnEnvironment(
+  bundledNodeBinPath: string | undefined,
+  devBrowserToken?: string,
+): NodeJS.ProcessEnv {
+  const spawnEnv = buildNodeEnvironment(bundledNodeBinPath);
+  spawnEnv[ACCOMPLISH_DEV_BROWSER_TOKEN_ENV] = resolveBrowserToken(devBrowserToken);
+  return spawnEnv;
+}
+
+function authHeaders(devBrowserToken?: string): Record<string, string> {
+  return { Authorization: `Bearer ${resolveBrowserToken(devBrowserToken)}` };
 }
 
 const log = createConsoleLogger({ prefix: 'Browser' });
@@ -140,7 +164,10 @@ export async function installPlaywrightChromium(
   });
 }
 
-export async function isDevBrowserServerReady(port: number): Promise<boolean> {
+export async function isDevBrowserServerReady(
+  port: number,
+  devBrowserToken?: string,
+): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1000);
   try {
@@ -149,7 +176,16 @@ export async function isDevBrowserServerReady(port: number): Promise<boolean> {
     // and ensures IPv4 loopback is used consistently.
     const res = await fetch(`http://127.0.0.1:${port}`, {
       signal: controller.signal,
+      headers: authHeaders(devBrowserToken),
     });
+    if (res.status === 401) {
+      // Server is up but our token is not its token: a stale sidecar from a
+      // previous daemon lifetime (or a foreign process squatting the port).
+      // Callers re-spawn with the current token and start-server.mjs kills
+      // the stale listener first.
+      log.info('[Browser] Dev-browser server responded 401 — token mismatch (stale server)');
+      return false;
+    }
     return res.ok;
   } catch {
     return false;
@@ -162,12 +198,13 @@ export async function waitForDevBrowserServer(
   port: number,
   maxWaitMs = 15000,
   pollIntervalMs = 500,
+  devBrowserToken?: string,
 ): Promise<boolean> {
   const startTime = Date.now();
   let attempts = 0;
   while (Date.now() - startTime < maxWaitMs) {
     attempts++;
-    if (await isDevBrowserServerReady(port)) {
+    if (await isDevBrowserServerReady(port, devBrowserToken)) {
       log.info(
         `[Browser] Dev-browser server ready after ${attempts} attempts (${Date.now() - startTime}ms)`,
       );

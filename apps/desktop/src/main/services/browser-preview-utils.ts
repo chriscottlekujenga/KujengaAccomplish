@@ -1,14 +1,19 @@
 /**
- * Browser Preview utility functions — IPC helpers and HTTP/CDP resolution helpers.
+ * Browser Preview utility functions — IPC helpers and sidecar resolution helpers.
  * Extracted from browserPreview.ts for ENG-695.
+ *
+ * Phase 3 M1 — the dev-browser sidecar is daemon-owned and bearer-token
+ * secured. This module no longer talks to :9224/:9225 directly; it resolves
+ * preview state over the daemon RPC (`devBrowser.getPreviewInfo` /
+ * `devBrowser.openPreviewPage`) so the sidecar token never crosses IPC.
+ * Only loopback URLs and page names cross the daemon socket.
  */
 
 import { BrowserWindow } from 'electron';
-import { DEV_BROWSER_CDP_PORT, DEV_BROWSER_PORT } from '@accomplish_ai/agent-core/desktop-main';
+import { getDaemonClient } from '../daemon-bootstrap';
 
-export const DEV_BROWSER_HOST = '127.0.0.1';
-export const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 export const COMMAND_TIMEOUT_MS = 10_000;
+export const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 
 export type PreviewStatus = 'starting' | 'streaming' | 'loading' | 'ready' | 'stopped' | 'error';
 
@@ -50,44 +55,51 @@ export function emitNavigationEvent(taskId: string, pageName: string, url: strin
   sendToRenderer('browser:navigate', { taskId, pageName, url, timestamp: Date.now() });
 }
 
-export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} from ${url}`);
-    }
-    return (await res.json()) as T;
-  } finally {
-    clearTimeout(timer);
-  }
+/** Shape of the daemon's `devBrowser.getPreviewInfo` result (nulls = unavailable). */
+export interface DevBrowserPreviewInfo {
+  wsEndpoint: string | null;
+  pages: string[] | null;
 }
 
+/**
+ * Ensure (create or reuse) the page for this task and return its CDP targetId.
+ *
+ * Mirrors the old POST http://127.0.0.1:9224/pages contract: same 10s deadline
+ * (now the RPC client timeout) and same thrown errors, which callers catch to
+ * degrade preview to status:'error' without crashing. Also triggers the
+ * sidecar's lazy Chrome launch when the browser has not started yet.
+ */
 export async function resolveTargetId(taskId: string, pageName: string): Promise<string> {
   const fullPageName = `${taskId}-${pageName}`;
-  const result = await fetchJson<{ targetId: string }>(
-    `http://${DEV_BROWSER_HOST}:${DEV_BROWSER_PORT}/pages`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: fullPageName, viewport: DEFAULT_VIEWPORT }),
-    },
+  const result = await getDaemonClient().call(
+    'devBrowser.openPreviewPage',
+    { name: fullPageName, viewport: DEFAULT_VIEWPORT },
+    { timeoutMs: COMMAND_TIMEOUT_MS },
   );
-  if (!result.targetId) {
+  if (!result?.targetId) {
     throw new Error(`No targetId for page ${fullPageName}`);
   }
   return result.targetId;
 }
 
+/**
+ * Resolve the browser-level CDP WebSocket endpoint.
+ *
+ * The daemon derives it authoritatively from the sidecar's GET / (the CDP
+ * port is ephemeral since Phase 3 M1 — DevToolsActivePort discovery), so the
+ * fixed :9225 /json/version fetch is gone. `wsEndpoint` is null while Chrome
+ * has not launched; callers treat that like the old connection-refused error.
+ */
 export async function resolveBrowserWsEndpoint(): Promise<string> {
-  const info = await fetchJson<{ webSocketDebuggerUrl: string }>(
-    `http://${DEV_BROWSER_HOST}:${DEV_BROWSER_CDP_PORT}/json/version`,
+  const info: DevBrowserPreviewInfo = await getDaemonClient().call(
+    'devBrowser.getPreviewInfo',
+    undefined,
+    { timeoutMs: COMMAND_TIMEOUT_MS },
   );
-  if (!info.webSocketDebuggerUrl) {
+  if (!info.wsEndpoint) {
     throw new Error('CDP endpoint missing webSocketDebuggerUrl');
   }
-  return info.webSocketDebuggerUrl;
+  return info.wsEndpoint;
 }
 /**
  * Auto-start a preview when the dev-browser server is already running with an active session.
@@ -102,9 +114,9 @@ export async function autoStartScreencast(
   startBrowserPreviewStream: (taskId: string, pageName: string) => Promise<void>,
 ): Promise<void> {
   try {
-    const data = await fetchJson<{ pages: string[] }>(
-      `http://${DEV_BROWSER_HOST}:${DEV_BROWSER_PORT}/pages`,
-    ).catch(() => null);
+    const data = await getDaemonClient()
+      .call('devBrowser.getPreviewInfo', undefined, { timeoutMs: COMMAND_TIMEOUT_MS })
+      .catch(() => null);
 
     if (!data?.pages) {
       return;
@@ -117,6 +129,6 @@ export async function autoStartScreencast(
       await startBrowserPreviewStream(taskId, pageName);
     }
   } catch {
-    // Server not ready yet — will be triggered later via IPC
+    // Daemon/sidecar not ready yet — will be triggered later via IPC
   }
 }

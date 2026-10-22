@@ -99,6 +99,11 @@ export async function startHostApp(options: StartHostOptions = {}): Promise<Host
     /* best-effort on filesystems without POSIX modes */
   }
 
+  // Phase 3 M1 §5.2: the connector re-declares gateway identity (client
+  // typing + UI-presence count) on every (re)connection. The gateway handle
+  // doesn't exist until after the daemon connects, so the count supplier
+  // closes over a reference that is assigned once the gateway is up.
+  let gatewayRef: GatewayHandle | null = null;
   const connector = new DaemonConnector({
     dataDir: config.dataDir,
     daemonEntryPath: config.daemonEntryPath,
@@ -106,6 +111,7 @@ export async function startHostApp(options: StartHostOptions = {}): Promise<Host
     appPath: config.appPath,
     expectedBuildId: options.expectedBuildId,
     logger,
+    uiClientCount: () => gatewayRef?.uiPresenceCount() ?? 0,
     ...options.connectorOptions,
   });
   const client = await connector.start();
@@ -142,10 +148,19 @@ export async function startHostApp(options: StartHostOptions = {}): Promise<Host
   }
 
   registerNotificationForwarding(client, gateway);
+  gatewayRef = gateway;
+  // Heartbeat semantics (Phase 3 M1 §5.2): re-assert the browser-UI count
+  // every 30 s while the daemon socket is up; disarm on daemon disconnect;
+  // re-arm on reconnect. The connector's own identity handshake covers the
+  // setClientType/'gateway' declaration on initial connect and reconnects.
+  gateway.startPresenceHeartbeat();
 
   connector.onStateChange((state) => {
     if (state === 'disconnected') {
+      gateway.stopPresenceHeartbeat();
       gateway.broadcastControl('daemon:disconnected');
+    } else if (state === 'connected') {
+      gateway.startPresenceHeartbeat();
     }
   });
   connector.onClientReplaced((newClient) => {

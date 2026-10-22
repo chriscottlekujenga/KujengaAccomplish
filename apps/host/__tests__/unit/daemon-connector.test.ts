@@ -65,6 +65,14 @@ async function startFakeDaemon(
               ...(options.buildId ? { buildId: options.buildId } : {}),
             };
             socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result })}\n`);
+          } else if (message.method === 'daemon.setClientType') {
+            socket.write(
+              `${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { ok: true } })}\n`,
+            );
+          } else if (message.method === 'daemon.setUiPresence') {
+            socket.write(
+              `${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { ok: true } })}\n`,
+            );
           } else if (message.method === 'daemon.shutdown') {
             socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: null })}\n`);
             socket.end();
@@ -315,5 +323,86 @@ describe('DaemonConnector', () => {
     await connector.stop();
     await revived.stop();
     client.close();
+  });
+
+  // ── Phase 3 M1 §5.2: host identity declaration ───────────────────────────
+  // Every adopted connection (initial connect AND reconnect) must declare
+  // the host as a gateway-typed client BEFORE reporting UI presence.
+
+  it('declares gateway identity and UI presence on initial connect', async () => {
+    const fake = await startFakeDaemon(dataDir);
+    const connector = new DaemonConnector(
+      makeConnectorOptions(dataDir, { uiClientCount: () => 2 }),
+    );
+    try {
+      const client = await connector.start();
+      await vi.waitFor(
+        () => {
+          const identity = fake.requests.filter(
+            (r) => r.method === 'daemon.setClientType' || r.method === 'daemon.setUiPresence',
+          );
+          expect(identity.length).toBe(2);
+        },
+        { timeout: 3000, interval: 25 },
+      );
+      const [typeCall, presenceCall] = fake.requests.filter(
+        (r) => r.method === 'daemon.setClientType' || r.method === 'daemon.setUiPresence',
+      );
+      expect(typeCall.method).toBe('daemon.setClientType');
+      expect(typeCall.params).toEqual({ clientType: 'gateway' });
+      expect(presenceCall.method).toBe('daemon.setUiPresence');
+      expect(presenceCall.params).toEqual({ count: 2 });
+      // Client typing must be declared before its presence report.
+      expect(fake.requests.indexOf(typeCall)).toBeLessThan(fake.requests.indexOf(presenceCall));
+      client.close();
+    } finally {
+      await connector.stop();
+      await fake.stop();
+    }
+  });
+
+  it('re-declares gateway identity and UI presence after a daemon reconnect', async () => {
+    let revived: FakeDaemonHandle | null = null;
+    const first = await startFakeDaemon(dataDir);
+    const connector = new DaemonConnector(
+      makeConnectorOptions(dataDir, {
+        reconnectInitialMs: 20,
+        reconnectMaxMs: 60,
+        reconnectMaxAttempts: 10,
+        spawnFn: makeSpawnSpy(),
+        uiClientCount: () => 1,
+      }),
+    );
+    try {
+      const client = await connector.start();
+      await first.stop();
+
+      revived = await startFakeDaemon(dataDir);
+      // The new daemon-side connection gets fresh identity + presence.
+      await vi.waitFor(
+        () => {
+          const identity = revived!.requests.filter(
+            (r) => r.method === 'daemon.setClientType' || r.method === 'daemon.setUiPresence',
+          );
+          expect(identity.length).toBe(2);
+        },
+        { timeout: 5000, interval: 25 },
+      );
+      const [typeCall, presenceCall] = revived!.requests.filter(
+        (r) => r.method === 'daemon.setClientType' || r.method === 'daemon.setUiPresence',
+      );
+      expect(typeCall.params).toEqual({ clientType: 'gateway' });
+      expect(presenceCall.params).toEqual({ count: 1 });
+
+      await connector.stop();
+      await revived.stop();
+      client.close();
+    } finally {
+      await connector.stop();
+      if (revived) {
+        await revived.stop();
+      }
+      await first.stop();
+    }
   });
 });

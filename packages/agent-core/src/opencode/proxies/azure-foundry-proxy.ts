@@ -2,6 +2,10 @@ import http from 'http';
 import https from 'https';
 import { createConsoleLogger } from '../../utils/logging.js';
 import {
+  generateServiceToken,
+  verifyRawToken as verifyProxyHeaderToken,
+} from '../../utils/service-token.js';
+import {
   normalizeBaseUrl,
   transformRequestBody,
   isValidRequestPath,
@@ -12,12 +16,25 @@ export { transformRequestBody } from './azure-foundry-proxy-transform.js';
 
 const log = createConsoleLogger({ prefix: 'AzureFoundryProxy' });
 
+/**
+ * Dedicated auth header for the local proxy surface (Phase 3 M1 §5.3).
+ *
+ * Not `Authorization` — the upstream Azure credential travels there
+ * (`options.apiKey` or the Entra-ID bearer header in the generated provider
+ * config) and must be forwarded byte-identically. The proxy-token header is
+ * stripped before the request goes upstream.
+ */
+export const PROXY_TOKEN_HEADER = 'x-accomplish-proxy-token';
+
 const AZURE_FOUNDRY_PROXY_PORT = 9228;
 const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
+/** Each `ensure` call may represent a different task — cap the active allowlist. */
+const MAX_ACTIVE_PROXY_TOKENS = 64;
 
 let server: http.Server | null = null;
 let targetBaseUrl: string | null = null;
 let serverStartupPromise: Promise<void> | null = null;
+const activeProxyTokens = new Set<string>();
 
 const HOP_BY_HOP_HEADERS = [
   'connection',
@@ -34,6 +51,12 @@ export interface AzureFoundryProxyInfo {
   baseURL: string;
   targetBaseURL: string;
   port: number;
+  /**
+   * Bearer token the proxy requires in the `x-accomplish-proxy-token` header.
+   * The caller must thread it into the generated provider config
+   * (`options.headers`) so only opencode serve traffic reaches upstream.
+   */
+  token: string;
 }
 
 function getProxyBaseUrl(): string {
@@ -57,8 +80,11 @@ function forwardRequest(
       ? transformRequestBody(rawBody)
       : rawBody;
 
+  // Phase 3 M1 §5.3 — strip the local proxy auth header so upstream requests
+  // are byte-identical to pre-token traffic.
   const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
   delete headers.host;
+  delete headers[PROXY_TOKEN_HEADER];
   HOP_BY_HOP_HEADERS.forEach((header) => {
     delete headers[header];
   });
@@ -112,6 +138,9 @@ function forwardRequest(
 
 function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
   if (req.url === '/health') {
+    // Health stays unauthenticated: it reports loopback-internal state only
+    // (status/target/port, no credentials) and exists for startup readiness
+    // probes that never carry the task token.
     sendJson(res, 200, { status: 'ok', target: targetBaseUrl, port: AZURE_FOUNDRY_PROXY_PORT });
     return;
   }
@@ -121,6 +150,17 @@ function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void
       error: 'Azure Foundry proxy target not configured',
       hint: 'Configure Azure AI Foundry endpoint in Settings > Providers',
     });
+    return;
+  }
+
+  // Phase 3 M1 §5.3 — unauthorized requests must not reach upstream.
+  if (
+    !verifyProxyHeaderToken(
+      req.headers[PROXY_TOKEN_HEADER] as string | undefined,
+      activeProxyTokens,
+    )
+  ) {
+    sendJson(res, 401, { error: 'Unauthorized: missing or invalid x-accomplish-proxy-token' });
     return;
   }
 
@@ -202,17 +242,42 @@ export async function ensureAzureFoundryProxy(baseURL: string): Promise<AzureFou
     }
     await serverStartupPromise;
   }
+
+  // Phase 3 M1 §5.3 — generate a fresh token per task bootstrap (the caller
+  // writes it into the generated provider config so opencode serve traffic
+  // authenticates) and keep it in the active allowlist.
+  const token = generateServiceToken();
+  activeProxyTokens.add(token);
+  while (activeProxyTokens.size > MAX_ACTIVE_PROXY_TOKENS) {
+    const oldest = activeProxyTokens.values().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    activeProxyTokens.delete(oldest);
+  }
+
   return {
     baseURL: getProxyBaseUrl(),
     targetBaseURL: targetBaseUrl,
     port: AZURE_FOUNDRY_PROXY_PORT,
+    token,
   };
+}
+
+/** Loopback-bind verification for tests (Phase 3 M1 §5.3). */
+export function getAzureFoundryProxyBindAddress(): { address: string | null; port: number } {
+  const addr = server?.address();
+  if (addr && typeof addr === 'object') {
+    return { address: addr.address, port: addr.port };
+  }
+  return { address: null, port: AZURE_FOUNDRY_PROXY_PORT };
 }
 
 export async function stopAzureFoundryProxy(): Promise<void> {
   if (!server) {
     return;
   }
+  activeProxyTokens.clear();
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       log.warn('[Azure Foundry Proxy] Shutdown timeout, forcing close');

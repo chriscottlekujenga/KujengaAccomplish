@@ -50,6 +50,15 @@ export class WhatsAppSendApi {
     return this.port;
   }
 
+  /**
+   * Loopback-bind verification for tests (Phase 3 M1 §5.3) — the listening
+   * address as reported by the OS ('127.0.0.1' when loopback-bound).
+   */
+  getBindAddress(): string | null {
+    const addr = this.server?.address();
+    return addr && typeof addr === 'object' ? addr.address : null;
+  }
+
   stop(): void {
     if (this.server) {
       this.server.close();

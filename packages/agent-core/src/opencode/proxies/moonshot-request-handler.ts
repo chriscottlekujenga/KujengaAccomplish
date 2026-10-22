@@ -1,7 +1,9 @@
 import http from 'http';
 import https from 'https';
 import { createConsoleLogger } from '../../utils/logging.js';
+import { verifyRawToken as verifyProxyHeaderToken } from '../../utils/service-token.js';
 import { extractAndCacheReasoningContent } from './moonshot-cache.js';
+import { PROXY_TOKEN_HEADER } from './azure-foundry-proxy.js';
 import { isValidRequestPath, shouldTransformBody } from './moonshot-validation.js';
 import {
   MOONSHOT_PROXY_PORT,
@@ -14,11 +16,15 @@ const log = createConsoleLogger({ prefix: 'MoonshotProxy' });
 
 export function createProxyRequestHandler(
   getTargetBaseUrl: () => string | null,
+  activeProxyTokens: ReadonlySet<string>,
 ): (req: http.IncomingMessage, res: http.ServerResponse) => void {
   return function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const targetBaseUrl = getTargetBaseUrl();
 
     if (req.url === '/health') {
+      // Health stays unauthenticated: loopback-internal state only (status/
+      // target/port, no credentials) for startup readiness probes that never
+      // carry the task token.
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', target: targetBaseUrl, port: MOONSHOT_PROXY_PORT }));
       return;
@@ -31,6 +37,20 @@ export function createProxyRequestHandler(
           error: 'Moonshot proxy target not configured',
           hint: 'Configure Moonshot AI in Settings > Providers',
         }),
+      );
+      return;
+    }
+
+    // Phase 3 M1 §5.3 — unauthorized requests must not reach upstream.
+    if (
+      !verifyProxyHeaderToken(
+        req.headers[PROXY_TOKEN_HEADER] as string | undefined,
+        activeProxyTokens,
+      )
+    ) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({ error: 'Unauthorized: missing or invalid x-accomplish-proxy-token' }),
       );
       return;
     }
@@ -89,8 +109,11 @@ export function createProxyRequestHandler(
       if (DEBUG) {
         log.info(`[Moonshot Proxy] Transformed body size: ${body.length} (was ${rawBody.length})`);
       }
+      // Phase 3 M1 §5.3 — strip the local proxy auth header so upstream
+      // requests are byte-identical to pre-token traffic.
       const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
       delete headers.host;
+      delete headers[PROXY_TOKEN_HEADER];
       delete headers['transfer-encoding'];
       delete headers['Transfer-Encoding'];
       headers['content-length'] = String(body.length);

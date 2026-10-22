@@ -6,6 +6,7 @@ import {
   ensureDevBrowserServer,
   generateTaskSummary,
   DEV_BROWSER_PORT,
+  getDevBrowserToken,
   logger,
   type BrowserServerConfig,
   type TaskCallbacks,
@@ -18,6 +19,10 @@ export function getBrowserServerConfig(opts: TaskConfigBuilderOptions): BrowserS
     mcpToolsPath: opts.mcpToolsPath,
     bundledNodeBinPath: getBundledNodeBinPath(opts),
     devBrowserPort: DEV_BROWSER_PORT,
+    // Phase 3 M1 §5.3 — per-process bearer token for the dev-browser sidecar.
+    // The same value reaches the dev-browser-mcp tool child via the generated
+    // OpenCode config env (onBeforeStart in task-config-builder.ts).
+    devBrowserToken: getDevBrowserToken(),
   };
 }
 

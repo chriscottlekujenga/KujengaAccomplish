@@ -21,12 +21,19 @@ import {
 } from '@accomplish_ai/agent-core';
 
 /**
- * Minimal RPC-server surface the source-based auto-deny policy depends on.
- * We inject the function rather than a full `DaemonRpcServer` reference to
- * keep the callback factory decoupled from the RPC server's concrete class.
+ * Minimal RPC-server surface the interactive-presence auto-deny policy
+ * depends on. We inject the probe rather than a full `DaemonRpcServer`
+ * reference to keep the callback factory decoupled from the RPC server's
+ * concrete class.
+ *
+ * Renamed in Phase 3 M1 (PHASE_3_IMPLEMENTATION_PLAN §5.2): the old
+ * `hasConnectedClients` probe counted the gateway's persistent socket as a
+ * UI, so permissions never auto-denied while the host ran. The daemon now
+ * reports `hasInteractiveClients()` — connected legacy clients (trusted
+ * shell) OR gateway-reported fresh browser-UI counts.
  */
-export interface RpcConnectivityProbe {
-  hasConnectedClients(): boolean;
+export interface InteractivePresenceProbe {
+  hasInteractiveClients(): boolean;
 }
 
 /**
@@ -35,7 +42,8 @@ export interface RpcConnectivityProbe {
  * no-UI auto-deny safeguard.
  */
 export interface TaskCallbackExtras {
-  rpc: RpcConnectivityProbe;
+  /** Interactive-presence probe — see `InteractivePresenceProbe`. */
+  presence: InteractivePresenceProbe;
   /** Resolve the originating surface (`'ui' | 'whatsapp' | 'scheduler'`) for a task. */
   getTaskSource: (taskId: string) => TaskSource;
   /**
@@ -101,7 +109,7 @@ export function createTaskCallbacks(
         return;
       }
 
-      if (!extras.rpc.hasConnectedClients()) {
+      if (!extras.presence.hasInteractiveClients()) {
         autoDeny();
         return;
       }

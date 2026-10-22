@@ -1,7 +1,7 @@
 export interface ServeOptions {
   port?: number; // default 9224
   headless?: boolean; // default false (shows the browser window)
-  cdpPort?: number; // default 9225 (Chrome DevTools Protocol port)
+  cdpPort?: number; // 0 (default) = ephemeral CDP port via DevToolsActivePort; fixed port only for legacy setups
   profileDir?: string; // persistent profile directory; defaults to ./.browser-data
   useSystemChrome?: boolean; // try system Chrome before Playwright Chromium; default true
 }

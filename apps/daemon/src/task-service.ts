@@ -38,7 +38,7 @@ export class TaskService extends EventEmitter {
   private taskManager: TaskManagerAPI;
   private storage: StorageAPI;
   private opts: TaskConfigBuilderOptions;
-  private rpcConnectivityProbe: { hasConnectedClients(): boolean };
+  private interactivePresenceProbe: { hasInteractiveClients(): boolean };
   private serverManager: OpenCodeServerManager;
   /**
    * Dedicated default execution workspace for tasks that do not carry a
@@ -81,12 +81,13 @@ export class TaskService extends EventEmitter {
         }`,
       );
     }
-    // Default probe: treat UI as always connected. Tests + tooling that
-    // construct TaskService without an RPC server get this default — the
-    // no-UI auto-deny path is never triggered, which keeps unit tests
-    // deterministic. The real daemon wires `rpc.hasConnectedClients`.
-    this.rpcConnectivityProbe = options.rpcConnectivityProbe ?? {
-      hasConnectedClients: () => true,
+    // Default probe: treat interactive UI as always connected. Tests +
+    // tooling that construct TaskService without an RPC server get this
+    // default — the no-UI auto-deny path is never triggered, which keeps
+    // unit tests deterministic. The real daemon wires
+    // `rpc.hasInteractiveClients` (Phase 3 M1 presence gate).
+    this.interactivePresenceProbe = options.interactivePresenceProbe ?? {
+      hasInteractiveClients: () => true,
     };
 
     // Drop the per-task source entry when the task finishes, whether via
@@ -364,7 +365,7 @@ export class TaskService extends EventEmitter {
       this.storage,
       this.taskManager,
       {
-        rpc: this.rpcConnectivityProbe,
+        presence: this.interactivePresenceProbe,
         getTaskSource: (id) => this.getTaskSource(id),
         // Bind sendResponse for the auto-deny path. Callback-in-object form
         // sidesteps the circular "TaskService constructs callbacks that call

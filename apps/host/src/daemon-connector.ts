@@ -59,6 +59,17 @@ export interface DaemonConnectorOptions {
   /** When set, a reachable daemon with a different buildId is restarted. */
   expectedBuildId?: string;
   logger?: HostLogger;
+  /**
+   * Phase 3 M1 (PHASE_3_IMPLEMENTATION_PLAN §5.2): the host is a
+   * gateway-typed daemon client. On every adopted connection (initial
+   * connect AND every reconnect — a reconnect is a brand-new socket with
+   * fresh daemon-side state) the connector declares `daemon.setClientType`
+   * `'gateway'` and then reports the current browser-UI count via
+   * `daemon.setUiPresence`. Fire-and-forget: on a daemon missing the newer
+   * methods the calls fail silently and the daemon falls back to legacy
+   * semantics (byte-identical to pre-M1 behaviour).
+   */
+  uiClientCount?: () => number;
   /** Test injection points. */
   spawnFn?: SpawnFn;
   pollIntervalMs?: number;
@@ -285,7 +296,39 @@ export class DaemonConnector {
   private adopt(connection: DaemonConnection): DaemonClient {
     this.connection = connection;
     this.setupDisconnectHandler(connection);
+    this.declareGatewayIdentity(connection.client);
     return connection.client;
+  }
+
+  /**
+   * Declare this host's daemon-client identity (Phase 3 M1 §5.2).
+   *
+   * Ordering matters: `client.call` writes the request synchronously, so the
+   * `setClientType` frame is on the socket before any later browser-WS event
+   * can issue a `setUiPresence` — a same-connection JSON-RPC stream is read
+   * in write order, so the daemon can never observe a presence report that
+   * outruns the client typing. `setUiPresence` is only awaited after
+   * `setClientType` responds, keeping the pair strictly sequential.
+   *
+   * Fire-and-forget with a shortened timeout so an OLD daemon that doesn't
+   * know these methods can't leave long-pending requests behind: the daemon
+   * simply keeps legacy (count-any-socket) semantics for this connection.
+   */
+  private declareGatewayIdentity(client: DaemonClient): void {
+    void (async () => {
+      try {
+        await client.call('daemon.setClientType', { clientType: 'gateway' }, { timeoutMs: 5_000 });
+        await client.call(
+          'daemon.setUiPresence',
+          { count: this.opts.uiClientCount?.() ?? 0 },
+          { timeoutMs: 5_000 },
+        );
+        this.log('info', 'Gateway identity declared (daemon.setClientType + UI presence)');
+      } catch {
+        // Old daemon without the M1 methods (or transient transport failure):
+        // stays legacy-typed, which matches pre-M1 behaviour exactly.
+      }
+    })();
   }
 
   private setupDisconnectHandler(connection: DaemonConnection): void {

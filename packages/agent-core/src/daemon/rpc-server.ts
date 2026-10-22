@@ -12,6 +12,7 @@
  * ESM module — use .js extensions on imports.
  */
 
+import { chmodSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { getSocketPath } from './socket-path.js';
@@ -22,6 +23,27 @@ export interface DaemonRpcServerOptions {
   socketPath?: string;
   onConnection?: (clientId: string) => void;
   onDisconnection?: (clientId: string) => void;
+}
+
+/**
+ * How long a gateway-typed client's last UI-presence report stays trusted.
+ * Covers the host-crash failure mode: heartbeat stops → presence expires
+ * ~90 s later instead of granting interactive presence forever.
+ */
+export const STALE_MS = 90_000;
+
+/** Who a connected socket client is. `legacy` = trusted-shell clients
+ *  (Electron main, CLI tools) whose connection itself implies UI presence;
+ *  `gateway` = the host process, which must explicitly report browser UI
+ *  counts. Clients default to `legacy` until they say otherwise. */
+export type RpcClientType = 'legacy' | 'gateway';
+
+interface RpcClientPresenceState {
+  clientType: RpcClientType;
+  /** Last browser-UI count reported by a gateway-typed client. */
+  reportedCount: number;
+  /** Timestamp of the last accepted presence report. */
+  lastUpdate: number;
 }
 
 interface ConnectedClient {
@@ -37,6 +59,12 @@ export class DaemonRpcServer {
 
   private server: Server | null = null;
   private clients = new Map<string, ConnectedClient>();
+  /**
+   * Per-connection presence metadata. Bound to the exact socket client id so
+   * a disconnect or error removes the client's count contribution instantly
+   * (a crashed host cannot leave stale presence behind).
+   */
+  private presence = new Map<string, RpcClientPresenceState>();
   private handlers = new Map<string, AnyMethodHandler>();
   private startTime = Date.now();
 
@@ -71,6 +99,74 @@ export class DaemonRpcServer {
       }
     }
     return false;
+  }
+
+  /**
+   * Classify a connected socket client as `gateway` or `legacy`.
+   * Clients that never call `daemon.setClientType` stay `legacy`, which
+   * preserves the historical semantics: any connected client (Electron main,
+   * CLI tooling) implies an addressable UI. Called once per socket
+   * connection by the host, and again after every reconnect (a reconnect is
+   * a brand-new connection with fresh state).
+   */
+  setClientType(clientId: string, clientType: RpcClientType): void {
+    const existing = this.presence.get(clientId);
+    if (existing) {
+      // A re-typed connection must not carry stale count state across the
+      // transition — the new identity starts with a clean presence slate.
+      existing.clientType = clientType;
+      existing.reportedCount = 0;
+      return;
+    }
+    this.presence.set(clientId, { clientType, reportedCount: 0, lastUpdate: 0 });
+  }
+
+  /**
+   * Record a UI-presence report from a gateway-typed client. The state is
+   * bound to THAT socket client connection; reports from clients that have
+   * not typed themselves as `gateway` are ignored (only the host gateway may
+   * speak for browser UIs).
+   */
+  setUiPresence(clientId: string, count: number): void {
+    const state = this.presence.get(clientId);
+    if (!state || state.clientType !== 'gateway') {
+      return;
+    }
+    state.reportedCount = count;
+    state.lastUpdate = Date.now();
+  }
+
+  /**
+   * Whether an interactive UI could answer a permission prompt right now:
+   * any connected legacy client (trusted-shell semantics — Electron main),
+   * OR any gateway-typed client reporting a live browser-UI count that is
+   * still fresh (younger than STALE_MS). The gateway's own persistent socket
+   * never counts as UI presence on its own.
+   */
+  hasInteractiveClients(): boolean {
+    for (const client of this.clients.values()) {
+      if (client.socket.destroyed) {
+        continue;
+      }
+      const state = this.presence.get(client.id);
+      if (!state || state.clientType === 'legacy') {
+        return true;
+      }
+      if (state.reportedCount > 0 && Date.now() - state.lastUpdate <= STALE_MS) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Drop a client's connection state. Called on close/error so a gateway
+   * client's last reported count stops counting the instant its socket is
+   * gone.
+   */
+  private dropClient(clientId: string): void {
+    this.clients.delete(clientId);
+    this.presence.delete(clientId);
   }
 
   /**
@@ -117,22 +213,49 @@ export class DaemonRpcServer {
         });
 
         socket.on('close', () => {
-          this.clients.delete(clientId);
+          this.dropClient(clientId);
           this.onDisconnection?.(clientId);
         });
 
         socket.on('error', (err) => {
           console.error(`[DaemonRpcServer] Socket error for client ${clientId}:`, err.message);
-          this.clients.delete(clientId);
+          // Silent drop (no onDisconnection): the subsequent 'close' event is
+          // the single authoritative teardown signal, matching pre-presence
+          // behaviour. Presence state must go now — a client that errored
+          // must not keep counting toward interactive presence even for the
+          // instant before its close event lands.
+          this.dropClient(clientId);
         });
       });
 
       this.server.on('error', reject);
 
       this.server.listen(this.socketPath, () => {
+        this.restrictSocketPermissions();
         resolve();
       });
     });
+  }
+
+  /**
+   * Mode 0600 on the Unix socket. The daemon socket is a trusted-control
+   * surface (the host identifies itself and reports UI presence over it) —
+   * it must only be reachable by the same user. POSIX only; Windows named
+   * pipes have their own ACL model, so skip there. Warns non-fatally:
+   * a failed chmod must not take the daemon down.
+   */
+  private restrictSocketPermissions(): void {
+    if (process.platform === 'win32') {
+      return;
+    }
+    try {
+      chmodSync(this.socketPath, 0o600);
+    } catch (err) {
+      console.warn(
+        `[DaemonRpcServer] Failed to chmod 600 socket ${this.socketPath}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   /**
@@ -143,6 +266,7 @@ export class DaemonRpcServer {
       client.socket.destroy();
     }
     this.clients.clear();
+    this.presence.clear();
 
     return new Promise<void>((resolve) => {
       if (!this.server) {

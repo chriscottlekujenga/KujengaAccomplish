@@ -152,6 +152,7 @@ export function generateConfig(options: ConfigGeneratorOptions): GeneratedConfig
     enabledProviders: customEnabledProviders,
     gwsAccountsManifestPath,
     gwsAccountsSummary,
+    devBrowserToken,
   } = options;
 
   const environmentInstructions = getPlatformEnvironmentInstructions(platform);
@@ -330,6 +331,7 @@ ${options.knowledgeContext}
     whatsappApiPort,
     browserConfig,
     authToken: options.authToken,
+    devBrowserToken,
     connectors: options.connectors,
     gwsAccountsManifestPath,
   });

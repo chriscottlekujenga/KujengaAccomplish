@@ -37,6 +37,11 @@ import { LegacyImportService } from './legacy-import-service.js';
 // `shell.open*`) and calls these services over RPC.
 import { GoogleAccountService } from './google-account-service.js';
 import { SkillsService } from './skills-service.js';
+// Phase 3 M1 — dev-browser preview bridge: answers `devBrowser.*` RPCs from
+// the daemon-owned sidecar state. The sidecar bearer token never leaves the
+// daemon process; the desktop preview gets loopback URLs over RPC instead of
+// talking to :9224/:9225 directly.
+import { DevBrowserService } from './dev-browser-service.js';
 import { log } from './logger.js';
 
 // __dirname is available natively in CJS (the daemon is built as CJS by tsup)
@@ -126,9 +131,13 @@ async function main(): Promise<void> {
     ? path.join(resourcesPath, 'mcp-tools')
     : process.env.MCP_TOOLS_PATH ||
       path.resolve(__dirname, '..', '..', '..', 'packages', 'agent-core', 'mcp-tools');
-  // 5a. RPC server first — TaskService needs its `hasConnectedClients` probe
-  // for the no-UI auto-deny policy introduced in Phase 2 of the SDK cutover
-  // port. Socket path derived from dataDir for profile isolation.
+  // 5a. RPC server first — TaskService needs its interactive-presence probe
+  // for the no-UI auto-deny policy (Phase 2 of the SDK cutover port).
+  // Phase 3 M1 (PHASE_3_IMPLEMENTATION_PLAN §5.2) retargeted the probe from
+  // `hasConnectedClients` (which counted the gateway's persistent socket as
+  // a UI) to `hasInteractiveClients` — legacy socket clients count as an
+  // addressable UI, the gateway counts only when it reports fresh browser
+  // presence. Socket path derived from dataDir for profile isolation.
   const socketPath = args.socketPath || getSocketPath(dataDir);
   const rpc = new DaemonRpcServer({
     socketPath,
@@ -176,14 +185,16 @@ async function main(): Promise<void> {
     resourcesPath,
     appPath,
     accomplishRuntime,
-    rpcConnectivityProbe: { hasConnectedClients: () => rpc.hasConnectedClients() },
+    interactivePresenceProbe: { hasInteractiveClients: () => rpc.hasInteractiveClients() },
     setProxyTaskId,
   });
   const healthService = new HealthService();
   // Scheduler-sourced tasks: `source: 'scheduler'` drives the no-UI auto-deny
-  // policy in task-callbacks. If no RPC client is connected when a scheduled
+  // policy in task-callbacks. If no interactive UI is present (no legacy
+  // client and no fresh gateway-reported browser presence) when a scheduled
   // task asks for a permission, it auto-denies immediately (matches the
-  // pre-port PermissionService safeguard that Phase 2 replaced).
+  // pre-port PermissionService safeguard that Phase 2 replaced; Phase 3 M1
+  // §5.2 fixes what counts as "UI present").
   const schedulerService = new SchedulerService(storage, (prompt, workspaceId) => {
     void taskService.startTask({ prompt, workspaceId, source: 'scheduler' });
   });
@@ -233,6 +244,8 @@ async function main(): Promise<void> {
     dataDir: userDataPath,
     bundledSkillsPath,
   });
+  // Probes the daemon-owned dev-browser sidecar on demand; no state needed.
+  const devBrowserService = new DevBrowserService();
 
   // Ensure the default workspace exists and the active-workspace pointer is
   // valid BEFORE registering any workspace RPCs. Ports the bootstrap from
@@ -271,6 +284,7 @@ async function main(): Promise<void> {
     legacyImportService,
     googleAccountService,
     skillsService,
+    devBrowserService,
   };
   registerRpcMethods(routeServices);
   registerTaskEventForwarding(routeServices);

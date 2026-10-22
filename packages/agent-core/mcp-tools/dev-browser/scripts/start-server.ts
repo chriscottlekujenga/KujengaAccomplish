@@ -26,7 +26,11 @@ mkdirSync(tmpDir, { recursive: true });
 mkdirSync(profileDir, { recursive: true });
 
 const ACCOMPLISH_HTTP_PORT = parseInt(process.env.DEV_BROWSER_PORT || '9224', 10);
-const ACCOMPLISH_CDP_PORT = parseInt(process.env.DEV_BROWSER_CDP_PORT || '9225', 10);
+// Phase 3 M1 §5.3 — CDP defaults to an ephemeral port (0). An explicitly
+// configured non-zero port is a documented legacy escape hatch.
+const ACCOMPLISH_CDP_PORT = process.env.DEV_BROWSER_CDP_PORT
+  ? parseInt(process.env.DEV_BROWSER_CDP_PORT, 10)
+  : 0;
 
 if (
   !Number.isFinite(ACCOMPLISH_HTTP_PORT) ||
@@ -39,73 +43,113 @@ if (
 }
 if (
   !Number.isFinite(ACCOMPLISH_CDP_PORT) ||
-  ACCOMPLISH_CDP_PORT < 1 ||
+  ACCOMPLISH_CDP_PORT < 0 ||
   ACCOMPLISH_CDP_PORT > 65535
 ) {
   throw new Error(
-    `Invalid DEV_BROWSER_CDP_PORT: ${process.env.DEV_BROWSER_CDP_PORT}. Must be a number between 1 and 65535`,
+    `Invalid DEV_BROWSER_CDP_PORT: ${process.env.DEV_BROWSER_CDP_PORT}. Must be 0 (ephemeral) or a number between 1 and 65535`,
   );
+}
+
+// Phase 3 M1 §5.3 — the sidecar requires a bearer token on every request.
+// The spawning side (daemon / task bootstrap) passes ACCOMPLISH_DEV_BROWSER_TOKEN.
+const AUTH_TOKEN = process.env.ACCOMPLISH_DEV_BROWSER_TOKEN;
+// Note: serve() rejects requests without our token; when the env var is unset
+// the token only lives inside this process, so clients will 401 — surfaced
+// loudly here.
+if (!AUTH_TOKEN || AUTH_TOKEN.trim().length === 0) {
+  console.warn(
+    'ACCOMPLISH_DEV_BROWSER_TOKEN is not set — dev-browser will generate an ' +
+      'ephemeral token that no consumer knows. Spawn via ensureDevBrowserServer, ' +
+      'or set ACCOMPLISH_DEV_BROWSER_TOKEN explicitly.',
+  );
+}
+
+const authFetchInit: RequestInit = {
+  headers: AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {},
+};
+
+function killHttpPortListener(port: number): void {
+  try {
+    if (process.platform === 'win32') {
+      const output = execSync(`netstat -ano | findstr :${port}`, {
+        encoding: 'utf-8',
+      });
+      const match = output.match(/LISTENING\s+(\d+)/);
+      if (match) {
+        execSync(`taskkill /F /PID ${match[1]}`, { stdio: 'ignore' });
+      }
+    } else {
+      const pid = execSync(`lsof -ti:${port}`, { encoding: 'utf-8' }).trim();
+      if (pid) {
+        execSync(`kill -9 ${pid}`);
+      }
+    }
+  } catch {
+    // No listener (or lsof missing) — nothing to kill
+  }
 }
 
 console.log('Checking for existing servers...');
 try {
-  const res = await fetch(`http://localhost:${ACCOMPLISH_HTTP_PORT}`, {
+  const res = await fetch(`http://127.0.0.1:${ACCOMPLISH_HTTP_PORT}`, {
     signal: AbortSignal.timeout(1000),
+    ...authFetchInit,
   });
   if (res.ok) {
     const info = (await res.json()) as { mode?: string };
 
     if (info.mode === 'extension') {
       console.log('Found relay server running, killing to start launch server...');
-      try {
-        if (process.platform === 'win32') {
-          const output = execSync(`netstat -ano | findstr :${ACCOMPLISH_HTTP_PORT}`, {
-            encoding: 'utf-8',
-          });
-          const match = output.match(/LISTENING\s+(\d+)/);
-          if (match) {
-            execSync(`taskkill /F /PID ${match[1]}`, { stdio: 'ignore' });
-          }
-        } else {
-          const pid = execSync(`lsof -ti:${ACCOMPLISH_HTTP_PORT}`, { encoding: 'utf-8' }).trim();
-          if (pid) {
-            execSync(`kill -9 ${pid}`);
-          }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch {
-        // intentionally empty
-      }
+      killHttpPortListener(ACCOMPLISH_HTTP_PORT);
+      await new Promise((resolve) => setTimeout(resolve, 500));
     } else {
-      console.log(`Launch server already running on port ${ACCOMPLISH_HTTP_PORT}`);
+      console.log(
+        `Launch server already running with a valid token on port ${ACCOMPLISH_HTTP_PORT}`,
+      );
       process.exit(0);
     }
+  } else if (res.status === 401 || res.status === 403) {
+    // A dev-browser server/relay is listening but rejects OUR token: a stale
+    // sidecar from a previous daemon lifetime (its env token is gone) or a
+    // foreign process squatting the port. Kill it so our launch replaces it.
+    console.log(
+      `Existing server rejected our token (HTTP ${res.status}) — killing stale listener...`,
+    );
+    killHttpPortListener(ACCOMPLISH_HTTP_PORT);
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 } catch {
   // intentionally empty
 }
 
 try {
-  if (process.platform === 'win32') {
-    const output = execSync(`netstat -ano | findstr :${ACCOMPLISH_CDP_PORT}`, {
-      encoding: 'utf-8',
-    });
-    const match = output.match(/LISTENING\s+(\d+)/);
-    if (match) {
-      const pid = match[1];
-      console.log(
-        `Cleaning up stale Chrome process on CDP port ${ACCOMPLISH_CDP_PORT} (PID: ${pid})`,
-      );
-      execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+  if (ACCOMPLISH_CDP_PORT > 0) {
+    if (process.platform === 'win32') {
+      const output = execSync(`netstat -ano | findstr :${ACCOMPLISH_CDP_PORT}`, {
+        encoding: 'utf-8',
+      });
+      const match = output.match(/LISTENING\s+(\d+)/);
+      if (match) {
+        const pid = match[1];
+        console.log(
+          `Cleaning up stale Chrome process on CDP port ${ACCOMPLISH_CDP_PORT} (PID: ${pid})`,
+        );
+        execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+      }
+    } else {
+      const pid = execSync(`lsof -ti:${ACCOMPLISH_CDP_PORT}`, { encoding: 'utf-8' }).trim();
+      if (pid) {
+        console.log(
+          `Cleaning up stale Chrome process on CDP port ${ACCOMPLISH_CDP_PORT} (PID: ${pid})`,
+        );
+        execSync(`kill -9 ${pid}`);
+      }
     }
   } else {
-    const pid = execSync(`lsof -ti:${ACCOMPLISH_CDP_PORT}`, { encoding: 'utf-8' }).trim();
-    if (pid) {
-      console.log(
-        `Cleaning up stale Chrome process on CDP port ${ACCOMPLISH_CDP_PORT} (PID: ${pid})`,
-      );
-      execSync(`kill -9 ${pid}`);
-    }
+    // Ephemeral CDP port: nothing to clean by port. An already-running Chrome
+    // from a stale sidecar would hold a fresh ephemeral port; the profile
+    // lock cleanup below makes relaunches possible.
   }
 } catch {
   // intentionally empty

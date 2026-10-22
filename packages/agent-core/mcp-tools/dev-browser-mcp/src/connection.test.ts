@@ -4,6 +4,7 @@ import {
   configure,
   getFullPageName,
   getConnectionMode,
+  getDevBrowserSidecarToken,
   isRecoverableConnectionError,
   resetConnection,
 } from './connection.js';
@@ -15,13 +16,15 @@ describe('connection', () => {
     delete process.env.CDP_SECRET;
     delete process.env.DEV_BROWSER_PORT;
     delete process.env.ACCOMPLISH_TASK_ID;
+    delete process.env.ACCOMPLISH_DEV_BROWSER_TOKEN;
   });
 
   describe('configureFromEnv', () => {
     it('defaults to builtin mode when CDP_ENDPOINT is not set', () => {
       const cfg = configureFromEnv();
       expect(cfg.mode).toBe('builtin');
-      expect(cfg.devBrowserUrl).toBe('http://localhost:9224');
+      // 127.0.0.1 per the ENG-1514/683a0e2 fix (avoid localhost IPv6 resolution).
+      expect(cfg.devBrowserUrl).toBe('http://127.0.0.1:9224');
     });
 
     it('uses remote mode when CDP_ENDPOINT is set', () => {
@@ -41,7 +44,7 @@ describe('connection', () => {
     it('respects custom DEV_BROWSER_PORT in builtin mode', () => {
       process.env.DEV_BROWSER_PORT = '5555';
       const cfg = configureFromEnv();
-      expect(cfg.devBrowserUrl).toBe('http://localhost:5555');
+      expect(cfg.devBrowserUrl).toBe('http://127.0.0.1:5555');
     });
 
     it('uses ACCOMPLISH_TASK_ID for task isolation', () => {
@@ -59,6 +62,40 @@ describe('connection', () => {
       process.env.CDP_ENDPOINT = 'http://remote:9222';
       const cfg = configureFromEnv();
       expect(cfg.cdpHeaders).toEqual({});
+    });
+
+    it('injects ACCOMPLISH_DEV_BROWSER_TOKEN as Authorization in remote mode (loopback relay)', () => {
+      process.env.CDP_ENDPOINT = 'ws://127.0.0.1:9224/cdp';
+      process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'sidecar-token';
+      const cfg = configureFromEnv();
+      expect(cfg.cdpHeaders).toEqual({
+        Authorization: 'Bearer sidecar-token',
+      });
+    });
+
+    it('does NOT send the local sidecar token to cloud (non-loopback) CDP endpoints', () => {
+      process.env.CDP_ENDPOINT = 'http://remote:9222';
+      process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'sidecar-token';
+      const cfg = configureFromEnv();
+      expect(cfg.cdpHeaders).toEqual({});
+    });
+
+    it('merges CDP_SECRET and sidecar token in remote mode', () => {
+      process.env.CDP_ENDPOINT = 'http://remote:9222';
+      process.env.CDP_SECRET = 'my-secret';
+      process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'sidecar-token';
+      const cfg = configureFromEnv();
+      expect(cfg.cdpHeaders).toEqual({
+        'X-CDP-Secret': 'my-secret',
+      });
+    });
+
+    it('sidecar token getter reads ACCOMPLISH_DEV_BROWSER_TOKEN', () => {
+      expect(getDevBrowserSidecarToken()).toBeUndefined();
+      process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'tok-123';
+      expect(getDevBrowserSidecarToken()).toBe('tok-123');
+      process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = '   ';
+      expect(getDevBrowserSidecarToken()).toBeUndefined();
     });
   });
 

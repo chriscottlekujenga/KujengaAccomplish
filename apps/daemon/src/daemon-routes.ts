@@ -28,6 +28,7 @@ import type { ConnectorService } from './connector-service.js';
 import type { LegacyImportService } from './legacy-import-service.js';
 import type { GoogleAccountService } from './google-account-service.js';
 import type { SkillsService } from './skills-service.js';
+import type { DevBrowserService } from './dev-browser-service.js';
 import type {
   GwsAccountAddInput,
   GwsAccountStatusChangedPayload,
@@ -37,6 +38,11 @@ import type {
 const taskIdSchema = z.object({ taskId: z.string().min(1) });
 // taskConfigSchema already includes modelId — no extension needed
 const taskStartSchema = taskConfigSchema;
+
+// Host identity & UI-presence validation schemas (Phase 3 M1 security
+// foundation).
+const clientTypeSchema = z.object({ clientType: z.enum(['gateway', 'legacy']) });
+const uiPresenceSchema = z.object({ count: z.number().int().min(0) });
 
 function sanitizeErrorMessage(err: unknown): string {
   if (err instanceof z.ZodError) {
@@ -52,11 +58,11 @@ function sanitizeErrorMessage(err: unknown): string {
 }
 
 export function safeHandler(
-  fn: (params: unknown) => Promise<unknown>,
-): (params: unknown) => Promise<unknown> {
-  return async (params) => {
+  fn: (params: unknown, clientId: string) => Promise<unknown>,
+): (params: unknown, clientId: string) => Promise<unknown> {
+  return async (params, clientId) => {
     try {
-      return await fn(params);
+      return await fn(params, clientId);
     } catch (err) {
       throw new Error(sanitizeErrorMessage(err));
     }
@@ -86,6 +92,9 @@ export interface RouteServices {
   // Milestone 4 — daemon takes over Google accounts + skills ownership.
   googleAccountService: GoogleAccountService;
   skillsService: SkillsService;
+  // Phase 3 M1 — dev-browser preview bridge. Answers `devBrowser.*` RPCs from
+  // the daemon-owned sidecar state; the bearer token never leaves the daemon.
+  devBrowserService: DevBrowserService;
 }
 
 /**
@@ -105,8 +114,62 @@ export function registerRpcMethods(services: RouteServices): void {
     workspaceService,
     connectorService,
     legacyImportService,
+    googleAccountService,
+    skillsService,
+    devBrowserService,
   } = services;
   const storage = services.storageService.getStorage();
+
+  // ── Host identity & UI-presence (Phase 3 M1 security foundation) ────────
+  // Host-to-daemon internal methods: the host types its own socket
+  // connection and reports live browser-UI counts. They are deliberately
+  // NOT in the gateway's browser-facing allowlist (apps/host/src/policy.ts
+  // is untouched) — a browser can never reach them, and the 0600 daemon
+  // socket guarantees only same-user processes can call them at all.
+  // Handlers receive the caller's clientId (second handler argument) so the
+  // presence state is bound to THAT socket connection.
+  rpc.registerMethod(
+    'daemon.setClientType',
+    safeHandler((params, clientId) => {
+      const v = validate(clientTypeSchema, params);
+      rpc.setClientType(clientId, v.clientType);
+      return Promise.resolve({ ok: true as const });
+    }),
+  );
+  rpc.registerMethod(
+    'daemon.setUiPresence',
+    safeHandler((params, clientId) => {
+      const v = validate(uiPresenceSchema, params);
+      rpc.setUiPresence(clientId, v.count);
+      return Promise.resolve({ ok: true as const });
+    }),
+  );
+
+  // ── Dev-browser preview bridge (Phase 3 M1) ─────────────────────────────
+  // INTERNAL host↔daemon methods answering from the daemon-owned sidecar
+  // state. Deliberately NOT in apps/host/src/policy.ts's allowlist (untouched
+  // file, default-deny) so a browser can never reach them — same trust level
+  // as daemon.setClientType/setUiPresence above. The bearer token never
+  // crosses RPC; only the loopback wsEndpoint URL and page names do. Results
+  // degrade to nulls (no throw) when the sidecar is down so the desktop
+  // preview keeps its non-crashing fallback semantics.
+  rpc.registerMethod(
+    'devBrowser.getPreviewInfo',
+    safeHandler(() => devBrowserService.getPreviewInfo()),
+  );
+  rpc.registerMethod(
+    'devBrowser.openPreviewPage',
+    safeHandler((params) => {
+      const v = validate(
+        z.object({
+          name: z.string().min(1),
+          viewport: z.object({ width: z.number().int(), height: z.number().int() }).optional(),
+        }),
+        params,
+      );
+      return devBrowserService.openPreviewPage(v);
+    }),
+  );
 
   rpc.registerMethod(
     'task.start',
@@ -1060,7 +1123,8 @@ export function registerRpcMethods(services: RouteServices): void {
   );
 
   // ── Google accounts (M4 — daemon owns DB + refresh timers) ───────────────
-  const { googleAccountService, skillsService } = services;
+  // googleAccountService + skillsService are destructured with the other
+  // services at the top of registerRpcMethods.
 
   rpc.registerMethod(
     'gwsAccount.list',

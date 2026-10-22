@@ -436,6 +436,48 @@ export interface DaemonMethodMap {
   'daemon.shutdown': { params: undefined; result: void };
   'health.check': { params: undefined; result: HealthCheckResult };
 
+  // Host → daemon identity & UI-presence reporting (Phase 3 M1 security
+  // foundation). These two methods are INTERNAL to the host↔daemon socket —
+  // they are deliberately NOT in the gateway's browser-facing method
+  // allowlist (apps/host/src/policy.ts), so a browser (or XSS in the web UI)
+  // can never forge UI presence or re-type the host's own connection.
+  //
+  // `daemon.setClientType` — the HOST calls it exactly once per socket
+  // connection (and again after every reconnect, which is a new
+  // connection). Clients that never call it default to 'legacy':
+  // their bare connection implies interactive UI (trusted-shell
+  // semantics — Electron main keeps working unchanged).
+  //
+  // `daemon.setUiPresence` — the HOST reports the current count of
+  // authenticated browser WebSocket clients. Meaningful only from
+  // gateway-typed clients; bound to that socket connection, expiring
+  // after STALE_MS (rpc-server.ts) without a refresh (30 s host-side
+  // heartbeat).
+  'daemon.setClientType': {
+    params: { clientType: 'gateway' | 'legacy' };
+    result: { ok: true };
+  };
+  'daemon.setUiPresence': { params: { count: number }; result: { ok: true } };
+
+  // Dev-browser preview bridge (Phase 3 M1 — Electron desktop preview fix).
+  // INTERNAL to the host↔daemon socket and deliberately NOT in the gateway's
+  // browser-facing method allowlist (apps/host/src/policy.ts is untouched) so
+  // a browser can never reach them. The sidecar bearer token NEVER crosses
+  // RPC: `getPreviewInfo` returns the loopback CDP WebSocket endpoint the
+  // sidecar reports (null when the sidecar is down / token mismatch) plus the
+  // tracked page names; `openPreviewPage` ensures (create-or-reuse) a named
+  // page via the sidecar's POST /pages — the call that triggers the lazy
+  // Chrome launch. Both degrade to null results instead of throwing so the
+  // desktop preview keeps its non-crashing fallback semantics.
+  'devBrowser.getPreviewInfo': {
+    params: undefined;
+    result: { wsEndpoint: string | null; pages: string[] | null };
+  };
+  'devBrowser.openPreviewPage': {
+    params: { name: string; viewport?: { width: number; height: number } };
+    result: { targetId: string } | null;
+  };
+
   // Accomplish AI free tier
   'accomplish-ai.connect': {
     params: undefined;

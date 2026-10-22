@@ -6,8 +6,14 @@
 import type { JsonRpcMessage, JsonRpcRequest, JsonRpcResponse } from '../common/types/daemon.js';
 import { JSON_RPC_ERRORS } from '../common/types/daemon.js';
 
+/**
+ * A method handler receives the call params plus the daemon-assigned id of
+ * the socket client that sent the request. The clientId lets per-client
+ * state (e.g. gateway-typed UI-presence reports) be bound to the exact
+ * connection it arrived on.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type AnyMethodHandler = (params: any) => Promise<unknown> | unknown;
+export type AnyMethodHandler = (params: any, clientId: string) => Promise<unknown> | unknown;
 
 export interface RpcClient {
   id: string;
@@ -73,7 +79,7 @@ export async function handleRpcLine(
   }
 
   try {
-    const result = await handler(request.params);
+    const result = await handler(request.params, client.id);
     sendResult(client, request.id as string | number, result);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

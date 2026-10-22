@@ -1,6 +1,6 @@
 /** Standard API-key provider config builders: OpenRouter, Moonshot, LiteLLM, MiniMax. */
 import { getSelectedModel } from '../storage/repositories/index.js';
-import { ensureMoonshotProxy } from './proxies/index.js';
+import { ensureMoonshotProxy, PROXY_TOKEN_HEADER } from './proxies/index.js';
 import { MINIMAX_DEFAULT_BASE_URL } from '../common/index.js';
 import { createConsoleLogger } from '../utils/logging.js';
 import type { ProviderBuildContext, ProviderBuildResult } from './config-provider-context.js';
@@ -79,6 +79,12 @@ export async function buildMoonshotConfig(ctx: ProviderBuildContext): Promise<Pr
         options: {
           baseURL: proxyInfo.baseURL,
           ...(moonshotApiKey ? { apiKey: moonshotApiKey } : {}),
+          // Phase 3 M1 §5.3 — the proxy authenticates via the dedicated
+          // token header; `apiKey` stays reserved for the upstream
+          // Authorization: Bearer credential.
+          headers: {
+            [PROXY_TOKEN_HEADER]: proxyInfo.token,
+          },
         },
         models: { [modelId]: { name: modelId, tools: true } },
       },

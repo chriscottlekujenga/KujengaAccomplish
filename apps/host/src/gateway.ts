@@ -37,7 +37,7 @@ import { getCliStatus } from './cli-status.js';
 import { pickFiles, pickFolder } from './file-picker.js';
 import { noopLogger, type HostLogger } from './logger.js';
 import { checkMethodPolicy } from './policy.js';
-import { scrubSecretFields } from './provider-settings-scrubber.js';
+import { scrubResponse } from './provider-settings-scrubber.js';
 import { isDaemonServiceActive, isDaemonServiceEnabled } from './daemon-service.js';
 import { TokenRateLimiter, DEFAULT_RATE_LIMIT, type RateLimiterOptions } from './rate-limit.js';
 
@@ -58,6 +58,18 @@ export function deepLinkEvent(url: string): 'mcp-callback' | 'auth-callback' | n
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_WS_MESSAGE_BYTES = 64 * 1024;
 const WS_AUTH_TIMEOUT_MS = 5_000;
+
+/**
+ * How often the gateway re-asserts browser-UI presence to the daemon while
+ * its socket is up (Phase 3 M1 §5.2). The daemon expires presence after
+ * 90 s without a refresh, so a 30 s heartbeat keeps a live UI counted even
+ * if no WS lifecycle event happens to fire.
+ */
+const PRESENCE_HEARTBEAT_MS = 30_000;
+
+/** Daemon method the presence channel reports through. Host-internal —
+ *  never browser-callable (see policy.ts allowlist). */
+const DAEMON_SET_UI_PRESENCE = 'daemon.setUiPresence';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -120,6 +132,8 @@ export interface GatewayOptions {
   maxBodyBytes?: number;
   maxWsMessageBytes?: number;
   wsAuthTimeoutMs?: number;
+  /** Heartbeat override for tests (default 30 s). */
+  presenceHeartbeatMs?: number;
 }
 
 export interface GatewayHandle {
@@ -127,6 +141,13 @@ export interface GatewayHandle {
   server: Server;
   broadcastNotification(method: string, params: unknown): void;
   broadcastControl(event: string, params?: unknown): void;
+  /** Current count of authenticated, open browser WS clients — the value
+   *  the host reports to the daemon as interactive UI presence. */
+  uiPresenceCount(): number;
+  /** Arm the 30 s presence heartbeat (idempotent). */
+  startPresenceHeartbeat(): void;
+  /** Disarm the heartbeat — daemon down or gateway shutting down. */
+  stopPresenceHeartbeat(): void;
   close(): Promise<void>;
 }
 
@@ -233,10 +254,76 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
   let listeningPort = options.port;
   const sockets = new Set<AuthedSocket>();
   const wss = new WebSocketServer({ noServer: true });
+  const presenceHeartbeatMs = options.presenceHeartbeatMs ?? PRESENCE_HEARTBEAT_MS;
+
+  /**
+   * Interactive-UI presence = authenticated, open browser WS clients.
+   * Mirrors `broadcast()`'s liveness check so a half-dead socket is never
+   * counted. Unauthenticated sockets don't count — they carry no UI session.
+   */
+  function uiPresenceCount(): number {
+    let count = 0;
+    for (const entry of sockets) {
+      if (entry.authed && entry.ws.readyState === WebSocket.OPEN) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // ── Presence reporting to the daemon (Phase 3 M1 §5.2) ──────────────────
+  // Every report is an absolute current count (never an increment), sent
+  // fire-and-forget: the daemon may be mid-reconnect, in which case the
+  // heartbeat and the next WS lifecycle event re-report.
+  //
+  // "Guard against overlapping unawaited calls": while a report is in
+  // flight, newer counts coalesce into a single follow-up instead of
+  // stacking concurrent requests.
+  let presenceInFlight = false;
+  let presencePending = false;
+  function reportPresence(): void {
+    if (presenceInFlight) {
+      presencePending = true;
+      return;
+    }
+    presenceInFlight = true;
+    void (async () => {
+      try {
+        await options.rpc.call(DAEMON_SET_UI_PRESENCE, { count: uiPresenceCount() });
+      } catch {
+        // Fire-and-forget: transport failures self-heal via reconnect
+        // (connector re-handshake) or the next heartbeat tick.
+      } finally {
+        presenceInFlight = false;
+        if (presencePending) {
+          presencePending = false;
+          reportPresence();
+        }
+      }
+    })();
+  }
+
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+  function startPresenceHeartbeat(): void {
+    if (heartbeatTimer) {
+      return;
+    }
+    heartbeatTimer = setInterval(reportPresence, presenceHeartbeatMs);
+    heartbeatTimer.unref?.();
+  }
+  function stopPresenceHeartbeat(): void {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  }
 
   const server: Server = createServer((req, res) => {
     void handleRequest(req, res).catch((err) => {
-      logger.error('Unhandled gateway error', { error: String(err) });
+      // An error string is the one log field that can indirectly carry
+      // request data (e.g. a URL-parse failure echoing the URL) — keep the
+      // bearer token out of it (Phase 3 M1 §5.4 log redaction).
+      logger.error('Unhandled gateway error', { error: redactToken(String(err)) });
       if (!res.headersSent) {
         sendJson(res, 500, jsonRpcError(null, -32603, 'Internal error'));
       } else {
@@ -313,6 +400,9 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
               entry.authTimer = null;
             }
             ws.send(JSON.stringify({ type: 'auth-ok' }));
+            // First authenticated browser frame — report presence now;
+            // subsequent heartbeat ticks keep it fresh (Phase 3 M1 §5.2).
+            reportPresence();
           } else {
             ws.close(4401, 'invalid token');
           }
@@ -335,6 +425,9 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
         entry.authTimer = null;
       }
       sockets.delete(entry);
+      // Report the remaining browser-UI count immediately — the daemon must
+      // stop counting this UI the moment it detaches (graceful tab close).
+      reportPresence();
     });
   }
 
@@ -354,6 +447,22 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
       return false;
     }
     return timingSafeTokenEquals(presented, options.token);
+  }
+
+  /**
+   * Replace every occurrence of the gateway bearer token with a fixed
+   * marker. Used on any log field derived from browser-supplied data
+   * (Phase 3 M1 §5.4 log redaction): the token must never appear in
+   * captured log output, even when a client accidentally includes it in a
+   * /client-log payload or an error message. Bearer-header shapes are
+   * covered too, since the header value contains the token as a substring.
+   */
+  function redactToken(text: string): string {
+    const token = options.token;
+    if (!token) {
+      return text;
+    }
+    return text.split(token).join('[REDACTED]');
   }
 
   function serveStatic(res: ServerResponse, pathname: string, isHead: boolean): void {
@@ -539,10 +648,11 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
 
     try {
       const result = await options.rpc.call(request.method, request.params);
-      // provider.getSettings crosses the browser trust boundary — scrub
-      // any secret-looking fields before the response leaves.
-      const payload =
-        request.method === 'provider.getSettings' ? scrubSecretFields(result) : result;
+      // Universal response scrub (Phase 3 M1 §5.4): EVERY response crossing
+      // the browser trust boundary loses secret-looking fields, regardless
+      // of method. provider.getSettings is simply one method among all —
+      // its behavior is unchanged (masked metadata survives, secrets drop).
+      const payload = scrubResponse(request.method, result);
       sendJson(res, 200, { jsonrpc: '2.0', id, result: payload });
     } catch (err) {
       const error = err as Error & { code?: number };
@@ -653,9 +763,18 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
       return;
     }
     const level = entry.level === 'warn' || entry.level === 'error' ? entry.level : 'info';
-    const message = String(entry.message ?? '').slice(0, 4000);
-    const context = typeof entry.context === 'string' ? entry.context.slice(0, 2000) : undefined;
-    logger[level](`[client] ${message}`, context ? { context } : undefined);
+    // The payload is browser-supplied and logged verbatim by design — redact
+    // the bearer token first so a client that echoes its credentials (e.g.
+    // a debug dump of its own fetch config) cannot leak them into the host
+    // log. Redact BEFORE truncation so a token straddling the cap cannot
+    // survive as a fragment.
+    const message = redactToken(String(entry.message ?? '')).slice(0, 4000);
+    const redactedContext =
+      typeof entry.context === 'string' ? redactToken(entry.context).slice(0, 2000) : undefined;
+    logger[level](
+      `[client] ${message}`,
+      redactedContext ? { context: redactedContext } : undefined,
+    );
     sendJson(res, 200, { recorded: true });
   }
 
@@ -752,6 +871,9 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
   return {
     port: listeningPort,
     server,
+    uiPresenceCount,
+    startPresenceHeartbeat,
+    stopPresenceHeartbeat,
     broadcastNotification(method: string, params: unknown): void {
       broadcast({ type: 'notification', method, params });
     },
@@ -759,6 +881,7 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
       broadcast({ type: 'control', event, ...(params !== undefined ? { params } : {}) });
     },
     async close(): Promise<void> {
+      stopPresenceHeartbeat();
       for (const entry of sockets) {
         entry.ws.close(1000, 'gateway shutting down');
         if (entry.authTimer) {
@@ -767,6 +890,9 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
         }
       }
       sockets.clear();
+      // Final 0-count so a still-running daemon (gateway restarted, e.g.
+      // systemd hand-off) immediately stops counting this UI as present.
+      reportPresence();
       await new Promise<void>((resolveClose) => {
         server.closeAllConnections?.();
         server.close(() => {

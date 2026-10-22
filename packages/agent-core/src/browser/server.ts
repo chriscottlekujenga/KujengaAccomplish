@@ -4,12 +4,13 @@ import path from 'path';
 import { isSystemChromeInstalled, isPlaywrightInstalled } from './detection.js';
 import { createConsoleLogger } from '../utils/logging.js';
 import {
-  buildNodeEnvironment,
+  buildBrowserSpawnEnvironment,
   getNodeExecutable,
   installPlaywrightChromium,
   isDevBrowserServerReady,
   waitForDevBrowserServer,
 } from './server-utils.js';
+import { getDevBrowserToken } from './dev-browser-token.js';
 
 export type { BrowserServerConfig } from './server-utils.js';
 export {
@@ -21,6 +22,10 @@ export {
 import type { BrowserServerConfig } from './server-utils.js';
 
 const log = createConsoleLogger({ prefix: 'Browser' });
+
+function resolveShutdownToken(explicit: string | undefined): string {
+  return explicit ?? getDevBrowserToken();
+}
 
 export interface ServerStartResult {
   ready: boolean;
@@ -39,7 +44,11 @@ export async function startDevBrowserServer(
         'Run "pnpm -F @accomplish/desktop build:mcp-tools:dev" before starting the app.',
     );
   }
-  const spawnEnv = buildNodeEnvironment(config.bundledNodeBinPath);
+  // Phase 3 M1 §5.3 — the sidecar requires a bearer token from its launcher.
+  // A token is always available (BrowserServerConfig.devBrowserToken or the
+  // per-process fallback), so buildBrowserSpawnEnvironment only injects the
+  // env var the server.mjs reads.
+  const spawnEnv = buildBrowserSpawnEnvironment(config.bundledNodeBinPath, config.devBrowserToken);
   const nodeExe = getNodeExecutable(config.bundledNodeBinPath);
 
   const serverLogs: string[] = [];
@@ -105,7 +114,12 @@ export async function startDevBrowserServer(
   const maxWaitMs = process.platform === 'win32' ? 30000 : 15000;
   log.info(`[Browser] Waiting for dev-browser server to be ready (max ${maxWaitMs}ms)...`);
 
-  const serverReady = await waitForDevBrowserServer(config.devBrowserPort, maxWaitMs);
+  const serverReady = await waitForDevBrowserServer(
+    config.devBrowserPort,
+    maxWaitMs,
+    undefined,
+    config.devBrowserToken,
+  );
 
   log.info('[Browser] ========== END DEV-BROWSER SERVER STARTUP ==========');
 
@@ -150,15 +164,16 @@ function killProcessOnPort(port: number): void {
  * (e.g. server.mjs built before /shutdown was added).
  */
 export async function shutdownDevBrowserServer(
-  config: Pick<BrowserServerConfig, 'devBrowserPort' | 'devBrowserCdpPort'>,
+  config: Pick<BrowserServerConfig, 'devBrowserPort' | 'devBrowserCdpPort' | 'devBrowserToken'>,
 ): Promise<void> {
-  const { devBrowserPort, devBrowserCdpPort } = config;
+  const { devBrowserPort, devBrowserCdpPort, devBrowserToken } = config;
 
   let responded = false;
   try {
     const res = await fetch(`http://127.0.0.1:${devBrowserPort}/shutdown`, {
       method: 'POST',
       signal: AbortSignal.timeout(3000),
+      headers: { Authorization: `Bearer ${resolveShutdownToken(devBrowserToken)}` },
     });
     responded = res.ok;
   } catch {
@@ -209,8 +224,8 @@ export async function ensureDevBrowserServer(
   // Use 127.0.0.1 (not localhost) in isDevBrowserServerReady so this check is
   // safe on macOS — it avoids the Local Network permission dialog that could be
   // triggered by localhost mDNS resolution on some macOS versions.
-  if (await isDevBrowserServerReady(config.devBrowserPort)) {
-    log.info('[Browser] Dev-browser server already running');
+  if (await isDevBrowserServerReady(config.devBrowserPort, config.devBrowserToken)) {
+    log.info('[Browser] Dev-browser server already running (token verified)');
     return { ready: true, logs: [] };
   }
 

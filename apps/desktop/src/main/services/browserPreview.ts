@@ -58,10 +58,13 @@ export async function startBrowserPreviewStream(
   const cdp = new CdpClient();
 
   try {
-    const [wsEndpoint, targetId] = await Promise.all([
-      resolveBrowserWsEndpoint(),
-      resolveTargetId(taskId, normalizedPageName),
-    ]);
+    // Order matters since Phase 3 M1: openPreviewPage (POST /pages) triggers
+    // the sidecar's lazy Chrome launch, and only then does the sidecar report
+    // a non-empty wsEndpoint. The old code fetched both in parallel — safe
+    // when Chrome listened on the fixed :9225 port, but now the endpoint is
+    // ephemeral and empty until the first page open launches the browser.
+    const targetId = await resolveTargetId(taskId, normalizedPageName);
+    const wsEndpoint = await resolveBrowserWsEndpoint();
 
     await cdp.connect(wsEndpoint);
 

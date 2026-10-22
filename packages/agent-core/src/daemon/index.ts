@@ -21,8 +21,8 @@ export { createChildProcessTransport, createParentProcessTransport } from './ipc
 // Scheduler logic lives in apps/daemon/src/scheduler-service.ts (persistence-backed).
 // Types in common/types/daemon.ts.
 
-export { DaemonRpcServer } from './rpc-server.js';
-export type { DaemonRpcServerOptions } from './rpc-server.js';
+export { DaemonRpcServer, STALE_MS } from './rpc-server.js';
+export type { DaemonRpcServerOptions, RpcClientType } from './rpc-server.js';
 
 export { getSocketPath, getPidFilePath, getDaemonDir } from './socket-path.js';
 
