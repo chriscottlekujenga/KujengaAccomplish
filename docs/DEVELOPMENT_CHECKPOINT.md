@@ -1,7 +1,7 @@
-# Development Checkpoint — Firefox Migration, Phase 2
+# Development Checkpoint — Firefox Migration, Phase 2 / Phase 3 M1
 
-**Date:** 2026-10-21 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `7f238d4`
-**Status:** Phase 2 complete — AI-task acceptance PASSED (see §B). Uncommitted; commit awaits battery + user approval (§15).
+**Date:** 2026-10-21 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `d644f92`
+**Status:** Phase 2 complete (see §B) AND Phase 3 M1 (security foundation) complete — committed `d644f92` (see §18). Awaiting approval before M2.
 
 ---
 
@@ -25,14 +25,14 @@ Security model: loopback-only bind, timing-safe bearer token delivered in the la
 
 ## 2. Six-Phase Roadmap (`.opencode/plans/FIREFOX_MIGRATION_PLAN.md`)
 
-| Phase | Scope                                                                                              | Status                                            |
-| ----- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| 1     | Browser gateway foundation (host, connector, shim)                                                 | ✅ committed `7f238d4`                            |
-| 2     | Ubuntu ARM64 shell (launcher, .desktop, systemd, pickers, deep links)                              | ✅ done + AI-task acceptance PASSED (uncommitted) |
-| 3     | Full API parity + hardening + Firefox E2E harness                                                  | not started                                       |
-| 4     | Kujenga feature port (SFTP, WordPress, orchestration, messaging, renaming) from `main` @ `690b447` | not started                                       |
-| 5     | Firefox WebDriver BiDi automation backend (port from `backup-arm64-bidi` @ `be1415e`)              | not started                                       |
-| 6     | Packaging (deb/AppImage arm64), updater, Electron retirement                                       | not started                                       |
+| Phase | Scope                                                                                              | Status                                                                                 |
+| ----- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 1     | Browser gateway foundation (host, connector, shim)                                                 | ✅ committed `7f238d4`                                                                 |
+| 2     | Ubuntu ARM64 shell (launcher, .desktop, systemd, pickers, deep links)                              | ✅ done + AI-task acceptance PASSED (uncommitted)                                      |
+| 3     | Full API parity + hardening + Firefox E2E harness                                                  | in progress — M1 security foundation committed `d644f92` (§18); M2–M6 pending approval |
+| 4     | Kujenga feature port (SFTP, WordPress, orchestration, messaging, renaming) from `main` @ `690b447` | not started                                                                            |
+| 5     | Firefox WebDriver BiDi automation backend (port from `backup-arm64-bidi` @ `be1415e`)              | not started                                                                            |
+| 6     | Packaging (deb/AppImage arm64), updater, Electron retirement                                       | not started                                                                            |
 
 ## 3. Current Phase & Acceptance Criteria (Phase 2)
 
@@ -218,3 +218,60 @@ H1 **confirmed** (split into causes 1+3: missing model param + ref format); H2 *
 **Regression tests:** daemon `task-service-parity.test.ts` — +2: Firefox-exact params (`{prompt, taskId}` only) assert config carries `<userData>/task-workspace` (~-endswith + `!== homedir()`); explicit folder preserved verbatim. agent-core `task-manager.test.ts` — working-directory describe now drives the REAL `TaskManager.executeTask` with a stub adapter (was inline re-implementation).
 
 **Live verification (Firefox-replica harness, one run):** journal `ready in 679ms (cwd=/home/chris/.local/share/Accomplish/task-workspace)`; `/proc/<serve-pid>/cwd` confirmed; **no git child process observed at t+10s/t+20s and no `--work-tree /home/chris` after the run**; ESTAB to 11434 from the task's own opencode pid; `~/kujenga-test.txt` created (empty — prompt specified no content; agent used `touch` then confirmed "0 bytes"); `task.complete status=success`. Daemon **196/196**, agent-core **724+1skip**, typecheck 5/5, ESLint 0 errors, prettier clean.
+
+---
+
+## 18. Phase 3 — M1 Security Foundation (2026-10-21, committed `d644f92`)
+
+Approved scope: `docs/PHASE_3_IMPLEMENTATION_PLAN.md` (Rev. 2) §5 — M1 ONLY. Gateway allowlist **unchanged** (62 entries; tripwire test guards it). No push/merge.
+
+### 18.1 Changes implemented
+
+1. **Interactive UI-presence gate (permission auto-deny fix).** New daemon RPCs `daemon.setClientType('gateway'|'legacy')` + `daemon.setUiPresence({count})`; per-socket-client presence state in agent-core `rpc-server.ts` (client typed `legacy` by default), `hasInteractiveClients()` = any legacy client OR any gateway-reporting client with `count>0` fresh ≤ `STALE_MS` (90 s); daemon probe rewired (`task-callbacks.ts` `InteractivePresenceProbe`; `apps/daemon/src/index.ts:183`). Gateway (`apps/host/src/gateway.ts` + `daemon-connector.ts` + `host-app.ts`): declares identity + reports count on connect AND every reconnect (strictly sequential, 5 s timeout, old-daemon → legacy fallback), counts **authenticated+OPEN** WS clients, reports on every WS open/close, 30 s heartbeat armed on connect / disarmed on disconnect / final 0-count on `gateway.close()`. Deny mechanics unchanged (immediate auto-deny + 5-min in-flight timeout). **No auto-approve**; scheduled/unattended tasks keep prior outcomes (deny without UI, prompt with UI; Electron = legacy client, byte-identical semantics).
+2. **Unix socket `chmod 0600`** after listen (`rpc-server.ts` `restrictSocketPermissions`), test-asserted.
+3. **Side-service hardening** (tokens via daemon-owned env, never RPC):
+   - dev-browser launch server `:9224`: bearer token (`ACCOMPLISH_DEV_BROWSER_TOKEN`, 256-bit, env-seeded, memoized); 401 without token; 403 + explicit JSON for any request bearing an `Origin` (Node-child-only surface);
+   - dev-browser relay `/cdp` + `/extension` WS: **first-message auth exchange** `{"type":"auth","token"}` → `auth-ok` / close `4401` (mirrors gateway `/events`; upgrade-header Bearer/`X-CDP-Secret` accepted for `connectOverCDP({headers})`);
+   - **Chromium CDP port made ephemeral** (`--remote-debugging-port=0`, discovered via the profile's `DevToolsActivePort` file, endpoint threaded through the unchanged sidecar API; `DEV_BROWSER_CDP_PORT` explicit override keeps legacy fixed port with a loud warning). No fixed unauthenticated external CDP port remains;
+   - in-daemon LLM proxies `:9228` (azure-foundry) / `:9229` (moonshot): `x-accomplish-proxy-token` required (Authorization header stays reserved for upstream credentials; proxy-token stripped before forwarding; token cap = 64 concurrent tasks; `/health` remains tokenless by design — readiness only);
+   - WhatsApp `:9230`: Origin validation + proper CORS preflight (204 only when token valid AND origin allowed; else 403; replaces bare-204).
+4. **Universal response scrubber + log redaction.** `scrubResponse()` now applied to **every** `/rpc` success response (deep, depth 32; `SECRET_FIELD_NAMES` extended to 9: apiKey, secretKey, secretAccessKey, sessionToken, password, refreshToken, accessToken, serviceAccountJson, token; zero (method,field) exceptions — audit found none). Gateway log redaction: outer unhandled-error handler + `/client-log` payloads sanitized via `redactToken()` before truncation; WS-auth/401 paths verified never to log request data.
+5. **Electron bridge preservation.** Direct `:9225/json/version` / unauthed `:9224` HTTP calls in desktop preview replaced with daemon RPCs `devBrowser.getPreviewInfo` → `{wsEndpoint|null, pages|null}` and `devBrowser.openPreviewPage({name, viewport})` → `{targetId}|null` (sidecar token **never leaves the daemon**; page-open runs before wsEndpoint fetch because the CDP port exists only after Chrome's lazy launch; desktop's existing graceful-degradation catch semantics unchanged). Desktop never spawns the sidecar (grep-verified).
+6. **Dev-browser self-heal:** a stale sidecar (outliving daemon restart) 401s the new token; `ensureDevBrowserServer` detects it, kills the stale listener, relaunches with a fresh token.
+
+### 18.2 Tests performed (all green; full battery)
+
+| Suite        | Result (Δ vs Phase 2)                                                                                                                                                      |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| agent-core   | **782 pass / 1 skip** (59 files; +58 — presence, sidecar-client, service-token, dev-browser-token, proxy-auth, moonshot extensions)                                        |
+| daemon       | **230/230** (21 files; +34 — presence-gate 10, dev-browser-service 6, daemon-routes-devbrowser 8 incl. allowlist tripwire, whatsapp-send-api, http-server-factory rewrite) |
+| host         | **208/208** (16 files; +71 — gateway-presence 10, response-scrubber 50, gateway-scrub-redaction 9, daemon-connector +2)                                                    |
+| web unit     | **398/398** (unchanged)                                                                                                                                                    |
+| desktop      | **512/512** (21 files; +18 — browser-preview-utils 12, browserPreview 6; Electron suite green = bridge preserved)                                                          |
+| typecheck    | all workspaces Done                                                                                                                                                        |
+| lint:eslint  | 0 errors (3 pre-existing warnings in `apps/web/src/client/pages/execution/useExecutionEffects.ts`)                                                                         |
+| format:check | clean                                                                                                                                                                      |
+
+Pre-existing failures (NOT introduced by M1, documented separately): **web integration 61** (upstream baseline, suite not exercised — no web changes in M1) · **dev-browser-mcp `integration.test.ts` 1 failed / 28 passed on clean HEAD** (rebrowser-playwright 1.52 removed `page.accessibility.snapshot()`) · lint 3 pre-existing warnings. Also mcp-tools/dev-browser vitest 30 passed + dev-browser-mcp unit 78 passed (run inside their package).
+
+### 18.3 Security findings (M1 audit)
+
+1. **`settings.getAll` legacy-import leak — CLOSED at the gateway.** `legacy-import-service.ts:175` writes electron-store `credentials` JSON into SQLite verbatim, so raw `apiKey` values previously surfaced unscrubbed. Universal scrubber now removes them; **daemon-side strip at import time is the correct root fix → M2 candidate.**
+2. **`settings.getCloudBrowserConfig` plaintext `apiKey` by type — CLOSED** by universal scrub.
+3. **Blocklist verified gap-free** for the current 62-method surface (7 blocked methods are exactly the plaintext READ paths; `auth.openai.getAccessToken`, `whatsapp.getConfig`, `gwsAccount.list` are not allowlisted).
+4. Pre-existing leak paths OUTSIDE the gateway surface (findings only, unchanged): decrypted provider keys in opencode `auth.json` (opencode-native design); `TaskMessage.toolInput` content echo could carry credential-shaped _unkeyed_ strings through key-name-based scrubbing (identical in Electron; content already user-visible in-task); daemon log file has home-path redaction but no token-level sweep (unverified end-to-end); deep-link `mcp-callback` broadcasts OAuth callback URLs to authenticated WS clients (matches Electron behavior, never logged).
+5. Relay `/extension` auth is a **breaking change for the companion browser extension** (not in this repo) — it must now send the first-message auth; token distribution to it is an M2 seam.
+6. Desktop quit-time sidecar shutdown degraded but non-crashing: Electron's `shutdownDevBrowserServer` sends a non-matching token → 401 → forced port-kill fallback (`:9224` only; orphan Chrome possible). Clean fix = daemon RPC `devBrowser.shutdown` → **M2 candidate**.
+
+### 18.4 Remaining risks
+
+- Presence staleness window: a crashed host delays auto-deny by ≤90 s (by design, heartbeat absent).
+- `DEV_BROWSER_CDP_PORT` explicit non-zero override re-opens a fixed unauthenticated loopback CDP port (loud warning; normal daemon flow never sets it).
+- LLM-proxy upstream TLS behavior toward real Azure/Moonshot verified only against stub upstreams (no real credentials in this environment) — forwarding path byte-identical except token strip.
+- Chrome headful ephemeral-CDP flow verified in headless live probes; headful relies on documented Chromium default (binds 127.0.0.1).
+- Gateway rate-limit flake (600/60 s shared budget, checkpoint §17) — scheduled for M4; unchanged in M1.
+
+### 18.5 Git
+
+- M1 implementation: **`d644f92`** (`feat(daemon): UI-presence permission gate and security hardening (Firefox migration phase 3 M1)`) on `linux-firefox-ai`; parent `9ad4b5e`. Nothing pushed/merged; `/home/chris/Accomplish` untouched; Electron bridge green throughout.
+- Checkpoint/plan docs committed separately (docs commit follows this one).
