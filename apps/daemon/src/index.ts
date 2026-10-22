@@ -228,7 +228,13 @@ async function main(): Promise<void> {
   const settingsService = new SettingsService(storage);
   const workspaceService = new WorkspaceService();
   const connectorService = new ConnectorService(storage);
-  const legacyImportService = new LegacyImportService(storageService.getRawDatabase());
+  // Legacy import routes extracted credentials through the daemon's own
+  // SecretsService bucket (audit §18.3.1 root fix) — the same secure-storage
+  // backend all live provider keys use.
+  const legacyImportService = new LegacyImportService(
+    storageService.getRawDatabase(),
+    secretsService,
+  );
 
   // Milestone 4 services — own Google accounts + skills.
   const googleAccountService = new GoogleAccountService(storageService.getRawDatabase(), storage);

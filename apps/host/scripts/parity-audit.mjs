@@ -100,6 +100,13 @@
  *     (host /pick-files — no new RPC, no allowlist delta), while
  *     getFilePath stays unavailable by design (browser File objects cannot
  *     reveal local paths; picker flow is the authorized path, plan §6 M2.3).
+ *   M2 T5 allows daemon 'task.stop' (plan §6 M2 item 5, M1-audit essential
+ *     method): the daemon-native stop RPC — 'task.cancel' is the
+ *     desktop-IPC alias, BOTH call taskService.stopTask. The shim's
+ *     cancelTask maps to 'task.cancel', so SHIM_RPC_MAP backs NOTHING on
+ *     task.stop (parity target = MCP-driven flows); it lands in Appendix C.
+ *     Allowlist 97 → 98; the response is void (no `result` field) — paired
+ *     authorization + shape tests in T5.
  *
  * ── Self-checks (exit 1 on failure) ────────────────────────────────────────
  *   - parse-unknown: any declared entry without a domain → loud failure.
@@ -1027,14 +1034,21 @@ function collect() {
   }
   const optionalNotSupported = [...onsMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
 
-  // Policy sets
+  // Policy sets. Quote-scanning must be comment-blind: §5.4 policy comments
+  // legitimately name quoted methods inside the arrays, and treating those
+  // as entries would corrupt the audit (T5).
+  const stripLineComments = (block) =>
+    block
+      .split('\n')
+      .map((line) => line.replace(/\/\/.*$/, ''))
+      .join('\n');
   const allowMatch = policySrc.match(/RPC_METHOD_ALLOWLIST: readonly string\[\] = \[([\s\S]*?)\];/);
   const blockMatch = policySrc.match(/RPC_METHOD_BLOCKLIST: readonly string\[\] = \[([\s\S]*?)\];/);
   if (!allowMatch || !blockMatch) {
     fail('parse-unknown: allowlist/blocklist arrays not found in policy.ts');
   }
-  const allowlist = [...allowMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  const blocklist = [...blockMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const allowlist = [...stripLineComments(allowMatch[1]).matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const blocklist = [...stripLineComments(blockMatch[1]).matchAll(/'([^']+)'/g)].map((m) => m[1]);
 
   // Daemon registry (routes + index + agent-core builtin)
   const registered = new Map(); // name → [source labels]
@@ -1349,6 +1363,12 @@ const EXPECTED = {
   m2T4Implemented: 4,
   m2T4Registered: 2,
   m2T4AllowlistDelta: 3,
+  // Phase 3 M2 T5: task.stop allowlisted (plan §6 M2 item 5, M1-audit
+  // essential method). Daemon-native stop RPC, cancel-parity — the shim's
+  // cancelTask maps to the 'task.cancel' alias (no new shim method); the
+  // response is void (no result field). no-shim-wiring delta; no new daemon
+  // RPC (registered).
+  m2T5AllowlistDelta: 1,
 };
 
 const SANITY_CHECKS = [
@@ -1357,6 +1377,13 @@ const SANITY_CHECKS = [
     when: (rows, ctx) => {
       const r = rows.find((x) => x.name === 'startTask');
       return r.shimStatus === 'implemented' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label: 'cancelTask maps to the task.cancel alias; task.stop stays shim-unmapped (M2 T5)',
+    when: (rows) => {
+      const cancel = rows.find((x) => x.name === 'cancelTask');
+      return cancel.shimStatus === 'implemented' && cancel.backing === 'task.cancel';
     },
   },
   {
@@ -1680,14 +1707,16 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.m2T1aAllowlistDelta +
     EXPECTED.m2T1bAllowlistDelta +
     EXPECTED.m2T2AllowlistDelta +
-    EXPECTED.m2T4AllowlistDelta;
+    EXPECTED.m2T4AllowlistDelta +
+    EXPECTED.m2T5AllowlistDelta;
   const allowOk = parsed.allowlist.length === m2ExpectedAllowlist;
   check(
     allowOk,
     `allowlist ${parsed.allowlist.length} vs plan 62 + ${EXPECTED.m2T1aAllowlistDelta} M2 T1a entries + ` +
       `${EXPECTED.m2T1bAllowlistDelta} T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + ` +
       `${EXPECTED.m2T2AllowlistDelta} T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + ` +
-      `${EXPECTED.m2T4AllowlistDelta} T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) = ` +
+      `${EXPECTED.m2T4AllowlistDelta} T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) + ` +
+      `${EXPECTED.m2T5AllowlistDelta} T5 entry (task.stop — daemon-native stop, cancel-parity; no shim mapping) = ` +
       `${m2ExpectedAllowlist} — ` +
       `${allowOk ? 'matches the M2 expansion' : 'MISMATCH — allowlist changed since the M2 tripwire'}`,
   );

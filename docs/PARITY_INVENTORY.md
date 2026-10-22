@@ -36,10 +36,10 @@ Nestings are flattened: `gws.*` and `analytics.*` per sub-method; the namespace 
 | Shim optional-absent                                    | **3**                                                          |
 | Shim unavailable                                        | **60**                                                         |
 | Shim-implemented not declared on AccomplishAPI (extras) | 2                                                              |
-| Gateway allowlist entries                               | **97**                                                         |
+| Gateway allowlist entries                               | **98**                                                         |
 | Gateway blocklist entries                               | 7                                                              |
 | Daemon registered methods                               | **137** (135 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
-| Daemon registered not allowlisted                       | 40                                                             |
+| Daemon registered not allowlisted                       | 39                                                             |
 
 ### Reconciliation with plan §2.2 (measured vs known facts)
 
@@ -47,7 +47,7 @@ Plan §2.2 (verified 2026-10-21) states: AccomplishAPI = 249 methods · shim imp
 
 - ✓ plan "129 implemented" = 141 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries + 10 T2 skills/connector-CRUD entries + 1 T3 file-attachment-drop entry (processDroppedFiles → host picker) + 4 T4 browser-preview entries (on-demand captureFrame poll ×4) and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
 - ✓ plan "120 unavailable" = 60 unavailable + 3 optional-absent (browser-preview onBrowserNavigate/onBrowserStatus 2 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented, the 10 entries T2 promoted (skills CRUD + connector CRUD), the 1 entry T3 promoted (processDroppedFiles via the host picker), and the 4 entries T4 promoted (browser-preview poll ×4). Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
-- ✓ allowlist 97 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + 9 T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + 3 T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) = 97 — matches the M2 expansion
+- ✓ allowlist 98 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + 9 T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + 3 T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) + 1 T5 entry (task.stop — daemon-native stop, cancel-parity; no shim mapping) = 98 — matches the M2 expansion
 - ✓ daemon registered 137 (135 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) +1 T2 method (skills.addFromGitHub) +2 T4 methods (devBrowser.captureFrame, devBrowser.shutdown) = 137. Arithmetic matches.
 
 ## Summary per domain
@@ -556,9 +556,9 @@ Notifications: `settings.changed`, `task.complete`, `task.error`, `task.message`
 
 Control events: `mcp-callback`, `daemon:disconnected`, `daemon:reconnected`, `daemon:reconnect-failed`
 
-## Appendix C — allowlisted RPC methods with no shim mapping (6)
+## Appendix C — allowlisted RPC methods with no shim mapping (7)
 
-`health.check`, `task.status`, `task.getActiveCount`, `settings.setNimConfig`, `workspace.get`, `devBrowser.shutdown`
+`health.check`, `task.stop`, `task.status`, `task.getActiveCount`, `settings.setNimConfig`, `workspace.get`, `devBrowser.shutdown`
 
 ## Appendix D — shim transport.call coverage (self-check)
 

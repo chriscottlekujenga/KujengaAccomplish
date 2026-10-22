@@ -180,6 +180,18 @@ describe('checkMethodPolicy', () => {
     expect(RPC_METHOD_ALLOWLIST).not.toContain('devBrowser.getPreviewInfo');
   });
 
+  it('authorizes the M2 T5 task.cancel-parity stop method (plan §6 M2 item 5)', () => {
+    // task.stop is the daemon-native stop RPC daemon-routes registers first
+    // ('task.cancel' is the desktop-IPC alias; both call the same
+    // taskService.stopTask). The shim's cancelTask maps to 'task.cancel', so
+    // task.stop backs nothing in the shim (SHIM_RPC_MAP) — the parity target
+    // is MCP-driven flows. The response is void (result null), so no secret
+    // material can ride it; the universal scrubber stays as defense in depth.
+    expect(RPC_METHOD_ALLOWLIST).toContain('task.stop');
+    expect(RPC_METHOD_ALLOWLIST).toContain('task.cancel');
+    expect(RPC_METHOD_ALLOWLIST).toContain('task.interrupt');
+  });
+
   it('pins the allowlist count (M2 tripwire — every addition needs §5.4 tests)', () => {
     // 62 M1 baseline + 21 M2 provider/model-management + masked-listing
     // entries (Phase 3 M2 T1a) + 2 T1b bedrock/vertex credential entries
@@ -189,10 +201,12 @@ describe('checkMethodPolicy', () => {
     // setEnabled/setStatus/delete/deleteTokens)
     // + 3 T4 browser-preview entries (devBrowser.openPreviewPage promotes
     // from M1's internal set to allowlisted; captureFrame + shutdown new).
+    // + 1 T5 entry (task.stop — cancel-parity for MCP-driven flows; response
+    // is void, no shim mapping).
     // This pin is deliberate: growing it further requires the §5.4
     // expansion policy — documented response shape, scrubber/no-secret-field
     // proof, paired authorization + redaction tests.
-    expect(RPC_METHOD_ALLOWLIST).toHaveLength(97);
+    expect(RPC_METHOD_ALLOWLIST).toHaveLength(98);
     expect(RPC_METHOD_BLOCKLIST).toHaveLength(7);
   });
 

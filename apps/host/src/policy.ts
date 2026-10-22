@@ -22,6 +22,20 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   // Task lifecycle
   'task.start',
   'task.cancel',
+  // task.stop (Phase 3 M2 T5 — plan §6 M2 item 5, the M1-audit essential
+  // method): the daemon's NATIVE stop method — daemon-routes.ts registers
+  // 'task.stop' directly and 'task.cancel' as the desktop-IPC alias (see the
+  // alias comment there); both call the same taskService.stopTask, i.e.
+  // cancel/interrupt semantics for the target task. No new shim method: the
+  // UI's cancelTask already maps to 'task.cancel' (SHIM_RPC_MAP backs nothing
+  // on task.stop); task.stop parity matters for MCP-driven flows. RESPONSE
+  // SHAPE (§5.4(a)): void — taskService.stopTask resolves void, so the
+  // gateway serializes the HTTP body with NO `result` field at all
+  // (JSON.stringify drops an undefined result); the cancel/interrupt signal
+  // is the daemon-side task.statusChange:'cancelled' notification. No
+  // fields → no secret material, and the universal scrubber still applies
+  // as defense in depth.
+  'task.stop',
   'task.interrupt',
   'task.list',
   'task.status',

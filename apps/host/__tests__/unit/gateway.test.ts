@@ -400,6 +400,79 @@ describe('gateway security', () => {
         expect(status).toBe(403);
       });
     });
+
+    // Phase 3 M2 T5 (plan §6 M2 item 5): task.stop — the daemon-native stop
+    // method ('task.cancel' is the desktop-IPC alias; both call the same
+    // taskService.stopTask, i.e. cancel/interrupt semantics for the target
+    // task). No new shim method — the UI's cancelTask maps to 'task.cancel';
+    // task.stop parity matters for MCP-driven flows. Same §5.4(d) pairing.
+    describe('M2 T5 task.stop cancel-parity', () => {
+      let stopGateway: GatewayHandle;
+      let stopRpc: ReturnType<typeof createFakeRpc>;
+
+      beforeAll(async () => {
+        // Registered with an explicit void result: the real
+        // taskService.stopTask resolves void, so the JSON-RPC result is null.
+        stopRpc = createFakeRpc({ 'task.stop': undefined });
+        stopGateway = await createGateway({
+          port: 0,
+          token: TOKEN,
+          webDist: null,
+          rpc: stopRpc,
+        });
+      });
+
+      afterAll(async () => {
+        await stopGateway.close();
+      });
+
+      it('proxies task.stop for an authenticated caller', async () => {
+        const { status, body } = await postRpc(
+          rpcBody(1, 'task.stop', { taskId: 'task-1' }),
+          { Authorization: `Bearer ${TOKEN}` },
+          stopGateway.port,
+        );
+        expect(status).toBe(200);
+        expect(stopRpc.calls.at(-1)?.method).toBe('task.stop');
+        expect(stopRpc.calls.at(-1)?.params).toEqual({ taskId: 'task-1' });
+        // §5.4(a) response-shape proof: void result — the real
+        // taskService.stopTask resolves void, so JSON.stringify drops the
+        // `result` key entirely (exact wire bytes: {"jsonrpc","id"}). The
+        // cancel/interrupt notification is daemon-side (task.statusChange),
+        // so the HTTP response carries NO fields at all and therefore no
+        // secret material.
+        expect(body.result).toBeUndefined();
+        expect('result' in body).toBe(false);
+        expect(Object.keys(body).sort()).toEqual(['id', 'jsonrpc']);
+        expect(JSON.stringify(body)).not.toContain('"apiKey"');
+      });
+
+      it('requires the bearer token for task.stop (401 without auth)', async () => {
+        const { status } = await postRpc(
+          rpcBody(1, 'task.stop', { taskId: 'task-1' }),
+          {},
+          stopGateway.port,
+        );
+        expect(status).toBe(401);
+      });
+
+      it('rejects task.stop as allowlist-only even for a forged-policy mistake pairing it with secret reads', async () => {
+        const hostileGateway = await createGateway({
+          port: 0,
+          token: TOKEN,
+          webDist: null,
+          rpc: createFakeRpc(),
+          policySets: { allow: new Set([...RPC_METHOD_BLOCKLIST, 'task.stop']) },
+        });
+        const { status } = await postRpc(
+          rpcBody(1, 'secrets.getApiKey', { provider: 'anthropic' }),
+          { Authorization: `Bearer ${TOKEN}` },
+          hostileGateway.port,
+        );
+        expect(status).toBe(403);
+        await hostileGateway.close();
+      });
+    });
   });
 
   describe('Host and Origin validation', () => {
