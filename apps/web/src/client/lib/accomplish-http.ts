@@ -38,6 +38,7 @@ import type {
   FileAttachmentInfo,
   ApiKeyConfig,
 } from '@accomplish_ai/agent-core';
+import { sanitizeString, validateHttpUrl } from '@accomplish_ai/agent-core';
 import type { ScheduledTask } from '@accomplish_ai/agent-core/common';
 import type { AccomplishAPI } from './accomplish';
 
@@ -46,6 +47,64 @@ const TOKEN_STORAGE_KEY = 'accomplish.gateway-token';
 /** Minimal gateway-token shape (base64url of ≥128 bits, or dev-injected). */
 function isValidTokenShape(token: string): boolean {
   return /^[A-Za-z0-9_-]{20,256}$/.test(token);
+}
+
+/**
+ * Drop undefined keys from a params object so RPC payloads stay canonical —
+ * optional request parameters must be absent on the wire, not `undefined`
+ * (same semantics daemon-side, but the explicit shape is easier to audit).
+ */
+function omitUndefined(input: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) {
+      output[key] = value;
+    }
+  }
+  return output;
+}
+
+/**
+ * The Bedrock/Vertex connect flows pass credential OBJECTS through the
+ * widened Electron wrapper (accomplish.ts `buildElectronAccomplishApi`)
+ * while the raw AccomplishAPI contract names `string` — accept both and
+ * canonicalize to the JSON document the daemon's validators and secret
+ * store expect.
+ */
+function credentialsJsonOf(credentials: unknown): string {
+  if (typeof credentials === 'string') {
+    return credentials;
+  }
+  return JSON.stringify(credentials);
+}
+
+/** Normalize a provider model-fetch result to the `models`-is-an-array
+ *  contract the Bedrock/Vertex shim methods promise (the desktop handlers
+ *  return `models: []` on failure; the daemon field is optional). */
+function withModelsArray(raw: { success?: boolean; models?: unknown[]; error?: string } | null): {
+  success: boolean;
+  models: Array<{ id: string; name: string; provider: string }>;
+  error?: string;
+} {
+  if (!raw || typeof raw !== 'object') {
+    return { success: false, models: [] };
+  }
+  const result: {
+    success: boolean;
+    models: Array<{ id: string; name: string; provider: string }>;
+    error?: string;
+  } = {
+    success: Boolean(raw.success),
+    models: (Array.isArray(raw.models) ? raw.models : []) as Array<{
+      id: string;
+      name: string;
+      provider: string;
+    }>,
+  };
+  if (typeof raw.error === 'string') {
+    result.error = raw.error;
+  }
+  return result;
 }
 
 export class HttpShimNotSupportedError extends Error {
@@ -575,6 +634,33 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     //    fields before the response crosses the trust boundary) ──
     getProviderSettings: () => call('provider.getSettings') as never,
 
+    // ── Provider settings writes (Phase 3 M2 T1b) — everything rides the
+    //    T1a provider.* RPCs. getConnectedProvider has no dedicated read
+    //    RPC: it derives from the masked provider.getSettings snapshot,
+    //    exactly as the desktop handler does. Provider writes mutate the
+    //    settings.getAll snapshot too, so they invalidate the cache. ──
+    setActiveProvider: (providerId: string | null) =>
+      call('provider.setActive', { providerId }).then(invalidateSettings) as Promise<void>,
+    getConnectedProvider: async (providerId: string) => {
+      const settings = (await call('provider.getSettings')) as {
+        connectedProviders?: Record<string, never>;
+      };
+      return settings.connectedProviders?.[providerId] ?? null;
+    },
+    setConnectedProvider: (providerId: string, provider: unknown) =>
+      call('provider.setConnected', { providerId, provider }).then(
+        invalidateSettings,
+      ) as Promise<void>,
+    removeConnectedProvider: (providerId: string) =>
+      call('provider.removeConnected', { providerId }).then(invalidateSettings) as Promise<void>,
+    updateProviderModel: (providerId: string, modelId: string | null) =>
+      call('provider.updateModel', { providerId, modelId }).then(
+        invalidateSettings,
+      ) as Promise<void>,
+    setProviderDebugMode: (enabled: boolean) =>
+      call('provider.setDebugMode', { enabled }).then(invalidateSettings) as Promise<void>,
+    getProviderDebugMode: () => call('provider.getDebugMode') as Promise<boolean>,
+
     // ── Skills ──
     getSkills: () => call('skills.list') as never,
     getEnabledSkills: () => call('skills.listEnabled') as never,
@@ -604,8 +690,14 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     // ── Daemon (read-only surface; host-side control lands in Phase 2) ──
     daemonPing: () => call('daemon.ping'),
 
-    // ── API key writes (reads stay gateway-blocklisted; masked reads land
-    //    in Phase 3 — storing keys from the browser is one-way by design) ──
+    // ── API key management (Phase 3 M2 T1b) ──
+    // Reads are masked: `secrets.listApiKeys` serves
+    // `{ provider: { exists, prefix? } }` only, and every plaintext read
+    // (`getApiKey`, `getBedrockCredentials`, `getVertexCredentials`) stays
+    // blocked — those methods remain loud not-supported stubs. Desktop
+    // `api-key:set` / `api-key:clear` / `api-key:validate` semantics all
+    // target the DEFAULT provider ('anthropic'; api-key-validation-
+    // handlers.ts). Storing keys from the browser is one-way by design.
     addApiKey: ((provider: string, key: string, _label?: string) =>
       call('secrets.storeApiKey', { provider, apiKey: key }).then(
         () =>
@@ -618,6 +710,291 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
       )) as AccomplishAPI['addApiKey'],
     hasApiKey: () => call('secrets.hasAnyApiKey') as Promise<boolean>,
     hasAnyApiKey: () => call('secrets.hasAnyApiKey') as Promise<boolean>,
+    getApiKeys: (async () => {
+      const masked = (await call('secrets.listApiKeys')) as Record<
+        string,
+        { exists: boolean; prefix?: string }
+      >;
+      // Desktop settings:api-keys parity: only existing keys are listed
+      // (desktop filters nulls); labels are not derivable from the masked
+      // read, so entries carry the masked prefix only.
+      return Object.entries(masked)
+        .filter(([, info]) => info.exists)
+        .map(([provider, info]) => ({
+          id: provider,
+          provider,
+          exists: true,
+          ...(info.prefix ? { prefix: info.prefix } : {}),
+        }));
+    }) as unknown as AccomplishAPI['getApiKeys'],
+    getAllApiKeys: (async () =>
+      (await call('secrets.listApiKeys')) as Record<
+        string,
+        { exists: boolean; prefix?: string }
+      >) as unknown as AccomplishAPI['getAllApiKeys'],
+    setApiKey: (key: string) =>
+      call('secrets.storeApiKey', {
+        provider: 'anthropic',
+        apiKey: sanitizeString(key, 'apiKey', 256),
+      }) as Promise<void>,
+    removeApiKey: (id: string) => call('secrets.deleteApiKey', { provider: id }) as Promise<void>,
+    validateApiKey: (key: string) =>
+      call('provider.validateKey', {
+        providerId: 'anthropic',
+        key: sanitizeString(key, 'apiKey', 256),
+      }) as never,
+    validateApiKeyForProvider: (provider: string, key: string, options?: Record<string, unknown>) =>
+      call('provider.validateKey', omitUndefined({ providerId: provider, key, options })) as never,
+    // Desktop api-key:clear deletes ONLY the default-provider key
+    // (`deleteApiKey('anthropic')`) — it never touches other providers, so
+    // the blanket-wipe `secrets.clear` is deliberately NOT allowlisted for
+    // the browser and stays registered-blocked.
+    clearApiKey: () => call('secrets.deleteApiKey', { provider: 'anthropic' }) as Promise<void>,
+
+    // ── Provider runtime configs (Phase 3 M2 T1b): pass-through reads +
+    //    settings writers. The T1a settings.* routes handle these config
+    //    blobs; desktop writes them through the settings service too, so
+    //    every write invalidates the settings snapshot cache. ──
+    getOpenAiBaseUrl: () => call('settings.getOpenAiBaseUrl') as Promise<string>,
+    setOpenAiBaseUrl: (baseUrl: string) =>
+      call('settings.setOpenAiBaseUrl', { baseUrl }).then(invalidateSettings) as Promise<void>,
+    getOllamaConfig: () => call('settings.getOllamaConfig') as never,
+    setOllamaConfig: (config: unknown) =>
+      call('settings.setOllamaConfig', { config }).then(invalidateSettings) as Promise<void>,
+    getLiteLLMConfig: () => call('settings.getLiteLLMConfig') as never,
+    setLiteLLMConfig: (config: unknown) =>
+      call('settings.setLiteLLMConfig', { config }).then(invalidateSettings) as Promise<void>,
+    getLMStudioConfig: () => call('settings.getLMStudioConfig') as never,
+    setLMStudioConfig: (config: unknown) =>
+      call('settings.setLMStudioConfig', { config }).then(invalidateSettings) as Promise<void>,
+    getAzureFoundryConfig: () => call('settings.getAzureFoundryConfig') as never,
+    setAzureFoundryConfig: (config: unknown) =>
+      call('settings.setAzureFoundryConfig', { config }).then(invalidateSettings) as Promise<void>,
+
+    // ── Connection tests + model discovery (Phase 3 M2 T1b) ──
+    // `provider.testConnection` accepts a one-way plaintext key; model
+    // fetches resolve keys daemon-side from stored secrets, so the shim
+    // never has the material to begin with. Errors come back redacted.
+    testOllamaConnection: (url: string) =>
+      call('provider.testConnection', { providerId: 'ollama', url }) as never,
+    testLiteLLMConnection: (url: string, apiKey?: string) =>
+      call(
+        'provider.testConnection',
+        omitUndefined({ providerId: 'litellm', url, apiKey }),
+      ) as never,
+    testLMStudioConnection: (url: string) =>
+      call('provider.testConnection', { providerId: 'lmstudio', url }) as never,
+    testNimConnection: (url: string, apiKey: string) =>
+      call('provider.testConnection', { providerId: 'nim', url, apiKey }) as never,
+    testCustomConnection: (baseUrl: string, apiKey?: string) =>
+      call(
+        'provider.testConnection',
+        omitUndefined({ providerId: 'custom', url: baseUrl, apiKey }),
+      ) as never,
+    testAzureFoundryConnection: (config: {
+      endpoint: string;
+      deploymentName: string;
+      authType: 'api-key' | 'entra-id';
+      apiKey?: string;
+    }) =>
+      call(
+        'provider.testConnection',
+        omitUndefined({
+          providerId: 'azure-foundry',
+          endpoint: config.endpoint,
+          deploymentName: config.deploymentName,
+          authType: config.authType,
+          apiKey: config.apiKey,
+        }),
+      ) as never,
+    // Desktop azure-foundry:save-config sequence, mirrored exactly:
+    // validate at the boundary, (optionally) store the key one-way, then
+    // write the config through settings with enabled + fresh lastValidated.
+    saveAzureFoundryConfig: async (config: {
+      endpoint: string;
+      deploymentName: string;
+      authType: 'api-key' | 'entra-id';
+      apiKey?: string;
+    }) => {
+      const { endpoint, deploymentName, authType, apiKey } = config;
+      if (typeof endpoint !== 'string' || !endpoint.trim()) {
+        throw new Error('Invalid Azure Foundry configuration: endpoint is required');
+      }
+      if (typeof deploymentName !== 'string' || !deploymentName.trim()) {
+        throw new Error('Invalid Azure Foundry configuration: deploymentName is required');
+      }
+      if (authType !== 'api-key' && authType !== 'entra-id') {
+        throw new Error(
+          'Invalid Azure Foundry configuration: authType must be api-key or entra-id',
+        );
+      }
+      try {
+        validateHttpUrl(endpoint, 'Azure Foundry endpoint');
+      } catch {
+        throw new Error('Invalid Azure Foundry configuration: Invalid endpoint URL format');
+      }
+      if (authType === 'api-key' && apiKey) {
+        await call('secrets.storeApiKey', { provider: 'azure-foundry', apiKey });
+      }
+      await call('settings.setAzureFoundryConfig', {
+        config: {
+          baseUrl: endpoint,
+          deploymentName,
+          authType,
+          enabled: true,
+          lastValidated: Date.now(),
+        },
+      });
+      invalidateSettings();
+    },
+    fetchProviderModels: (providerId: string, options?: { baseUrl?: string; zaiRegion?: string }) =>
+      call('provider.fetchModels', omitUndefined({ providerId, options })) as never,
+    fetchOpenRouterModels: () =>
+      call('provider.fetchModels', { providerId: 'openrouter' }) as never,
+    fetchLiteLLMModels: () => call('provider.fetchModels', { providerId: 'litellm' }) as never,
+    fetchLMStudioModels: () => call('provider.fetchModels', { providerId: 'lmstudio' }) as never,
+    fetchNimModels: () => call('provider.fetchModels', { providerId: 'nim' }) as never,
+    // Bedrock/Vertex model fetches resolve credentials DAEMON-side from the
+    // stored secret — the browser cannot read stored credentials back (the
+    // plaintext reads are blocklisted). Both connect flows save the
+    // credentials immediately before fetching
+    // (useBedrockProviderConnect / useVertexProviderConnect), so the stored
+    // copy is the one this call intends; honoring the `credentials`
+    // argument would require echoing secrets from the daemon, which the
+    // trust boundary forbids. Limitation accepted for the browser shim.
+    fetchBedrockModels: async (_credentials: string | unknown) => {
+      return withModelsArray(
+        (await call('provider.fetchModels', { providerId: 'bedrock' })) as {
+          success?: boolean;
+          models?: unknown[];
+          error?: string;
+        } | null,
+      );
+    },
+    fetchVertexModels: async (_credentials: string | unknown) => {
+      return withModelsArray(
+        (await call('provider.fetchModels', { providerId: 'vertex' })) as {
+          success?: boolean;
+          models?: unknown[];
+          error?: string;
+        } | null,
+      );
+    },
+    // Credential validation for Bedrock/Vertex (Phase 3 M2 T1b §A3): the
+    // JSON document travels ONE-WAY in the request; `provider.
+    // validateCredentials` returns a { valid, error? } verdict with
+    // daemon-side redacted error text and never echoes the document. Used
+    // by the connect flows BEFORE saving — `provider.validateKey` cannot
+    // serve these (document-JSON validators, bypasses the api-key gate).
+    validateBedrockCredentials: (credentials: string | unknown) =>
+      call('provider.validateCredentials', {
+        providerId: 'bedrock',
+        credentials: credentialsJsonOf(credentials),
+      }) as never,
+    validateVertexCredentials: (credentials: string | unknown) =>
+      call('provider.validateCredentials', {
+        providerId: 'vertex',
+        credentials: credentialsJsonOf(credentials),
+      }) as never,
+
+    // ── Bedrock/Vertex credential saves (Phase 3 M2 T1b §A3): one-way
+    //    stores; the returned ApiKeyConfig labels/prefixes derive from the
+    //    locally-held document (mirroring desktop bedrock:save and
+    //    vertex:save output exactly) — never from secret round-trips. ──
+    saveBedrockCredentials: (async (credentials: string | unknown) => {
+      const stored = credentialsJsonOf(credentials);
+      const parsed = JSON.parse(stored) as {
+        authType?: string;
+        apiKey?: string;
+        accessKeyId?: string;
+        secretAccessKey?: string;
+        profileName?: string;
+      };
+      // Desktop bedrock:save field validation (bedrock-handlers.ts).
+      if (parsed.authType === 'apiKey') {
+        if (!(typeof parsed.apiKey === 'string' && parsed.apiKey.length > 0)) {
+          throw new Error('API Key is required');
+        }
+      } else if (parsed.authType === 'accessKeys') {
+        const hasAccessKeyId =
+          typeof parsed.accessKeyId === 'string' && parsed.accessKeyId.length > 0;
+        const hasSecretKey =
+          typeof parsed.secretAccessKey === 'string' && parsed.secretAccessKey.length > 0;
+        if (!hasAccessKeyId || !hasSecretKey) {
+          throw new Error('Access Key ID and Secret Access Key are required');
+        }
+      } else if (parsed.authType === 'profile') {
+        if (!(typeof parsed.profileName === 'string' && parsed.profileName.length > 0)) {
+          throw new Error('Profile name is required');
+        }
+      } else {
+        throw new Error('Invalid authentication type');
+      }
+      await call('secrets.storeBedrockCredentials', { credentials: stored });
+      let label: string;
+      let keyPrefix: string;
+      if (parsed.authType === 'apiKey') {
+        label = 'Bedrock API Key';
+        keyPrefix = `${parsed.apiKey?.substring(0, 8)}...`;
+      } else if (parsed.authType === 'accessKeys') {
+        label = 'AWS Access Keys';
+        keyPrefix = `${parsed.accessKeyId?.substring(0, 8)}...`;
+      } else {
+        label = `AWS Profile: ${parsed.profileName}`;
+        keyPrefix = parsed.profileName ?? '';
+      }
+      return {
+        id: 'local-bedrock',
+        provider: 'bedrock',
+        label,
+        keyPrefix,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+      } as unknown as ApiKeyConfig;
+    }) as AccomplishAPI['saveBedrockCredentials'],
+    saveVertexCredentials: (async (credentials: string | unknown) => {
+      const stored = credentialsJsonOf(credentials);
+      const parsed = JSON.parse(stored) as {
+        projectId?: string;
+        location?: string;
+        authType?: string;
+        serviceAccountJson?: string;
+      };
+      // Desktop vertex:save field validation (providers/vertex.ts).
+      if (!parsed.projectId?.trim()) {
+        throw new Error('Project ID is required');
+      }
+      if (!parsed.location?.trim()) {
+        throw new Error('Location is required');
+      }
+      if (parsed.authType === 'serviceAccount' && !parsed.serviceAccountJson?.trim()) {
+        throw new Error('Service account JSON key is required');
+      }
+      // Vertex credentials ride the standard api-key bucket under 'vertex' —
+      // exactly what desktop vertex:save stores; `provider.fetchModels`
+      // ('vertex') reads the same bucket daemon-side. The SecureStorageAPI
+      // vertex analog of Bedrock's storeBedrockCredentials IS
+      // storeApiKey('vertex', json) — no dedicated vertex-secret RPC exists.
+      await call('secrets.storeApiKey', { provider: 'vertex', apiKey: stored });
+      const label =
+        parsed.authType === 'serviceAccount'
+          ? 'Service Account'
+          : 'Application Default Credentials';
+      return {
+        id: 'local-vertex',
+        provider: 'vertex',
+        label,
+        keyPrefix: `${parsed.projectId} (${parsed.location})`,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+      } as unknown as ApiKeyConfig;
+    }) as AccomplishAPI['saveVertexCredentials'],
+    // getBedrockCredentials / getVertexCredentials stay UNAVAILABLE: their
+    // backing reads return plaintext credential JSON and are
+    // registered-blocklisted (blocklist is binding). No web UI call site
+    // exists today — the connect flows re-derive state from the masked
+    // provider.getSettings snapshot, matching desktop's null-on-absence
+    // semantics.
 
     // ── Native pickers (Phase 2 — host-side zenity dialogs) ──
     pickFolder: () => transport.pickFolder() as Promise<string | null>,
@@ -777,7 +1154,10 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     onDebugLog: (): (() => void) => () => {},
 
     // ── HuggingFace download progress: HF local-server control is a
-    //    Phase 3 port; the subscription never fires until then. ──
+    //    Phase 3 port; the subscription never fires until then. The
+    //    get/setHuggingFaceLocalConfig config methods are likewise
+    //    deferred to M6 (architect decision) and stay unavailable until
+    //    the HF local-server seam ships. ──
     onHuggingFaceDownloadProgress: (): (() => void) => () => {},
 
     // ── Close confirmation: the Electron window-close flow has no browser

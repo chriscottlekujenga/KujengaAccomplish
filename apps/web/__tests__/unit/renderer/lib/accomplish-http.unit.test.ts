@@ -448,6 +448,789 @@ describe('createHttpAccomplishApi', () => {
   });
 });
 
+describe('M2 T1b provider/model-management shim (accomplish-http)', () => {
+  let calls: { method: string; params?: unknown }[];
+  let responses: Map<string, unknown>;
+  let transport: HttpTransport;
+
+  beforeEach(() => {
+    calls = [];
+    responses = new Map();
+    transport = {
+      call: async (method: string, params?: unknown) => {
+        calls.push({ method, params });
+        if (method === 'settings.getAll') {
+          return {
+            app: { theme: 'system', language: 'en', debugMode: false, onboardingComplete: false },
+            notificationsEnabled: true,
+            closeBehavior: 'keep-daemon',
+          };
+        }
+        if (method === 'provider.getSettings') {
+          return responses.get(method) ?? { connectedProviders: {} };
+        }
+        return responses.get(method) ?? null;
+      },
+      openExternal: async () => {},
+      health: async () => ({ ok: true, version: '0.1.0', platform: 'linux' }),
+      clientLog: vi.fn(async () => undefined),
+      cliStatus: async () => ({
+        installed: true,
+        version: '1.14.18',
+        installCommand: 'npm i -g opencode-ai',
+      }),
+      autostartStatus: async () => ({ enabled: false, active: false }),
+      pickFolder: async () => null,
+      pickFiles: async () => [],
+    } as unknown as HttpTransport;
+  });
+
+  function makeApi() {
+    return createHttpAccomplishApi({
+      baseUrl: 'http://127.0.0.1:8123',
+      token: TEST_TOKEN,
+      transport,
+      events: new FakeEventStream() as unknown as GatewayEventStream,
+    });
+  }
+
+  const lastCall = (): { method: string; params?: unknown } => {
+    const last = calls.at(-1);
+    if (!last) {
+      throw new Error('no RPC call recorded');
+    }
+    return last;
+  };
+
+  /** In refetch-asserting tests the recorded tail is [write, refetch] — the
+   *  write is the call before the final getAppSettings refetch. */
+  const writeBeforeRefetch = (): { method: string; params?: unknown } => {
+    const write = calls.at(-2);
+    if (!write) {
+      throw new Error('no write call recorded');
+    }
+    return write;
+  };
+
+  /** Write methods must invalidate the settings snapshot cache: after the
+   *  write, the next getAppSettings() refetches settings.getAll. */
+  async function expectSettingsRefetch(
+    writer: (api: ReturnType<typeof makeApi>) => Promise<void>,
+  ): Promise<void> {
+    const api = makeApi();
+    await api.getAppSettings();
+    const before = calls.filter((c) => c.method === 'settings.getAll').length;
+    await writer(api);
+    await api.getAppSettings();
+    const after = calls.filter((c) => c.method === 'settings.getAll').length;
+    expect(after).toBe(before + 1);
+  }
+
+  // ── A. provider-configs ────────────────────────────────────────────────
+
+  it('getOpenAiBaseUrl reads the daemon setting', async () => {
+    responses.set('settings.getOpenAiBaseUrl', 'https://proxy.example.com/v1');
+    const api = makeApi();
+    await expect(api.getOpenAiBaseUrl()).resolves.toBe('https://proxy.example.com/v1');
+    expect(lastCall()).toEqual({ method: 'settings.getOpenAiBaseUrl', params: undefined });
+  });
+
+  it('setOpenAiBaseUrl writes through settings and invalidates the cache', async () => {
+    await expectSettingsRefetch((api) => api.setOpenAiBaseUrl('https://new.example.com/v1'));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'settings.setOpenAiBaseUrl',
+      params: { baseUrl: 'https://new.example.com/v1' },
+    });
+  });
+
+  it('getOllamaConfig passes the daemon config shape through', async () => {
+    const config = { baseUrl: 'http://127.0.0.1:11434', enabled: true, models: [] };
+    responses.set('settings.getOllamaConfig', config);
+    const api = makeApi();
+    await expect(api.getOllamaConfig()).resolves.toEqual(config);
+    expect(lastCall()).toEqual({ method: 'settings.getOllamaConfig', params: undefined });
+  });
+
+  it('setOllamaConfig writes the config and invalidates the cache', async () => {
+    const config = { baseUrl: 'http://127.0.0.1:11434', enabled: true };
+    const api = makeApi();
+    await api.setOllamaConfig(config as never);
+    expect(lastCall()).toEqual({ method: 'settings.setOllamaConfig', params: { config } });
+    await expectSettingsRefetch((api) => api.setOllamaConfig(null));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'settings.setOllamaConfig',
+      params: { config: null },
+    });
+  });
+
+  it('getLiteLLMConfig passes the daemon config shape through', async () => {
+    const config = { baseUrl: 'http://127.0.0.1:4000', enabled: true, models: [] };
+    responses.set('settings.getLiteLLMConfig', config);
+    const api = makeApi();
+    await expect(api.getLiteLLMConfig()).resolves.toEqual(config);
+    expect(lastCall()).toEqual({ method: 'settings.getLiteLLMConfig', params: undefined });
+  });
+
+  it('setLiteLLMConfig writes the config and invalidates the cache', async () => {
+    const config = { baseUrl: 'http://127.0.0.1:4000', enabled: true };
+    const api = makeApi();
+    await api.setLiteLLMConfig(config as never);
+    expect(lastCall()).toEqual({ method: 'settings.setLiteLLMConfig', params: { config } });
+    await expectSettingsRefetch((api) => api.setLiteLLMConfig(null));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'settings.setLiteLLMConfig',
+      params: { config: null },
+    });
+  });
+
+  it('getLMStudioConfig passes the daemon config shape through', async () => {
+    const config = { baseUrl: 'http://127.0.0.1:1234', enabled: true };
+    responses.set('settings.getLMStudioConfig', config);
+    const api = makeApi();
+    await expect(api.getLMStudioConfig()).resolves.toEqual(config);
+    expect(lastCall()).toEqual({ method: 'settings.getLMStudioConfig', params: undefined });
+  });
+
+  it('setLMStudioConfig writes the config and invalidates the cache', async () => {
+    const config = { baseUrl: 'http://127.0.0.1:1234', enabled: true };
+    const api = makeApi();
+    await api.setLMStudioConfig(config as never);
+    expect(lastCall()).toEqual({ method: 'settings.setLMStudioConfig', params: { config } });
+    await expectSettingsRefetch((api) => api.setLMStudioConfig(null));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'settings.setLMStudioConfig',
+      params: { config: null },
+    });
+  });
+
+  it('getAzureFoundryConfig passes the daemon config shape through', async () => {
+    const config = {
+      baseUrl: 'https://foundry.example.com',
+      deploymentName: 'gpt-4o',
+      authType: 'api-key',
+      enabled: true,
+    };
+    responses.set('settings.getAzureFoundryConfig', config);
+    const api = makeApi();
+    await expect(api.getAzureFoundryConfig()).resolves.toEqual(config);
+    expect(lastCall()).toEqual({ method: 'settings.getAzureFoundryConfig', params: undefined });
+  });
+
+  it('setAzureFoundryConfig (direct setter) passes the config through and invalidates', async () => {
+    const config = {
+      baseUrl: 'https://foundry.example.com',
+      deploymentName: 'gpt-4o',
+      authType: 'entra-id',
+      enabled: true,
+    };
+    const api = makeApi();
+    await api.setAzureFoundryConfig(config as never);
+    expect(lastCall()).toEqual({ method: 'settings.setAzureFoundryConfig', params: { config } });
+    await expectSettingsRefetch((api) => api.setAzureFoundryConfig(null));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'settings.setAzureFoundryConfig',
+      params: { config: null },
+    });
+  });
+
+  // ── B. model-discovery ─────────────────────────────────────────────────
+
+  it('testOllamaConnection maps to provider.testConnection with the ollama id', async () => {
+    responses.set('provider.testConnection', { success: true, models: [] });
+    const api = makeApi();
+    await expect(api.testOllamaConnection('http://127.0.0.1:11434')).resolves.toEqual({
+      success: true,
+      models: [],
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: { providerId: 'ollama', url: 'http://127.0.0.1:11434' },
+    });
+  });
+
+  it('testLiteLLMConnection sends the key only when provided', async () => {
+    responses.set('provider.testConnection', { success: true, models: [] });
+    const api = makeApi();
+    await api.testLiteLLMConnection('http://127.0.0.1:4000', 'litellm-key-1');
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: { providerId: 'litellm', url: 'http://127.0.0.1:4000', apiKey: 'litellm-key-1' },
+    });
+    await api.testLiteLLMConnection('http://127.0.0.1:4000');
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: { providerId: 'litellm', url: 'http://127.0.0.1:4000' },
+    });
+  });
+
+  it('testLMStudioConnection maps to provider.testConnection with the lmstudio id', async () => {
+    const api = makeApi();
+    await api.testLMStudioConnection('http://127.0.0.1:1234');
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: { providerId: 'lmstudio', url: 'http://127.0.0.1:1234' },
+    });
+  });
+
+  it('testNimConnection maps to provider.testConnection with the pre-store key', async () => {
+    responses.set('provider.testConnection', { success: true, models: [] });
+    const api = makeApi();
+    await expect(
+      api.testNimConnection('https://integrate.api.nvidia.com/v1', 'nim-key-1'),
+    ).resolves.toEqual({ success: true, models: [] });
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: {
+        providerId: 'nim',
+        url: 'https://integrate.api.nvidia.com/v1',
+        apiKey: 'nim-key-1',
+      },
+    });
+  });
+
+  it('testCustomConnection omits the apiKey key when the flow has none', async () => {
+    responses.set('provider.testConnection', { success: true });
+    const api = makeApi();
+    await api.testCustomConnection('http://127.0.0.1:8080/v1', 'custom-key-1');
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: { providerId: 'custom', url: 'http://127.0.0.1:8080/v1', apiKey: 'custom-key-1' },
+    });
+    await api.testCustomConnection('http://127.0.0.1:8080/v1');
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: { providerId: 'custom', url: 'http://127.0.0.1:8080/v1' },
+    });
+  });
+
+  it('testAzureFoundryConnection maps the full azure-foundry option set', async () => {
+    responses.set('provider.testConnection', { success: true });
+    const api = makeApi();
+    await api.testAzureFoundryConnection({
+      endpoint: 'https://foundry.example.com',
+      deploymentName: 'gpt-4o',
+      authType: 'api-key',
+      apiKey: 'az-key-1',
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: {
+        providerId: 'azure-foundry',
+        endpoint: 'https://foundry.example.com',
+        deploymentName: 'gpt-4o',
+        authType: 'api-key',
+        apiKey: 'az-key-1',
+      },
+    });
+    await api.testAzureFoundryConnection({
+      endpoint: 'https://foundry.example.com',
+      deploymentName: 'gpt-4o',
+      authType: 'entra-id',
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.testConnection',
+      params: {
+        providerId: 'azure-foundry',
+        endpoint: 'https://foundry.example.com',
+        deploymentName: 'gpt-4o',
+        authType: 'entra-id',
+      },
+    });
+  });
+
+  it('saveAzureFoundryConfig sends the exact 2-call save sequence desktop does', async () => {
+    const api = makeApi();
+    await api.saveAzureFoundryConfig({
+      endpoint: 'https://foundry.example.com',
+      deploymentName: 'gpt-4o',
+      authType: 'api-key',
+      apiKey: 'az-key-1',
+    });
+    expect(calls.slice(-2)).toEqual([
+      {
+        method: 'secrets.storeApiKey',
+        params: { provider: 'azure-foundry', apiKey: 'az-key-1' },
+      },
+      {
+        method: 'settings.setAzureFoundryConfig',
+        params: {
+          config: {
+            baseUrl: 'https://foundry.example.com',
+            deploymentName: 'gpt-4o',
+            authType: 'api-key',
+            enabled: true,
+            lastValidated: expect.any(Number),
+          },
+        },
+      },
+    ]);
+  });
+
+  it('saveAzureFoundryConfig skips the key store when authType is entra-id', async () => {
+    const api = makeApi();
+    await api.saveAzureFoundryConfig({
+      endpoint: 'https://foundry.example.com',
+      deploymentName: 'gpt-4o',
+      authType: 'entra-id',
+    });
+    expect(lastCall()).toEqual({
+      method: 'settings.setAzureFoundryConfig',
+      params: {
+        config: {
+          baseUrl: 'https://foundry.example.com',
+          deploymentName: 'gpt-4o',
+          authType: 'entra-id',
+          enabled: true,
+          lastValidated: expect.any(Number),
+        },
+      },
+    });
+    expect(calls.some((c) => c.method === 'secrets.storeApiKey')).toBe(false);
+  });
+
+  it('saveAzureFoundryConfig validates endpoint/deploymentName/authType at the boundary', async () => {
+    const api = makeApi();
+    await expect(
+      api.saveAzureFoundryConfig({
+        endpoint: ' ',
+        deploymentName: 'gpt-4o',
+        authType: 'api-key',
+      }),
+    ).rejects.toThrow(/endpoint is required/);
+    await expect(
+      api.saveAzureFoundryConfig({
+        endpoint: 'https://foundry.example.com',
+        deploymentName: ' ',
+        authType: 'api-key',
+      }),
+    ).rejects.toThrow(/deploymentName is required/);
+    await expect(
+      api.saveAzureFoundryConfig({
+        endpoint: 'https://foundry.example.com',
+        deploymentName: 'gpt-4o',
+        authType: 'bogus' as never,
+      }),
+    ).rejects.toThrow(/authType must be api-key or entra-id/);
+    await expect(
+      api.saveAzureFoundryConfig({
+        endpoint: 'not a url',
+        deploymentName: 'gpt-4o',
+        authType: 'api-key',
+      }),
+    ).rejects.toThrow(/Invalid endpoint URL format/);
+    expect(calls).toEqual([]);
+  });
+
+  it('saveAzureFoundryConfig invalidates the settings cache after the config write', async () => {
+    await expectSettingsRefetch((api) =>
+      api.saveAzureFoundryConfig({
+        endpoint: 'https://foundry.example.com',
+        deploymentName: 'gpt-4o',
+        authType: 'entra-id',
+      }),
+    );
+  });
+
+  it('fetchProviderModels passes the provider id and options through', async () => {
+    responses.set('provider.fetchModels', { success: true, models: [{ id: 'm1', name: 'M1' }] });
+    const api = makeApi();
+    await api.fetchProviderModels('zai', { zaiRegion: 'international' });
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'zai', options: { zaiRegion: 'international' } },
+    });
+    await api.fetchProviderModels('openai');
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'openai' },
+    });
+  });
+
+  it('fetchOpenRouterModels targets the openrouter model list without options', async () => {
+    responses.set('provider.fetchModels', {
+      success: true,
+      models: [{ id: 'or/m', name: 'M', provider: 'openrouter', contextLength: 8192 }],
+    });
+    const api = makeApi();
+    await expect(api.fetchOpenRouterModels()).resolves.toEqual({
+      success: true,
+      models: [{ id: 'or/m', name: 'M', provider: 'openrouter', contextLength: 8192 }],
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'openrouter' },
+    });
+  });
+
+  it('fetchLiteLLMModels targets the daemon-side litellm config + stored key', async () => {
+    responses.set('provider.fetchModels', { success: true, models: [] });
+    const api = makeApi();
+    await expect(api.fetchLiteLLMModels()).resolves.toEqual({ success: true, models: [] });
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'litellm' },
+    });
+  });
+
+  it('fetchLMStudioModels targets the daemon-side lmstudio config', async () => {
+    const api = makeApi();
+    await api.fetchLMStudioModels();
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'lmstudio' },
+    });
+  });
+
+  it('fetchNimModels targets the daemon-side nim config + stored key', async () => {
+    const api = makeApi();
+    await api.fetchNimModels();
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'nim' },
+    });
+  });
+
+  it('fetchBedrockModels uses stored credentials daemon-side and normalizes models to an array', async () => {
+    const credentialsJson = JSON.stringify({ authType: 'apiKey', apiKey: 'br-key' });
+    responses.set('provider.fetchModels', {
+      success: true,
+      models: [{ id: 'anthropic.claude', name: 'Claude', provider: 'bedrock' }],
+    });
+    const api = makeApi();
+    const result = await api.fetchBedrockModels(credentialsJson);
+    expect(result).toEqual({
+      success: true,
+      models: [{ id: 'anthropic.claude', name: 'Claude', provider: 'bedrock' }],
+    });
+    // The credentials argument must NOT travel — the daemon resolves its
+    // stored copy; only the provider id goes on the wire.
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'bedrock' },
+    });
+  });
+
+  it('fetchBedrockModels degrades a failed/absent fetch to models: [] + error', async () => {
+    responses.set('provider.fetchModels', {
+      success: false,
+      error: 'No API key found for this provider',
+    });
+    const api = makeApi();
+    await expect(api.fetchBedrockModels('{}')).resolves.toEqual({
+      success: false,
+      models: [],
+      error: 'No API key found for this provider',
+    });
+    responses.set('provider.fetchModels', null);
+    await expect(api.fetchBedrockModels('{}')).resolves.toEqual({
+      success: false,
+      models: [],
+    });
+  });
+
+  it('fetchVertexModels uses stored credentials daemon-side and normalizes models to an array', async () => {
+    responses.set('provider.fetchModels', {
+      success: true,
+      models: [{ id: 'vertex/google/gemini-2.5-pro', name: 'Gemini', provider: 'vertex' }],
+    });
+    const api = makeApi();
+    const credentialsJson = JSON.stringify({ authType: 'adc', projectId: 'p', location: 'global' });
+    await expect(api.fetchVertexModels(credentialsJson)).resolves.toEqual({
+      success: true,
+      models: [{ id: 'vertex/google/gemini-2.5-pro', name: 'Gemini', provider: 'vertex' }],
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.fetchModels',
+      params: { providerId: 'vertex' },
+    });
+  });
+
+  it('validateBedrockCredentials sends the credential document one-way to provider.validateCredentials', async () => {
+    const document = { authType: 'apiKey', apiKey: 'br-key', region: 'us-east-1' };
+    responses.set('provider.validateCredentials', { valid: true });
+    const api = makeApi();
+    await expect(api.validateBedrockCredentials(document as never)).resolves.toEqual({
+      valid: true,
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.validateCredentials',
+      params: { providerId: 'bedrock', credentials: JSON.stringify(document) },
+    });
+  });
+
+  it('validateVertexCredentials sends a verbatim JSON document one-way', async () => {
+    const document = JSON.stringify({ authType: 'adc', projectId: 'p', location: 'global' });
+    responses.set('provider.validateCredentials', { valid: false, error: 'denied' });
+    const api = makeApi();
+    await expect(api.validateVertexCredentials(document)).resolves.toEqual({
+      valid: false,
+      error: 'denied',
+    });
+    expect(lastCall()).toEqual({
+      method: 'provider.validateCredentials',
+      params: { providerId: 'vertex', credentials: document },
+    });
+  });
+
+  // ── C. api-keys / secrets (masked reads + one-way writes) ──────────────
+
+  it('getApiKeys maps the masked record to existing-only entries with prefixes', async () => {
+    responses.set('secrets.listApiKeys', {
+      anthropic: { exists: true, prefix: 'sk-a' },
+      openai: { exists: false },
+      litellm: { exists: true },
+    });
+    const api = makeApi();
+    await expect(api.getApiKeys()).resolves.toEqual([
+      { id: 'anthropic', provider: 'anthropic', exists: true, prefix: 'sk-a' },
+      { id: 'litellm', provider: 'litellm', exists: true },
+    ]);
+    expect(lastCall()).toEqual({ method: 'secrets.listApiKeys', params: undefined });
+  });
+
+  it('getAllApiKeys returns the masked record shape verbatim', async () => {
+    const masked = {
+      anthropic: { exists: true, prefix: 'sk-a' },
+      openai: { exists: false },
+    };
+    responses.set('secrets.listApiKeys', masked);
+    const api = makeApi();
+    await expect(api.getAllApiKeys()).resolves.toEqual(masked);
+    expect(lastCall()).toEqual({ method: 'secrets.listApiKeys', params: undefined });
+  });
+
+  it('setApiKey stores under the desktop default provider (anthropic)', async () => {
+    const api = makeApi();
+    await api.setApiKey('sk-ant-newkey');
+    expect(lastCall()).toEqual({
+      method: 'secrets.storeApiKey',
+      params: { provider: 'anthropic', apiKey: 'sk-ant-newkey' },
+    });
+  });
+
+  it('removeApiKey deletes by provider id', async () => {
+    const api = makeApi();
+    await api.removeApiKey('litellm');
+    expect(lastCall()).toEqual({
+      method: 'secrets.deleteApiKey',
+      params: { provider: 'litellm' },
+    });
+  });
+
+  it('validateApiKey validates the desktop default provider key', async () => {
+    responses.set('provider.validateKey', { valid: true });
+    const api = makeApi();
+    await expect(api.validateApiKey('sk-ant-valid')).resolves.toEqual({ valid: true });
+    expect(lastCall()).toEqual({
+      method: 'provider.validateKey',
+      params: { providerId: 'anthropic', key: 'sk-ant-valid' },
+    });
+  });
+
+  it('validateApiKeyForProvider passes the provider and options through', async () => {
+    responses.set('provider.validateKey', { valid: true });
+    const api = makeApi();
+    await api.validateApiKeyForProvider('zai', 'zai-key-1', { zaiRegion: 'international' });
+    expect(lastCall()).toEqual({
+      method: 'provider.validateKey',
+      params: { providerId: 'zai', key: 'zai-key-1', options: { zaiRegion: 'international' } },
+    });
+    await api.validateApiKeyForProvider('openrouter', 'or-key-1');
+    expect(lastCall()).toEqual({
+      method: 'provider.validateKey',
+      params: { providerId: 'openrouter', key: 'or-key-1' },
+    });
+  });
+
+  it('clearApiKey deletes only the default-provider key (desktop api-key:clear parity)', async () => {
+    const api = makeApi();
+    await api.clearApiKey();
+    expect(lastCall()).toEqual({
+      method: 'secrets.deleteApiKey',
+      params: { provider: 'anthropic' },
+    });
+    expect(calls.some((c) => c.method === 'secrets.clear')).toBe(false);
+  });
+
+  // ── D. provider-settings writes ────────────────────────────────────────
+
+  it('setActiveProvider passes a literal provider id or null and invalidates', async () => {
+    await expectSettingsRefetch((api) => api.setActiveProvider('anthropic' as never));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'provider.setActive',
+      params: { providerId: 'anthropic' },
+    });
+    const api = makeApi();
+    await api.setActiveProvider(null);
+    expect(lastCall()).toEqual({ method: 'provider.setActive', params: { providerId: null } });
+  });
+
+  it('getConnectedProvider derives from the masked provider.getSettings snapshot', async () => {
+    const connected = { providerId: 'anthropic', connectionStatus: 'connected' };
+    responses.set('provider.getSettings', {
+      connectedProviders: { anthropic: connected },
+    });
+    const api = makeApi();
+    await expect(api.getConnectedProvider('anthropic')).resolves.toEqual(connected);
+    expect(lastCall()).toEqual({ method: 'provider.getSettings', params: undefined });
+    await expect(api.getConnectedProvider('vertex')).resolves.toBeNull();
+  });
+
+  it('setConnectedProvider writes the connected provider one-way and invalidates', async () => {
+    const provider = { providerId: 'anthropic', connectionStatus: 'connected' };
+    await expectSettingsRefetch((api) => api.setConnectedProvider('anthropic', provider as never));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'provider.setConnected',
+      params: { providerId: 'anthropic', provider },
+    });
+  });
+
+  it('removeConnectedProvider deletes the connection entry and invalidates', async () => {
+    await expectSettingsRefetch((api) => api.removeConnectedProvider('vertex' as never));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'provider.removeConnected',
+      params: { providerId: 'vertex' },
+    });
+  });
+
+  it('updateProviderModel writes the model id (null included) and invalidates', async () => {
+    await expectSettingsRefetch((api) => api.updateProviderModel('openai' as never, 'o3' as never));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'provider.updateModel',
+      params: { providerId: 'openai', modelId: 'o3' },
+    });
+    const api = makeApi();
+    await api.updateProviderModel('openai' as never, null);
+    expect(lastCall()).toEqual({
+      method: 'provider.updateModel',
+      params: { providerId: 'openai', modelId: null },
+    });
+  });
+
+  it('set/getProviderDebugMode round-trip through the dedicated RPCs', async () => {
+    responses.set('provider.getDebugMode', true);
+    await expectSettingsRefetch((api) => api.setProviderDebugMode(true));
+    expect(writeBeforeRefetch()).toEqual({
+      method: 'provider.setDebugMode',
+      params: { enabled: true },
+    });
+    const api = makeApi();
+    await expect(api.getProviderDebugMode()).resolves.toBe(true);
+    expect(lastCall()).toEqual({ method: 'provider.getDebugMode', params: undefined });
+  });
+
+  it('saveBedrockCredentials stores one-way and derives the desktop ApiKeyConfig locally', async () => {
+    const api = makeApi();
+    const credentials = { authType: 'apiKey', apiKey: 'br-live-key-1', region: 'us-east-1' };
+    const result = (await api.saveBedrockCredentials(credentials as never)) as ApiKeyConfig;
+    expect(lastCall()).toEqual({
+      method: 'secrets.storeBedrockCredentials',
+      params: { credentials: JSON.stringify(credentials) },
+    });
+    expect(result).toMatchObject({
+      id: 'local-bedrock',
+      provider: 'bedrock',
+      label: 'Bedrock API Key',
+      keyPrefix: 'br-live-...',
+      isActive: true,
+    });
+  });
+
+  it('saveBedrockCredentials maps accessKeys and profile labels/prefixes like desktop', async () => {
+    const api = makeApi();
+    const accessKeys = {
+      authType: 'accessKeys',
+      accessKeyId: 'AKIAIOSFODNN7',
+      secretAccessKey: 's3cr3t',
+    };
+    const accessResult = (await api.saveBedrockCredentials(accessKeys as never)) as ApiKeyConfig;
+    expect(accessResult).toMatchObject({ label: 'AWS Access Keys', keyPrefix: 'AKIAIOSF...' });
+    const profile = { authType: 'profile', profileName: 'work-profile', region: 'us-east-1' };
+    const profileResult = (await api.saveBedrockCredentials(profile as never)) as ApiKeyConfig;
+    expect(profileResult).toMatchObject({
+      label: 'AWS Profile: work-profile',
+      keyPrefix: 'work-profile',
+    });
+  });
+
+  it('saveBedrockCredentials rejects malformed documents like desktop without any RPC', async () => {
+    const api = makeApi();
+    await expect(
+      api.saveBedrockCredentials({ authType: 'apiKey', apiKey: '' } as never),
+    ).rejects.toThrow('API Key is required');
+    await expect(
+      api.saveBedrockCredentials({ authType: 'accessKeys', accessKeyId: 'x' } as never),
+    ).rejects.toThrow('Access Key ID and Secret Access Key are required');
+    await expect(
+      api.saveBedrockCredentials({ authType: 'profile', profileName: '' } as never),
+    ).rejects.toThrow('Profile name is required');
+    await expect(api.saveBedrockCredentials({ authType: 'bogus' } as never)).rejects.toThrow(
+      'Invalid authentication type',
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it('saveVertexCredentials rides the standard api-key bucket and derives the desktop ApiKeyConfig', async () => {
+    const api = makeApi();
+    const credentials = {
+      authType: 'serviceAccount',
+      projectId: 'proj-1',
+      location: 'global',
+      serviceAccountJson: '{}',
+    };
+    const result = (await api.saveVertexCredentials(credentials as never)) as ApiKeyConfig;
+    expect(lastCall()).toEqual({
+      method: 'secrets.storeApiKey',
+      params: { provider: 'vertex', apiKey: JSON.stringify(credentials) },
+    });
+    expect(result).toMatchObject({
+      id: 'local-vertex',
+      provider: 'vertex',
+      label: 'Service Account',
+      keyPrefix: 'proj-1 (global)',
+      isActive: true,
+    });
+    const adc = { authType: 'adc', projectId: 'proj-2', location: 'us-central1' };
+    const adcResult = (await api.saveVertexCredentials(adc as never)) as ApiKeyConfig;
+    expect(adcResult).toMatchObject({ label: 'Application Default Credentials' });
+  });
+
+  it('saveVertexCredentials rejects malformed documents like desktop without any RPC', async () => {
+    const api = makeApi();
+    await expect(
+      api.saveVertexCredentials({ authType: 'serviceAccount', location: 'global' } as never),
+    ).rejects.toThrow('Project ID is required');
+    await expect(
+      api.saveVertexCredentials({ projectId: 'p', location: ' ' } as never),
+    ).rejects.toThrow('Location is required');
+    await expect(
+      api.saveVertexCredentials({
+        projectId: 'p',
+        location: 'global',
+        authType: 'serviceAccount',
+        serviceAccountJson: ' ',
+      } as never),
+    ).rejects.toThrow('Service account JSON key is required');
+    expect(calls).toEqual([]);
+  });
+
+  it('keeps plaintext credential reads and deferred HuggingFace config loud-throwers', () => {
+    const api = makeApi() as unknown as Record<string, () => unknown>;
+    for (const method of [
+      'getApiKey',
+      'getBedrockCredentials',
+      'getVertexCredentials',
+      'getHuggingFaceLocalConfig',
+      'setHuggingFaceLocalConfig',
+      'detectVertexProject',
+      'listVertexProjects',
+    ]) {
+      expect(() => api[method]()).toThrow(HttpShimNotSupportedError);
+      expect(() => api[method]()).toThrow(new RegExp(method));
+    }
+  });
+});
+
 describe('getAccomplish fallback chain', () => {
   // The web test setup installs a global window.accomplish mock for the
   // Electron path; these tests exercise the gateway fallback, so it is

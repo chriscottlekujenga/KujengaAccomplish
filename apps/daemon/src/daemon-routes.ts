@@ -33,6 +33,8 @@ import {
   testOllamaConnection,
   validateApiKey,
   validateAzureFoundry,
+  validateBedrockCredentials,
+  validateVertexCredentials,
 } from '@accomplish_ai/agent-core';
 import type { AccomplishRuntime, StorageDeps } from '@accomplish_ai/agent-core';
 import type {
@@ -139,6 +141,61 @@ interface ProviderRouteServices {
 export function redactProviderError(message: string, apiKey?: string): string {
   const withoutKey = apiKey ? message.split(apiKey).join('[REDACTED]') : message;
   return redact(withoutKey);
+}
+
+/** JSON fields inside Bedrock/Vertex credential documents whose values are
+ *  live secret material (camelCase + gcloud-style snake_case variants). */
+const SECRET_CREDENTIAL_FIELDS = [
+  'apiKey',
+  'secretAccessKey',
+  'accessKeyId',
+  'sessionToken',
+  'serviceAccountJson',
+  'privateKey',
+  'private_key',
+] as const;
+
+function collectSecretCredentialParts(
+  node: Record<string, unknown>,
+  parts: string[],
+  depth = 0,
+): void {
+  for (const field of SECRET_CREDENTIAL_FIELDS) {
+    const value = node[field];
+    if (typeof value === 'string' && value.trim().length > 0 && !parts.includes(value)) {
+      parts.push(value);
+    }
+  }
+  // Service-account credentials embed a second JSON document whose
+  // private_key is the crown jewel — dig one level deeper for it.
+  const serviceAccountJson = node.serviceAccountJson;
+  if (depth === 0 && typeof serviceAccountJson === 'string') {
+    const inner = safeParseJson<Record<string, unknown>>(serviceAccountJson);
+    if (inner.success) {
+      collectSecretCredentialParts(inner.data, parts, depth + 1);
+    }
+  }
+}
+
+/**
+ * Bedrock/Vertex counterpart of `redactProviderError` (Phase 3 M2 §A3):
+ * validation happens BEFORE the credentials are ever stored, so the
+ * credentials travel in the REQUEST and may never echo back — even inside
+ * an AWS/GCP error message. Exact-substring redaction covers every
+ * secret-shaped field of the credential document; the pattern pass catches
+ * credential-shaped strings the SDKs interpolate.
+ */
+export function redactCredentialError(message: string, credentialsJson: string): string {
+  const parts: string[] = [];
+  const parsed = safeParseJson<Record<string, unknown>>(credentialsJson);
+  if (parsed.success) {
+    collectSecretCredentialParts(parsed.data, parts);
+  }
+  let redactedMessage = message;
+  for (const secret of parts) {
+    redactedMessage = redactedMessage.split(secret).join('[REDACTED]');
+  }
+  return redact(redactedMessage);
 }
 
 const PROVIDER_TEST_URL_REQUIRED = 'URL is required for this provider';
@@ -1256,6 +1313,32 @@ export function registerRpcMethods(services: RouteServices): void {
         settingsService,
         openAiOauthManager,
       });
+    }),
+  );
+
+  // Bedrock/Vertex credential validation (Phase 3 M2 T1b §A3). The
+  // provider-connect UI validates credentials BEFORE storing them, so the
+  // plaintext JSON travels one-way in the REQUEST; the response carries a
+  // validity verdict with redacted error text only and NEVER echoes the
+  // credential document. `provider.validateKey` cannot serve these because
+  // agent-core's Bedrock/Vertex validators are document-JSON based and
+  // bypass the api-key provider gate entirely.
+  const providerValidateCredentialsSchema = z.object({
+    providerId: z.enum(['bedrock', 'vertex']),
+    credentials: z.string().min(1),
+  });
+  rpc.registerMethod(
+    'provider.validateCredentials',
+    safeHandler(async (params) => {
+      const v = validate(providerValidateCredentialsSchema, params);
+      const result =
+        v.providerId === 'bedrock'
+          ? await validateBedrockCredentials(v.credentials)
+          : await validateVertexCredentials(v.credentials);
+      if (result.error) {
+        return { valid: false, error: redactCredentialError(result.error, v.credentials) };
+      }
+      return result;
     }),
   );
 

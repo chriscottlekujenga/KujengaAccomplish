@@ -105,12 +105,28 @@ describe('checkMethodPolicy', () => {
     expect(RPC_METHOD_ALLOWLIST).not.toContain('settings.getNimConfig');
   });
 
+  it('authors the M2 T1b bedrock/vertex credential flows with paired limits', () => {
+    // provider.validateCredentials: the plaintext credential JSON travels
+    // one-way in the REQUEST; the response carries only { valid, error? }
+    // with daemon-side redaction. secrets.storeBedrockCredentials: one-way
+    // void write like storeApiKey. Neither plaintext read sibling is (or
+    // ever becomes) allowlisted.
+    expect(RPC_METHOD_ALLOWLIST).toContain('provider.validateCredentials');
+    expect(RPC_METHOD_ALLOWLIST).toContain('secrets.storeBedrockCredentials');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.getBedrockCredentials');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.getVertexCredentials');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.storeVertexCredentials');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.clear');
+  });
+
   it('pins the allowlist count (M2 tripwire — every addition needs §5.4 tests)', () => {
     // 62 M1 baseline + 21 M2 provider/model-management + masked-listing
-    // entries (Phase 3 M2 T1a). This pin is deliberate: growing it further
-    // requires the §5.4 expansion policy — documented response shape,
-    // scrubber/no-secret-field proof, paired authorization + redaction tests.
-    expect(RPC_METHOD_ALLOWLIST).toHaveLength(83);
+    // entries (Phase 3 M2 T1a) + 2 T1b bedrock/vertex credential entries
+    // (provider.validateCredentials + secrets.storeBedrockCredentials).
+    // This pin is deliberate: growing it further requires the §5.4
+    // expansion policy — documented response shape, scrubber/no-secret-field
+    // proof, paired authorization + redaction tests.
+    expect(RPC_METHOD_ALLOWLIST).toHaveLength(85);
     expect(RPC_METHOD_BLOCKLIST).toHaveLength(7);
   });
 

@@ -219,6 +219,22 @@ describe('gateway universal response scrubbing', () => {
             valid: true,
             apiKey: 'sk-ant-VALIDATE-LEAK-FIELD',
           },
+          'provider.validateCredentials': {
+            valid: true,
+            credentials: { authType: 'accessKeys', apiKey: 'sk-bedrock-VALIDATE-LEAK' },
+            apiKey: 'sk-vertex-VALIDATE-LEAK-FIELD',
+            secretAccessKey: 'sk-accesskey-VALIDATE-LEAK-FIELD',
+            serviceAccountJson: 'sk-serviceaccount-VALIDATE-LEAK-FIELD',
+          },
+          'secrets.storeBedrockCredentials': {
+            ok: true,
+            echo: {
+              authType: 'accessKeys',
+              secretAccessKey: 'sk-bedrock-STORE-LEAK-FIELD',
+              sessionToken: 'sk-token-STORE-LEAK-FIELD',
+            },
+            apiKey: 'sk-top-STORE-LEAK-FIELD',
+          },
           'provider.testConnection': {
             success: true,
             models: [{ id: 'llama3', name: 'llama3', token: 'field-scrub-me' }],
@@ -275,6 +291,41 @@ describe('gateway universal response scrubbing', () => {
       expect(json).not.toContain('"token"');
       expect(json).toContain('"id":"llama3"');
     });
+
+    // Phase 3 M2 T1b §A3 (echo protection): the validate/store credential
+    // methods take a plaintext document one-way in the REQUEST. A daemon
+    // regression echoing credential material into key-SHAPED response
+    // fields must hit the universal scrubber; error TEXT redaction is the
+    // daemon's own contract (tested in the daemon suite).
+    it('scrubs echoed credential fields out of provider.validateCredentials responses', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'provider.validateCredentials', {
+        providerId: 'bedrock',
+        credentials: '{"authType":"apiKey","apiKey":"x"}',
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('sk-bedrock-VALIDATE-LEAK');
+      expect(json).not.toContain('sk-vertex-VALIDATE-LEAK-FIELD');
+      expect(json).not.toContain('sk-accesskey-VALIDATE-LEAK-FIELD');
+      expect(json).not.toContain('sk-serviceaccount-VALIDATE-LEAK-FIELD');
+      expect(json).not.toContain('"apiKey"');
+      expect(json).not.toContain('"secretAccessKey"');
+      expect(json).not.toContain('"serviceAccountJson"');
+      const result = body.result as Record<string, unknown>;
+      expect(result.valid).toBe(true);
+    });
+
+    it('scrubs echoed credential fields out of secrets.storeBedrockCredentials responses', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'secrets.storeBedrockCredentials', {
+        credentials: '{"authType":"accessKeys","accessKeyId":"x"}',
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('sk-bedrock-STORE-LEAK-FIELD');
+      expect(json).not.toContain('sk-token-STORE-LEAK-FIELD');
+      expect(json).not.toContain('sk-top-STORE-LEAK-FIELD');
+      expect(json).not.toContain('"apiKey"');
+      expect(json).not.toContain('"secretAccessKey"');
+      expect(json).not.toContain('"sessionToken"');
+    });
   });
 
   describe('M2 secret-bearing request params never reach the host log (§5.4(d))', () => {
@@ -329,6 +380,24 @@ describe('gateway universal response scrubbing', () => {
           id: 1,
           method: 'provider.validateKey',
           params: { providerId: 'anthropic', key: LIVE_VALIDATE_KEY },
+        }),
+      });
+      expect(res.status).toBe(200);
+      assertNoSecretKeys(lines, [LIVE_TEST_KEY, LIVE_VALIDATE_KEY]);
+    });
+
+    it('provider.validateCredentials params (plaintext credential document) are not logged', async () => {
+      const res = await fetch(`http://127.0.0.1:${logGateway.port}/rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'provider.validateCredentials',
+          params: {
+            providerId: 'bedrock',
+            credentials: JSON.stringify({ authType: 'apiKey', apiKey: LIVE_VALIDATE_KEY }),
+          },
         }),
       });
       expect(res.status).toBe(200);

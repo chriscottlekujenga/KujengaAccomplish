@@ -96,6 +96,11 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'provider.testConnection',
   'provider.fetchModels',
   'provider.validateKey',
+  // Bedrock/Vertex credential validation (Phase 3 M2 T1b §A3): the
+  // plaintext credential document travels one-way in the REQUEST; the
+  // response is a { valid, error? } verdict with daemon-side redacted
+  // error text — the document itself never echoes back.
+  'provider.validateCredentials',
   // Workspaces & knowledge notes
   'workspace.list',
   'workspace.get',
@@ -129,6 +134,10 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'secrets.listApiKeys',
   // Delete is a write; response is `true`/`false`.
   'secrets.deleteApiKey',
+  // Bedrock credential-store write (Phase 3 M2 T1b §A3): one-way like
+  // storeApiKey — the response is void. Its plaintext sibling read stays
+  // blocklisted below.
+  'secrets.storeBedrockCredentials',
   // Accomplish AI free tier
   'accomplish-ai.connect',
   'accomplish-ai.get-usage',

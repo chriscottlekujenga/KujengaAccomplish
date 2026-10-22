@@ -31,24 +31,24 @@ Nestings are flattened: `gws.*` and `analytics.*` per sub-method; the namespace 
 | Measure                                                 | Value                                                          |
 | ------------------------------------------------------- | -------------------------------------------------------------- |
 | Declared AccomplishAPI entries                          | **249** (204 top-level methods + 8 gws._ + 37 analytics._)     |
-| Shim functional (implemented)                           | **84**                                                         |
+| Shim functional (implemented)                           | **126**                                                        |
 | Shim no-op                                              | **45**                                                         |
 | Shim optional-absent                                    | **7**                                                          |
-| Shim unavailable                                        | **113**                                                        |
+| Shim unavailable                                        | **71**                                                         |
 | Shim-implemented not declared on AccomplishAPI (extras) | 2                                                              |
-| Gateway allowlist entries                               | **83**                                                         |
+| Gateway allowlist entries                               | **85**                                                         |
 | Gateway blocklist entries                               | 7                                                              |
-| Daemon registered methods                               | **133** (131 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
-| Daemon registered not allowlisted                       | 50                                                             |
+| Daemon registered methods                               | **134** (132 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
+| Daemon registered not allowlisted                       | 49                                                             |
 
 ### Reconciliation with plan §2.2 (measured vs known facts)
 
 Plan §2.2 (verified 2026-10-21) states: AccomplishAPI = 249 methods · shim implements 129 (7 no-op) · 120 unavailable · allowlist 62 · daemon exposes 125. The checked-in numbers below are THIS run's real measure; each line reconciles the two accountings or flags drift.
 
-- ✓ plan "129 implemented" = 84 functional + 45 no-op; measured no-op 45 = 8 top-level no-ops (`onHuggingFaceDownloadProgress`, `isE2EMode`, `onDebugLog`, `speechIsConfigured`, `speechGetConfig`, `onCloseRequested`, `respondToClose`, `getBuildCapabilities`) + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
-- ✓ plan "120 unavailable" = 113 unavailable + 7 optional-absent (browser-preview 6 + onWorkspaceDeleted). Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
-- ✓ allowlist 83 vs plan 62 + 21 M2 T1a entries = 83 — matches the M2 T1a expansion
-- ✓ daemon registered 133 (131 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) = 133. Arithmetic matches.
+- ✓ plan "129 implemented" = 126 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
+- ✓ plan "120 unavailable" = 71 unavailable + 7 optional-absent (browser-preview 6 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented. Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
+- ✓ allowlist 85 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) = 85 — matches the M2 expansion
+- ✓ daemon registered 134 (132 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) = 134. Arithmetic matches.
 
 ## Summary per domain
 
@@ -60,10 +60,10 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | tasks               |      14 |          14 |     0 |               0 |           0 |           8 |                  0 |                      0 |            0 |          6 |
 | session-permissions |       3 |           3 |     0 |               0 |           0 |           2 |                  0 |                      0 |            0 |          1 |
 | settings            |      19 |          19 |     0 |               0 |           0 |          14 |                  0 |                      0 |            0 |          2 |
-| provider-settings   |       9 |           2 |     0 |               0 |           7 |           7 |                  0 |                      0 |            0 |          1 |
-| api-keys-secrets    |      15 |           3 |     0 |               0 |          12 |           5 |                  2 |                      2 |            0 |          2 |
-| provider-configs    |      11 |           0 |     0 |               0 |          11 |          10 |                  0 |                      0 |            0 |          1 |
-| model-discovery     |      17 |           0 |     0 |               0 |          17 |           2 |                  0 |                      0 |            0 |          4 |
+| provider-settings   |       9 |           9 |     0 |               0 |           0 |           7 |                  0 |                      0 |            0 |          1 |
+| api-keys-secrets    |      15 |          12 |     0 |               0 |           3 |           6 |                  0 |                      2 |            0 |          0 |
+| provider-configs    |      11 |          11 |     0 |               0 |           0 |          10 |                  0 |                      0 |            0 |          0 |
+| model-discovery     |      17 |          15 |     0 |               0 |           2 |           3 |                  0 |                      0 |            0 |          2 |
 | huggingface         |      10 |           0 |     1 |               0 |           9 |           0 |                  2 |                      0 |            0 |          8 |
 | skills              |      12 |           5 |     0 |               0 |           7 |           6 |                  2 |                      0 |            0 |          4 |
 | connectors          |      23 |           1 |     0 |               0 |          22 |           0 |                  4 |                      0 |            0 |         19 |
@@ -83,7 +83,7 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | build-capabilities  |       1 |           0 |     1 |               0 |           0 |           0 |                  0 |                      0 |            0 |          1 |
 | onboarding          |       2 |           2 |     0 |               0 |           0 |           2 |                  0 |                      0 |            0 |          0 |
 | opencode-cli        |       2 |           2 |     0 |               0 |           0 |           0 |                  0 |                      0 |            0 |          2 |
-| **TOTAL**           |     249 |          84 |    45 |               7 |         113 |          78 |                 20 |                      2 |            0 |        127 |
+| **TOTAL**           |     249 |         126 |    45 |               7 |          71 |          80 |                 18 |                      2 |            0 |        122 |
 
 ## Per-domain detail
 
@@ -162,104 +162,104 @@ Entries 19 — implemented 19 · no-op 0 · optional-absent 0 · unavailable 0 �
 
 ### provider-settings
 
-Entries 9 — implemented 2 · no-op 0 · optional-absent 0 · unavailable 7 ｜ RPC: allowlisted 7 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 1
+Entries 9 — implemented 9 · no-op 0 · optional-absent 0 · unavailable 0 ｜ RPC: allowlisted 7 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 1
 
 | Method                    | Shim status | Backing RPC                | RPC policy status | Note                                                                                         |
 | ------------------------- | ----------- | -------------------------- | ----------------- | -------------------------------------------------------------------------------------------- |
 | `getProviderSettings`     | implemented | `provider.getSettings`     | allowlisted       |                                                                                              |
-| `setActiveProvider`       | unavailable | `provider.setActive`       | allowlisted       |                                                                                              |
-| `getConnectedProvider`    | unavailable | `provider.getSettings`     | allowlisted       | derived — connected state rides the masked provider.getSettings payload (no direct read RPC) |
-| `setConnectedProvider`    | unavailable | `provider.setConnected`    | allowlisted       |                                                                                              |
-| `removeConnectedProvider` | unavailable | `provider.removeConnected` | allowlisted       |                                                                                              |
-| `updateProviderModel`     | unavailable | `provider.updateModel`     | allowlisted       |                                                                                              |
-| `setProviderDebugMode`    | unavailable | `provider.setDebugMode`    | allowlisted       |                                                                                              |
-| `getProviderDebugMode`    | unavailable | `provider.getDebugMode`    | allowlisted       |                                                                                              |
+| `setActiveProvider`       | implemented | `provider.setActive`       | allowlisted       |                                                                                              |
+| `getConnectedProvider`    | implemented | `provider.getSettings`     | allowlisted       | derived — connected state rides the masked provider.getSettings payload (no direct read RPC) |
+| `setConnectedProvider`    | implemented | `provider.setConnected`    | allowlisted       |                                                                                              |
+| `removeConnectedProvider` | implemented | `provider.removeConnected` | allowlisted       |                                                                                              |
+| `updateProviderModel`     | implemented | `provider.updateModel`     | allowlisted       |                                                                                              |
+| `setProviderDebugMode`    | implemented | `provider.setDebugMode`    | allowlisted       |                                                                                              |
+| `getProviderDebugMode`    | implemented | `provider.getDebugMode`    | allowlisted       |                                                                                              |
 | `onAuthError?`            | implemented | —                          | —                 | WS notification auth.error                                                                   |
 
 ### api-keys-secrets
 
-Entries 15 — implemented 3 · no-op 0 · optional-absent 0 · unavailable 12 ｜ RPC: allowlisted 5 · registered-blocked 2 · blocklisted 2 · unregistered 0 · no-backing 2
+Entries 15 — implemented 12 · no-op 0 · optional-absent 0 · unavailable 3 ｜ RPC: allowlisted 6 · registered-blocked 0 · blocklisted 2 · unregistered 0 · no-backing 0
 
-| Method                      | Shim status | Backing RPC                       | RPC policy status      | Note                                                                                                  |
-| --------------------------- | ----------- | --------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| `getApiKeys`                | unavailable | `secrets.listApiKeys`             | allowlisted            | M2 T1a masked backing (daemon RPC + allowlist); shim call-site wiring lands in T1b                    |
-| `addApiKey`                 | implemented | `secrets.storeApiKey`             | allowlisted            |                                                                                                       |
-| `removeApiKey`              | unavailable | `secrets.deleteApiKey`            | allowlisted            |                                                                                                       |
-| `hasApiKey`                 | implemented | `secrets.hasAnyApiKey`            | allowlisted            |                                                                                                       |
-| `setApiKey`                 | unavailable | `secrets.storeApiKey`             | allowlisted            |                                                                                                       |
-| `getApiKey`                 | unavailable | `secrets.getApiKey`               | registered-blocklisted | blocklisted — must STAY blocked (masked variant `secrets.listApiKeys` ships in M2 T1a for UI display) |
-| `validateApiKey`            | unavailable | `provider.validateKey`            | allowlisted            | M2 T1a — provider.validateKey                                                                         |
-| `validateApiKeyForProvider` | unavailable | `provider.validateKey`            | allowlisted            | M2 T1a — provider.validateKey (desktop api-key:validate-provider parity)                              |
-| `clearApiKey`               | unavailable | `secrets.clear`                   | registered-blocked     |                                                                                                       |
-| `getAllApiKeys`             | unavailable | `secrets.listApiKeys`             | allowlisted            | M2 T1a masked backing (daemon RPC + allowlist); shim call-site wiring lands in T1b                    |
-| `hasAnyApiKey`              | implemented | `secrets.hasAnyApiKey`            | allowlisted            |                                                                                                       |
-| `saveBedrockCredentials`    | unavailable | `secrets.storeBedrockCredentials` | registered-blocked     |                                                                                                       |
-| `getBedrockCredentials`     | unavailable | `secrets.getBedrockCredentials`   | registered-blocklisted | blocklisted plaintext read — M2 masked variant required                                               |
-| `saveVertexCredentials`     | unavailable | —                                 | —                      | no vertex secrets RPC registered                                                                      |
-| `getVertexCredentials`      | unavailable | —                                 | —                      | no vertex secrets RPC registered                                                                      |
+| Method                      | Shim status | Backing RPC                       | RPC policy status      | Note                                                                                                                                                                                                |
+| --------------------------- | ----------- | --------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getApiKeys`                | implemented | `secrets.listApiKeys`             | allowlisted            | masked backing (M2 T1a RPC); shim wiring landed in T1b — existing-only entries with 4-char prefixes                                                                                                 |
+| `addApiKey`                 | implemented | `secrets.storeApiKey`             | allowlisted            |                                                                                                                                                                                                     |
+| `removeApiKey`              | implemented | `secrets.deleteApiKey`            | allowlisted            | T1b wired — shim-fabricated ids carry the bare provider id                                                                                                                                          |
+| `hasApiKey`                 | implemented | `secrets.hasAnyApiKey`            | allowlisted            |                                                                                                                                                                                                     |
+| `setApiKey`                 | implemented | `secrets.storeApiKey`             | allowlisted            | T1b wired — desktop api-key:set stores under the DEFAULT provider (anthropic)                                                                                                                       |
+| `getApiKey`                 | unavailable | `secrets.getApiKey`               | registered-blocklisted | blocklisted — must STAY blocked (plaintext default-provider read; masked sibling is secrets.listApiKeys)                                                                                            |
+| `validateApiKey`            | implemented | `provider.validateKey`            | allowlisted            | T1b wired — desktop api-key:validate targets the DEFAULT provider (anthropic)                                                                                                                       |
+| `validateApiKeyForProvider` | implemented | `provider.validateKey`            | allowlisted            | T1b wired (desktop api-key:validate-provider parity)                                                                                                                                                |
+| `clearApiKey`               | implemented | `secrets.deleteApiKey`            | allowlisted            | T1b wired — desktop api-key:clear deletes ONLY the default-provider key; secrets.clear stays blocked                                                                                                |
+| `getAllApiKeys`             | implemented | `secrets.listApiKeys`             | allowlisted            | masked backing (M2 T1a RPC); shim wiring landed in T1b — record shape returned verbatim                                                                                                             |
+| `hasAnyApiKey`              | implemented | `secrets.hasAnyApiKey`            | allowlisted            |                                                                                                                                                                                                     |
+| `saveBedrockCredentials`    | implemented | `secrets.storeBedrockCredentials` | allowlisted            | T1b allowlisted — one-way void write; ApiKeyConfig label/prefix derive locally                                                                                                                      |
+| `getBedrockCredentials`     | unavailable | `secrets.getBedrockCredentials`   | registered-blocklisted | blocklisted plaintext read — stays unavailable; no web UI call site (connect flows null-derive from the masked snapshot)                                                                            |
+| `saveVertexCredentials`     | implemented | `secrets.storeApiKey`             | allowlisted            | T1b wired — vertex credentials ride the standard api-key bucket under 'vertex' (desktop vertex:save parity; the SecureStorageAPI vertex analog of storeBedrockCredentials IS storeApiKey('vertex')) |
+| `getVertexCredentials`      | unavailable | `secrets.getApiKey`               | registered-blocklisted | would read the 'vertex' api-key bucket in plaintext — blocklist binding keeps it unavailable                                                                                                        |
 
 ### provider-configs
 
-Entries 11 — implemented 0 · no-op 0 · optional-absent 0 · unavailable 11 ｜ RPC: allowlisted 10 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 1
+Entries 11 — implemented 11 · no-op 0 · optional-absent 0 · unavailable 0 ｜ RPC: allowlisted 10 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 0
 
-| Method                   | Shim status | Backing RPC                      | RPC policy status | Note                                                                                 |
-| ------------------------ | ----------- | -------------------------------- | ----------------- | ------------------------------------------------------------------------------------ |
-| `getOpenAiBaseUrl`       | unavailable | `settings.getOpenAiBaseUrl`      | allowlisted       |                                                                                      |
-| `setOpenAiBaseUrl`       | unavailable | `settings.setOpenAiBaseUrl`      | allowlisted       |                                                                                      |
-| `getOllamaConfig`        | unavailable | `settings.getOllamaConfig`       | allowlisted       |                                                                                      |
-| `setOllamaConfig`        | unavailable | `settings.setOllamaConfig`       | allowlisted       |                                                                                      |
-| `getAzureFoundryConfig`  | unavailable | `settings.getAzureFoundryConfig` | allowlisted       |                                                                                      |
-| `setAzureFoundryConfig`  | unavailable | `settings.setAzureFoundryConfig` | allowlisted       |                                                                                      |
-| `saveAzureFoundryConfig` | unavailable | —                                | —                 | no direct RPC — M2: key via secrets.storeApiKey + config write (validate-first flow) |
-| `getLiteLLMConfig`       | unavailable | `settings.getLiteLLMConfig`      | allowlisted       |                                                                                      |
-| `setLiteLLMConfig`       | unavailable | `settings.setLiteLLMConfig`      | allowlisted       |                                                                                      |
-| `getLMStudioConfig`      | unavailable | `settings.getLMStudioConfig`     | allowlisted       |                                                                                      |
-| `setLMStudioConfig`      | unavailable | `settings.setLMStudioConfig`     | allowlisted       |                                                                                      |
+| Method                   | Shim status | Backing RPC                      | RPC policy status | Note                                                                                                                                |
+| ------------------------ | ----------- | -------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `getOpenAiBaseUrl`       | implemented | `settings.getOpenAiBaseUrl`      | allowlisted       |                                                                                                                                     |
+| `setOpenAiBaseUrl`       | implemented | `settings.setOpenAiBaseUrl`      | allowlisted       |                                                                                                                                     |
+| `getOllamaConfig`        | implemented | `settings.getOllamaConfig`       | allowlisted       |                                                                                                                                     |
+| `setOllamaConfig`        | implemented | `settings.setOllamaConfig`       | allowlisted       |                                                                                                                                     |
+| `getAzureFoundryConfig`  | implemented | `settings.getAzureFoundryConfig` | allowlisted       |                                                                                                                                     |
+| `setAzureFoundryConfig`  | implemented | `settings.setAzureFoundryConfig` | allowlisted       |                                                                                                                                     |
+| `saveAzureFoundryConfig` | implemented | `settings.setAzureFoundryConfig` | allowlisted       | composite (T1b): validate + optional secrets.storeApiKey("azure-foundry") + config write — desktop azure-foundry:save-config parity |
+| `getLiteLLMConfig`       | implemented | `settings.getLiteLLMConfig`      | allowlisted       |                                                                                                                                     |
+| `setLiteLLMConfig`       | implemented | `settings.setLiteLLMConfig`      | allowlisted       |                                                                                                                                     |
+| `getLMStudioConfig`      | implemented | `settings.getLMStudioConfig`     | allowlisted       |                                                                                                                                     |
+| `setLMStudioConfig`      | implemented | `settings.setLMStudioConfig`     | allowlisted       |                                                                                                                                     |
 
-Config writes carry the API key and read paths must return masked data only (plan §5.4) — every M2 allowlist addition needs paired secrets tests.
+Config reads/writes land in T1b via the T1a settings.\* RPCs; saveAzureFoundryConfig is a composite (validate → optional secrets.storeApiKey → settings.setAzureFoundryConfig). Writes invalidate the shim settings-snapshot cache.
 
 ### model-discovery
 
-Entries 17 — implemented 0 · no-op 0 · optional-absent 0 · unavailable 17 ｜ RPC: allowlisted 2 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 4
+Entries 17 — implemented 15 · no-op 0 · optional-absent 0 · unavailable 2 ｜ RPC: allowlisted 3 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 2
 
-| Method                       | Shim status | Backing RPC               | RPC policy status | Note                                                                   |
-| ---------------------------- | ----------- | ------------------------- | ----------------- | ---------------------------------------------------------------------- |
-| `testOllamaConnection`       | unavailable | `provider.testConnection` | allowlisted       | M2 T1a                                                                 |
-| `testAzureFoundryConnection` | unavailable | `provider.testConnection` | allowlisted       | M2 T1a                                                                 |
-| `fetchProviderModels`        | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a                                                                 |
-| `fetchOpenRouterModels`      | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a                                                                 |
-| `testLiteLLMConnection`      | unavailable | `provider.testConnection` | allowlisted       | M2 T1a                                                                 |
-| `fetchLiteLLMModels`         | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a                                                                 |
-| `testLMStudioConnection`     | unavailable | `provider.testConnection` | allowlisted       | M2 T1a                                                                 |
-| `fetchLMStudioModels`        | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a                                                                 |
-| `testNimConnection`          | unavailable | `provider.testConnection` | allowlisted       | M2 T1a                                                                 |
-| `fetchNimModels`             | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a                                                                 |
-| `testCustomConnection`       | unavailable | `provider.testConnection` | allowlisted       | M2 T1a                                                                 |
-| `validateBedrockCredentials` | unavailable | —                         | —                 | separate desktop flow (bedrock:validate) — no T1a RPC; defer to T1b/M3 |
-| `fetchBedrockModels`         | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a — daemon-side stored credentials                                |
-| `validateVertexCredentials`  | unavailable | —                         | —                 | separate desktop flow (vertex:validate) — no T1a RPC; defer to T1b/M3  |
-| `fetchVertexModels`          | unavailable | `provider.fetchModels`    | allowlisted       | M2 T1a — daemon-side stored credentials                                |
-| `detectVertexProject`        | unavailable | —                         | —                 | host-side gcloud flow — defer to T1b/M6                                |
-| `listVertexProjects`         | unavailable | —                         | —                 | host-side gcloud flow — defer to T1b/M6                                |
+| Method                       | Shim status | Backing RPC                    | RPC policy status | Note                                                                                                               |
+| ---------------------------- | ----------- | ------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `testOllamaConnection`       | implemented | `provider.testConnection`      | allowlisted       | T1b wired                                                                                                          |
+| `testAzureFoundryConnection` | implemented | `provider.testConnection`      | allowlisted       | T1b wired                                                                                                          |
+| `fetchProviderModels`        | implemented | `provider.fetchModels`         | allowlisted       | T1b wired                                                                                                          |
+| `fetchOpenRouterModels`      | implemented | `provider.fetchModels`         | allowlisted       | T1b wired                                                                                                          |
+| `testLiteLLMConnection`      | implemented | `provider.testConnection`      | allowlisted       | T1b wired                                                                                                          |
+| `fetchLiteLLMModels`         | implemented | `provider.fetchModels`         | allowlisted       | T1b wired                                                                                                          |
+| `testLMStudioConnection`     | implemented | `provider.testConnection`      | allowlisted       | T1b wired                                                                                                          |
+| `fetchLMStudioModels`        | implemented | `provider.fetchModels`         | allowlisted       | T1b wired                                                                                                          |
+| `testNimConnection`          | implemented | `provider.testConnection`      | allowlisted       | T1b wired                                                                                                          |
+| `fetchNimModels`             | implemented | `provider.fetchModels`         | allowlisted       | T1b wired                                                                                                          |
+| `testCustomConnection`       | implemented | `provider.testConnection`      | allowlisted       | T1b wired                                                                                                          |
+| `validateBedrockCredentials` | implemented | `provider.validateCredentials` | allowlisted       | T1b §A3 — document JSON travels one-way in the request; verdict + redacted error only                              |
+| `fetchBedrockModels`         | implemented | `provider.fetchModels`         | allowlisted       | daemon-side stored credentials (T1b) — the credentials argument is accepted-but-ignored (connect flows save first) |
+| `validateVertexCredentials`  | implemented | `provider.validateCredentials` | allowlisted       | T1b §A3 — document JSON travels one-way in the request; verdict + redacted error only                              |
+| `fetchVertexModels`          | implemented | `provider.fetchModels`         | allowlisted       | daemon-side stored credentials (T1b) — the credentials argument is accepted-but-ignored (connect flows save first) |
+| `detectVertexProject`        | unavailable | —                              | —                 | host-side gcloud flow — defer to M6                                                                                |
+| `listVertexProjects`         | unavailable | —                              | —                 | host-side gcloud flow — defer to M6                                                                                |
 
-M2 T1a: connection tests + model fetches (incl. bedrock/vertex via daemon-side stored credentials) are backed by `provider.testConnection`/`provider.fetchModels`, keys never cross the socket; shim call-site wiring lands in T1b. `validateBedrockCredentials`/`validateVertexCredentials` keep their separate desktop flows — no T1a RPC yet.
+T1b wires the per-provider test/fetch call sites onto provider.testConnection / provider.fetchModels; model fetches resolve keys daemon-side from stored secrets, so fetchBedrockModels/fetchVertexModels accept-but-ignore their credentials argument (the connect flows always save first). bedrock/vertex credential VALIDATION rides the §A3 provider.validateCredentials RPC (document one-way in, redacted verdict out). detectVertexProject/listVertexProjects keep their host-side gcloud flow (M6).
 
 ### huggingface
 
 Entries 10 — implemented 0 · no-op 1 · optional-absent 0 · unavailable 9 ｜ RPC: allowlisted 0 · registered-blocked 2 · blocklisted 0 · unregistered 0 · no-backing 8
 
-| Method                          | Shim status | Backing RPC                          | RPC policy status  | Note                                           |
-| ------------------------------- | ----------- | ------------------------------------ | ------------------ | ---------------------------------------------- |
-| `getHuggingFaceLocalConfig`     | unavailable | `provider.getHuggingFaceLocalConfig` | registered-blocked |                                                |
-| `setHuggingFaceLocalConfig`     | unavailable | `provider.setHuggingFaceLocalConfig` | registered-blocked |                                                |
-| `listHuggingFaceModels`         | unavailable | —                                    | —                  | HF local-server control port (plan M2/M6 seam) |
-| `downloadHuggingFaceModel`      | unavailable | —                                    | —                  | HF local-server control port                   |
-| `startHuggingFaceServer`        | unavailable | —                                    | —                  | HF local-server control port                   |
-| `stopHuggingFaceServer`         | unavailable | —                                    | —                  | HF local-server control port                   |
-| `getHuggingFaceServerStatus`    | unavailable | —                                    | —                  | HF local-server control port                   |
-| `testHuggingFaceConnection`     | unavailable | —                                    | —                  | HF local-server control port                   |
-| `deleteHuggingFaceModel`        | unavailable | —                                    | —                  | HF local-server control port                   |
-| `onHuggingFaceDownloadProgress` | no-op       | —                                    | —                  | shim no-op subscription until HF ships         |
+| Method                          | Shim status | Backing RPC                          | RPC policy status  | Note                                                                        |
+| ------------------------------- | ----------- | ------------------------------------ | ------------------ | --------------------------------------------------------------------------- |
+| `getHuggingFaceLocalConfig`     | unavailable | `provider.getHuggingFaceLocalConfig` | registered-blocked | registered-blocked — deferred to M6 (architect decision); stays unavailable |
+| `setHuggingFaceLocalConfig`     | unavailable | `provider.setHuggingFaceLocalConfig` | registered-blocked | registered-blocked — deferred to M6 (architect decision); stays unavailable |
+| `listHuggingFaceModels`         | unavailable | —                                    | —                  | HF local-server control port (plan M2/M6 seam)                              |
+| `downloadHuggingFaceModel`      | unavailable | —                                    | —                  | HF local-server control port                                                |
+| `startHuggingFaceServer`        | unavailable | —                                    | —                  | HF local-server control port                                                |
+| `stopHuggingFaceServer`         | unavailable | —                                    | —                  | HF local-server control port                                                |
+| `getHuggingFaceServerStatus`    | unavailable | —                                    | —                  | HF local-server control port                                                |
+| `testHuggingFaceConnection`     | unavailable | —                                    | —                  | HF local-server control port                                                |
+| `deleteHuggingFaceModel`        | unavailable | —                                    | —                  | HF local-server control port                                                |
+| `onHuggingFaceDownloadProgress` | no-op       | —                                    | —                  | shim no-op subscription until HF ships                                      |
 
 ### skills
 
@@ -562,4 +562,4 @@ Control events: `mcp-callback`, `daemon:disconnected`, `daemon:reconnected`, `da
 
 ## Appendix D — shim transport.call coverage (self-check)
 
-All 53 distinct `transport.call` targets are allowlisted — verified at generation time.
+All 76 distinct `transport.call` targets are allowlisted — verified at generation time.

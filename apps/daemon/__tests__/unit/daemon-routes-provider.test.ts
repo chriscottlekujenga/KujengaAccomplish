@@ -32,6 +32,8 @@ const providerMocks = vi.hoisted(() => ({
   fetchVertexModels: vi.fn(),
   validateApiKey: vi.fn(),
   validateAzureFoundry: vi.fn(),
+  validateBedrockCredentials: vi.fn(),
+  validateVertexCredentials: vi.fn(),
 }));
 
 // Partial mock: network-touching provider fns are mocks, everything else
@@ -653,5 +655,132 @@ describe('secrets.listApiKeys RPC route (M2 T1a masked read)', () => {
     expect(handler).toBeDefined();
     await expect(handler?.(undefined)).resolves.toEqual(masked);
     expect(built.stubs.listApiKeysMasked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('provider.validateCredentials RPC route (M2 T1b §A3)', () => {
+  let registered: Map<string, RpcHandler>;
+
+  beforeEach(() => {
+    const built = buildServices();
+    registered = built.registered;
+    registerRpcMethods(built.services);
+    for (const mock of Object.values(providerMocks)) {
+      mock.mockReset();
+    }
+  });
+
+  it('registers provider.validateCredentials', () => {
+    expect(registered.has('provider.validateCredentials')).toBe(true);
+  });
+
+  it('bedrock: delegates the document verbatim to the agent-core validator', async () => {
+    const credentialsJson = JSON.stringify({
+      authType: 'accessKeys',
+      accessKeyId: 'AKIAIOSFODNN7TESTKEY',
+      secretAccessKey: 'wJalrXUtnFEMItest-secret',
+      region: 'us-east-1',
+    });
+    providerMocks.validateBedrockCredentials.mockResolvedValue({ valid: true });
+    const handler = registered.get('provider.validateCredentials');
+    await expect(
+      handler?.({ providerId: 'bedrock', credentials: credentialsJson }),
+    ).resolves.toEqual({ valid: true });
+    expect(providerMocks.validateBedrockCredentials).toHaveBeenCalledWith(credentialsJson);
+    expect(providerMocks.validateVertexCredentials).not.toHaveBeenCalled();
+  });
+
+  it('vertex: delegates the document verbatim to the agent-core validator', async () => {
+    const credentialsJson = JSON.stringify({
+      authType: 'serviceAccount',
+      projectId: 'proj',
+      location: 'global',
+      serviceAccountJson: '{"type":"service_account"}',
+    });
+    providerMocks.validateVertexCredentials.mockResolvedValue({ valid: true });
+    const handler = registered.get('provider.validateCredentials');
+    await expect(
+      handler?.({ providerId: 'vertex', credentials: credentialsJson }),
+    ).resolves.toEqual({ valid: true });
+    expect(providerMocks.validateVertexCredentials).toHaveBeenCalledWith(credentialsJson);
+  });
+
+  it('rejects other provider ids with the schema error', async () => {
+    const handler = registered.get('provider.validateCredentials');
+    await expect(
+      handler?.({ providerId: 'anthropic', credentials: '{"authType":"apiKey"}' }),
+    ).rejects.toThrow(/Invalid payload/);
+    expect(providerMocks.validateBedrockCredentials).not.toHaveBeenCalled();
+    expect(providerMocks.validateVertexCredentials).not.toHaveBeenCalled();
+  });
+
+  it('redacts secret fields embedded in validation errors and never echoes the document', async () => {
+    const ACCESS_KEY = 'AKIAIOSFODNN7TESTKEY';
+    const SECRET_KEY = 'wJalrXUtnFEMItest-secret';
+    const credentialsJson = JSON.stringify({
+      authType: 'accessKeys',
+      accessKeyId: ACCESS_KEY,
+      secretAccessKey: SECRET_KEY,
+      region: 'us-east-1',
+    });
+    providerMocks.validateBedrockCredentials.mockResolvedValue({
+      valid: false,
+      error: `The security token included in the request is invalid for ${ACCESS_KEY} / ${SECRET_KEY}`,
+    });
+    const handler = registered.get('provider.validateCredentials');
+    const result = (await handler?.({
+      providerId: 'bedrock',
+      credentials: credentialsJson,
+    })) as { valid: boolean; error?: string };
+    expect(result.valid).toBe(false);
+    expect(result.error).not.toContain(ACCESS_KEY);
+    expect(result.error).not.toContain(SECRET_KEY);
+    expect(result.error).toContain('[REDACTED]');
+    expect(result.error).not.toContain(credentialsJson);
+  });
+
+  it('redacts the service-account private key even when unpatterned', async () => {
+    const PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----MIIEvQIBADANBgkqtest-----END PRIVATE KEY-----';
+    const credentialsJson = JSON.stringify({
+      authType: 'serviceAccount',
+      projectId: 'proj',
+      location: 'global',
+      serviceAccountJson: JSON.stringify({
+        type: 'service_account',
+        private_key: PRIVATE_KEY,
+        client_email: 'svc@proj.iam.gserviceaccount.com',
+      }),
+    });
+    providerMocks.validateVertexCredentials.mockResolvedValue({
+      valid: false,
+      // Hostile/unusual upstream echo: quotes the entire service-account JSON.
+      error: `token rejected: ${JSON.stringify({ private_key: PRIVATE_KEY })}`,
+    });
+    const handler = registered.get('provider.validateCredentials');
+    const result = (await handler?.({
+      providerId: 'vertex',
+      credentials: credentialsJson,
+    })) as { valid: boolean; error?: string };
+    expect(result.valid).toBe(false);
+    expect(result.error).not.toContain(PRIVATE_KEY);
+    expect(result.error).toContain('[REDACTED]');
+  });
+
+  it('still passes pattern-shaped errors through the pattern redactor', async () => {
+    const credentialsJson = JSON.stringify({
+      authType: 'apiKey',
+      apiKey: 'plainunpatternedkey000',
+      region: 'us-east-1',
+    });
+    providerMocks.validateBedrockCredentials.mockResolvedValue({
+      valid: false,
+      error: 'Bearer plainunpatternedkey000 denied',
+    });
+    const handler = registered.get('provider.validateCredentials');
+    const result = (await handler?.({
+      providerId: 'bedrock',
+      credentials: credentialsJson,
+    })) as { valid: boolean; error?: string };
+    expect(result.error).toBe('Bearer [REDACTED] denied');
   });
 });
