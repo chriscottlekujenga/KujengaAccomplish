@@ -37,6 +37,8 @@ import type {
   StoredFavorite,
   FileAttachmentInfo,
   ApiKeyConfig,
+  Skill,
+  McpConnector,
 } from '@accomplish_ai/agent-core';
 import { sanitizeString, validateHttpUrl } from '@accomplish_ai/agent-core';
 import type { ScheduledTask } from '@accomplish_ai/agent-core/common';
@@ -661,12 +663,91 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
       call('provider.setDebugMode', { enabled }).then(invalidateSettings) as Promise<void>,
     getProviderDebugMode: () => call('provider.getDebugMode') as Promise<boolean>,
 
-    // ── Skills ──
+    // ── Skills management (Phase 3 M2 T2) ──
+    // Param names mirror the daemon's zod schemas (`skills.setEnabled` /
+    // `skills.getContent` / `skills.delete` take `skillId`, NOT `id`) — the
+    // pre-T2 shim passed `{ id }` and would have failed validation at the
+    // first toggle/content read in a browser session.
     getSkills: () => call('skills.list') as never,
     getEnabledSkills: () => call('skills.listEnabled') as never,
-    setSkillEnabled: (id: string, enabled: boolean) => call('skills.setEnabled', { id, enabled }),
-    getSkillContent: (id: string) => call('skills.getContent', { id }) as never,
+    setSkillEnabled: (id: string, enabled: boolean) =>
+      call('skills.setEnabled', { skillId: id, enabled }),
+    getSkillContent: (id: string) => call('skills.getContent', { skillId: id }) as never,
+    getUserSkillsPath: () => call('skills.getUserSkillsPath') as Promise<string>,
+    // Same host zenity folder dialog as workspace picking — no dedicated
+    // skills picker endpoint exists (v1).
+    pickSkillFolder: () => transport.pickFolder() as Promise<string | null>,
+    addSkillFromFolder: (folderPath: string) =>
+      call('skills.addFromPath', { sourcePath: folderPath }) as Promise<Skill | null>,
+    addSkillFromGitHub: (rawUrl: string) =>
+      call('skills.addFromGitHub', { rawUrl }) as Promise<Skill>,
+    deleteSkill: (id: string) => call('skills.delete', { skillId: id }) as Promise<void>,
     resyncSkills: () => call('skills.resync') as never,
+    // openSkillInEditor / showSkillInFolder stay UNAVAILABLE by design
+    // (documented degradation): the Electron `shell.openPath` /
+    // `shell.showItemInFolder` handlers have no browser surface yet; every
+    // UI call site try/catches the thrown shim error, so panels degrade
+    // gracefully. Host-side open/show is an M6 candidate.
+
+    // ── MCP connectors — custom-connector CRUD (Phase 3 M2 T2) ──
+    // Reads are plain registry metadata; the gateway scrubs
+    // clientRegistration.clientSecret (DCR) and any token-shaped field
+    // before a response crosses the trust boundary. The OAuth flows
+    // (startConnectorOAuth / completeConnectorOAuth + the built-in-connector
+    // login/logout/status family and per-provider server-url getters) stay
+    // DEFERRED to M6 (host loopback re-homing) and remain loud
+    // not-supported stubs.
+    getConnectors: () => call('connectors.list') as Promise<McpConnector[]>,
+    // Desktop connectors:add parity (connector-handlers.ts): sanitize +
+    // validate the URL locally, build the full McpConnector row client-side,
+    // upsert it, and echo the created row back to the caller. The body is
+    // async so validation errors REJECT (desktop handlers are async too) —
+    // no sync throw through `await` call sites.
+    addConnector: (async (name: string, url: string) => {
+      const sanitizedName = sanitizeString(name, 'connectorName', 128);
+      const sanitizedUrl = sanitizeString(url, 'connectorUrl', 512);
+
+      try {
+        const parsed = new URL(sanitizedUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          throw new Error('Connector URL must use http:// or https://');
+        }
+      } catch (err) {
+        throw new Error(
+          err instanceof Error && err.message.includes('http')
+            ? err.message
+            : `Invalid connector URL: ${sanitizedUrl}`,
+        );
+      }
+
+      const now = new Date().toISOString();
+      const connector: McpConnector = {
+        id: `mcp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        name: sanitizedName,
+        url: sanitizedUrl,
+        status: 'disconnected',
+        isEnabled: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await call('connectors.upsert', { connector });
+      return connector;
+    }) as AccomplishAPI['addConnector'],
+    // Desktop connectors:delete parity: scrub stored tokens first so no
+    // orphaned secret outlives the registry row.
+    deleteConnector: (async (id: string) => {
+      await call('connectors.deleteTokens', { connectorId: id });
+      await call('connectors.delete', { id });
+    }) as AccomplishAPI['deleteConnector'],
+    setConnectorEnabled: (id: string, enabled: boolean) =>
+      call('connectors.setEnabled', { id, enabled }) as Promise<void>,
+    // Desktop connectors:disconnect parity: drop the OAuth tokens AND reset
+    // the registry status — both pure daemon RPCs, no OAuth/live calls.
+    disconnectConnector: (async (connectorId: string) => {
+      await call('connectors.deleteTokens', { connectorId });
+      await call('connectors.setStatus', { id: connectorId, status: 'disconnected' });
+    }) as AccomplishAPI['disconnectConnector'],
 
     // ── OpenCode CLI status (host-side resolution) ──
     checkOpenCodeCli: () => transport.cliStatus() as never,

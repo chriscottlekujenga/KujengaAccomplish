@@ -1769,6 +1769,33 @@ export function registerRpcMethods(services: RouteServices): void {
       return await skillsService.addFromPath(v.sourcePath);
     }),
   );
+  // GitHub skill import (Phase 3 M2 T2): zod gates protocol + host BEFORE
+  // the importer runs; agent-core's `resolveGithubRawUrl` re-validates the
+  // same host set and normalizes tree/blob paths to the raw SKILL.md URL,
+  // so a non-GitHub or insecure URL can never reach the fetch.
+  const githubSkillUrlSchema = z.object({
+    rawUrl: z
+      .string()
+      .min(1)
+      .refine((raw) => {
+        try {
+          const parsed = new URL(raw);
+          return (
+            parsed.protocol === 'https:' &&
+            (parsed.hostname === 'github.com' || parsed.hostname === 'raw.githubusercontent.com')
+          );
+        } catch {
+          return false;
+        }
+      }, 'URL must use HTTPS and a github.com or raw.githubusercontent.com host'),
+  });
+  rpc.registerMethod(
+    'skills.addFromGitHub',
+    safeHandler(async (params) => {
+      const v = validate(githubSkillUrlSchema, params);
+      return await skillsService.addFromGitHub(v.rawUrl);
+    }),
+  );
   rpc.registerMethod(
     'skills.delete',
     safeHandler((params) => {

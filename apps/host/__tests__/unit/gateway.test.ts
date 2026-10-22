@@ -271,6 +271,80 @@ describe('gateway security', () => {
         await hostileGateway.close();
       });
     });
+
+    // Phase 3 M2 T2: skills CRUD + custom-connector CRUD allowlist additions.
+    // Same §5.4(d) pairing — reachable with a bearer token, hard-401 without.
+    describe('M2 T2 skills/connector expansion authorization matrix', () => {
+      const T2_METHODS = [
+        'skills.addFromPath',
+        'skills.addFromGitHub',
+        'skills.delete',
+        'connectors.list',
+        'connectors.upsert',
+        'connectors.setEnabled',
+        'connectors.setStatus',
+        'connectors.delete',
+        'connectors.deleteTokens',
+      ];
+
+      for (const method of T2_METHODS) {
+        const params =
+          method === 'skills.addFromPath'
+            ? { sourcePath: '/tmp/skills/foo' }
+            : method === 'skills.addFromGitHub'
+              ? { rawUrl: 'https://github.com/owner/repo/tree/main' }
+              : method === 'connectors.upsert'
+                ? {
+                    connector: {
+                      id: 'mcp-x',
+                      name: 'x',
+                      url: 'https://mcp.example.com',
+                      status: 'disconnected',
+                      isEnabled: true,
+                      createdAt: '2026-10-21T00:00:00.000Z',
+                      updatedAt: '2026-10-21T00:00:00.000Z',
+                    },
+                  }
+                : method === 'connectors.setEnabled'
+                  ? { id: 'mcp-x', enabled: true }
+                  : method === 'connectors.setStatus'
+                    ? { id: 'mcp-x', status: 'disconnected' }
+                    : method === 'connectors.deleteTokens'
+                      ? { connectorId: 'mcp-x' }
+                      : { id: 'mcp-x' };
+
+        it(`proxies ${method} for an authenticated caller`, async () => {
+          const { status } = await postRpc(rpcBody(1, method, params), {
+            Authorization: `Bearer ${TOKEN}`,
+          });
+          expect(status).toBe(200);
+        });
+
+        it(`requires the bearer token for ${method} (401 without auth)`, async () => {
+          const { status } = await postRpc(rpcBody(1, method, params));
+          expect(status).toBe(401);
+        });
+
+        it(`rejects ${method} as allowlist-only even for a forged-policy mistake pairing it with secret reads`, async () => {
+          // deleteTokens REMOVES secrets — pairing it with a plaintext-read
+          // regression can never resurrect a blocked connector read.
+          const hostileGateway = await createGateway({
+            port: 0,
+            token: TOKEN,
+            webDist: null,
+            rpc: createFakeRpc(),
+            policySets: { allow: new Set([...RPC_METHOD_BLOCKLIST, method]) },
+          });
+          const { status } = await postRpc(
+            rpcBody(1, 'connectors.getTokens', { connectorId: 'mcp-x' }),
+            { Authorization: `Bearer ${TOKEN}` },
+            hostileGateway.port,
+          );
+          expect(status).toBe(403);
+          await hostileGateway.close();
+        });
+      }
+    });
   });
 
   describe('Host and Origin validation', () => {

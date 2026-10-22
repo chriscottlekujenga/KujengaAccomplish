@@ -125,6 +125,50 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'skills.getContent',
   'skills.getUserSkillsPath',
   'skills.resync',
+  // Skill intake + delete (Phase 3 M2 T2). Registry writes with plain-file
+  // responses:
+  //   addFromPath    { sourcePath } → Skill | null — { id, name, command,
+  //                     description, source, isEnabled, isVerified,
+  //                     isHidden, filePath, updatedAt }; null = import
+  //                     failed daemon-side.
+  //   addFromGitHub  { rawUrl } → Skill (+ githubUrl for community
+  //                     imports); URL is zod-gated to https +
+  //                     github.com or raw.githubusercontent.com daemon-side.
+  //   delete         { skillId } → void; errors for unknown or official
+  //                     skills.
+  // No secret-shaped fields in any of these responses; the universal
+  // scrubber still applies as defense in depth.
+  'skills.addFromPath',
+  'skills.addFromGitHub',
+  'skills.delete',
+  // Custom MCP-connector registry CRUD (Phase 3 M2 T2). Tokens are NOT part
+  // of these responses: OAuth tokens live in the daemon secure-storage file
+  // under the connector-tokens:<id> prefix and are only reachable through
+  // connectors.getTokens / authEntry.read (both blocklisted below).
+  //   list            → McpConnector[] (id, name, url, status, isEnabled,
+  //     oauthMetadata, clientRegistration, lastConnectedAt,
+  //     lastOAuthValidatedAt, createdAt, updatedAt). DCR-issued
+  //     clientRegistration.clientSecret is secret material — the gateway
+  //     scrubs it (SECRET_FIELD_NAMES gained the clientSecret name in T2).
+  //   upsert          { connector } → void (one-way registry write).
+  //   setEnabled      { id, enabled } → void.
+  //   setStatus       { id, status } → void (disconnect parity with desktop:
+  //     deleteTokens, then status disconnected).
+  //   delete          { id } → void (shim pairs it with deleteTokens first,
+  //     mirroring desktop connectors:delete).
+  //   deleteTokens    { connectorId } → void — REMOVES stored OAuth tokens
+  //     (secret material destroyed, never returned).
+  // connectors.getById / getEnabled / getTokens / authEntry.* / storeTokens
+  // stay unauthorized for the browser (token-returning reads / M6 OAuth
+  // flows; the web AccomplishAPI has no getEnabled/getById accessor —
+  // getEnabled serves the same row shape as list, so the T2 scrubber proof
+  // covers it if it is ever allowlisted).
+  'connectors.list',
+  'connectors.upsert',
+  'connectors.setEnabled',
+  'connectors.setStatus',
+  'connectors.delete',
+  'connectors.deleteTokens',
   // Secrets — writes only (one-way by design); every plaintext READ stays
   // on the RPC_METHOD_BLOCKLIST until masked variants exist (Phase 3).
   'secrets.storeApiKey',

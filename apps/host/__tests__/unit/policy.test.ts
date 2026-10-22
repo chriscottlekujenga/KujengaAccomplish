@@ -14,7 +14,13 @@ describe('checkMethodPolicy', () => {
       allowed: false,
       reason: 'not-authorized',
     });
-    expect(checkMethodPolicy('connectors.list')).toEqual({
+    // T2: connectors.getById stays unauthorized — no web AccomplishAPI
+    // method maps to it (only the deferred-M6 desktop OAuth flows use it).
+    expect(checkMethodPolicy('connectors.getById')).toEqual({
+      allowed: false,
+      reason: 'not-authorized',
+    });
+    expect(checkMethodPolicy('connectors.getEnabled')).toEqual({
       allowed: false,
       reason: 'not-authorized',
     });
@@ -63,7 +69,8 @@ describe('checkMethodPolicy', () => {
     expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.getApiKey');
     expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.getAllApiKeys');
     expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.getBedrockCredentials');
-    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.upsert');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.getTokens');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.authEntry.read');
     expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.storeTokens');
     expect(RPC_METHOD_ALLOWLIST).not.toContain('auth.openai.getAccessToken');
   });
@@ -119,14 +126,55 @@ describe('checkMethodPolicy', () => {
     expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.clear');
   });
 
+  it('authorizes the M2 T2 skills CRUD methods (registry writes, plain responses)', () => {
+    // Skill intake/delete return plain Skill records (id/name/command/
+    // description/source/isEnabled/filePath/updatedAt) or void — no secret
+    // material; the T2 audit found none of these response shapes colliding
+    // with SECRET_FIELD_NAMES. skills.addFromGitHub is the new T2 daemon
+    // RPC (URL zod-gated to https + GitHub hosts daemon-side).
+    expect(RPC_METHOD_ALLOWLIST).toContain('skills.addFromPath');
+    expect(RPC_METHOD_ALLOWLIST).toContain('skills.addFromGitHub');
+    expect(RPC_METHOD_ALLOWLIST).toContain('skills.delete');
+  });
+
+  it('authorizes the M2 T2 custom-connector CRUD but keeps token reads blocked', () => {
+    // connectors.list/getEnabled responses are plain McpConnector registry
+    // metadata; OAuth tokens live in secure storage under
+    // `connector-tokens:<id>` and are ONLY reachable through
+    // connectors.getTokens / connectors.authEntry.read — both stay on the
+    // blocklist. connectors.deleteTokens is a one-way secret-destroying
+    // write (void response, never echoes tokens). connectors.getById is
+    // deliberately NOT allowlisted: no web call site today (only desktop
+    // OAuth flows, deferred to M6).
+    for (const method of [
+      'connectors.list',
+      'connectors.upsert',
+      'connectors.setEnabled',
+      'connectors.setStatus',
+      'connectors.delete',
+      'connectors.deleteTokens',
+    ]) {
+      expect(RPC_METHOD_ALLOWLIST).toContain(method);
+    }
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.getById');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.getTokens');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.authEntry.read');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.storeTokens');
+    expect(RPC_METHOD_BLOCKLIST).toContain('connectors.getTokens');
+    expect(RPC_METHOD_BLOCKLIST).toContain('connectors.authEntry.read');
+  });
+
   it('pins the allowlist count (M2 tripwire — every addition needs §5.4 tests)', () => {
     // 62 M1 baseline + 21 M2 provider/model-management + masked-listing
     // entries (Phase 3 M2 T1a) + 2 T1b bedrock/vertex credential entries
-    // (provider.validateCredentials + secrets.storeBedrockCredentials).
+    // (provider.validateCredentials + secrets.storeBedrockCredentials)
+    // + 9 T2 skills/connector-CRUD entries (skills.addFromPath,
+    // skills.addFromGitHub, skills.delete, connectors.list/upsert/
+    // setEnabled/setStatus/delete/deleteTokens).
     // This pin is deliberate: growing it further requires the §5.4
     // expansion policy — documented response shape, scrubber/no-secret-field
     // proof, paired authorization + redaction tests.
-    expect(RPC_METHOD_ALLOWLIST).toHaveLength(85);
+    expect(RPC_METHOD_ALLOWLIST).toHaveLength(94);
     expect(RPC_METHOD_BLOCKLIST).toHaveLength(7);
   });
 

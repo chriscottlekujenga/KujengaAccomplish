@@ -37,6 +37,11 @@ export const SECRET_FIELD_NAMES: ReadonlySet<string> = new Set([
   'accessToken',
   'serviceAccountJson',
   'token',
+  // Phase 3 M2 T2 audit finding: MCP-DCR registration responses carry an
+  // OAuth client secret, and desktop upserts the `clientRegistration` blob
+  // into the connector row (connector-handlers.ts) — so a connectors.list/
+  // getEnabled response can expose `clientRegistration.clientSecret`.
+  'clientSecret',
 ]);
 
 /**

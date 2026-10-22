@@ -75,9 +75,15 @@
  *     devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately NOT
  *     allowlisted); M2 T1a adds 4 (provider.testConnection, provider.fetchModels,
  *     provider.validateKey, secrets.listApiKeys); T1b adds 1
- *     (provider.validateCredentials). Allowlist: plan 62 → M2 T1a
+ *     (provider.validateCredentials); T2 adds 1 (skills.addFromGitHub).
+ *     Allowlist: plan 62 → M2 T1a
  *     +21 (provider trio, 5 provider writes, 2 secrets, 11 provider configs)
- *     → T1b +2 (provider.validateCredentials, secrets.storeBedrockCredentials).
+ *     → T1b +2 (provider.validateCredentials, secrets.storeBedrockCredentials)
+ *     → T2 +9 (skills.addFromPath/addFromGitHub/delete,
+ *     connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens).
+ *     The T2 scrubber also grew SECRET_FIELD_NAMES by 'clientSecret'
+ *     (DCR-issued OAuth client secret riding clientRegistration in
+ *     connectors.list rows).
  *
  * ── Self-checks (exit 1 on failure) ────────────────────────────────────────
  *   - parse-unknown: any declared entry without a domain → loud failure.
@@ -656,33 +662,51 @@ const SHIM_RPC_MAP = {
   deleteHuggingFaceModel: { rpc: null, note: 'HF local-server control port' },
   onHuggingFaceDownloadProgress: { rpc: null, note: 'shim no-op subscription until HF ships' },
 
-  // ── skills ─────────────────────────────────────────────────────────────
+  // ── skills (M2 T2: shim CRUD call sites wired) ──────────────────────────
   getSkills: { rpc: 'skills.list' },
   getEnabledSkills: { rpc: 'skills.listEnabled' },
   setSkillEnabled: { rpc: 'skills.setEnabled' },
   getSkillContent: { rpc: 'skills.getContent' },
   getUserSkillsPath: {
     rpc: 'skills.getUserSkillsPath',
-    note: 'registered + allowlisted but shim method absent — M2 wires it',
+    note: 'T2 wired — registered + allowlisted pre-T2; the shim method now exists',
   },
-  pickSkillFolder: { rpc: null, note: 'host /pick-folder (HTTP zenity) reuse — M2' },
-  addSkillFromFolder: { rpc: 'skills.addFromPath' },
-  addSkillFromGitHub: { rpc: null, note: 'no daemon RPC — fetch+verify path TBD (post-M2)' },
-  deleteSkill: { rpc: 'skills.delete' },
+  pickSkillFolder: {
+    rpc: null,
+    note: 'T2 wired — host /pick-folder reuse (same zenity folder dialog as workspace picking, v1)',
+  },
+  addSkillFromFolder: { rpc: 'skills.addFromPath', note: 'T2 wired' },
+  addSkillFromGitHub: {
+    rpc: 'skills.addFromGitHub',
+    note: 'T2 — new daemon RPC (§5.4-paired); URL normalization reuses agent-core addSkill → addFromUrl → resolveGithubRawUrl',
+  },
+  deleteSkill: { rpc: 'skills.delete', note: 'T2 wired' },
   resyncSkills: { rpc: 'skills.resync' },
-  openSkillInEditor: { rpc: null, note: 'Electron shell-open; browser equivalent TBD' },
-  showSkillInFolder: { rpc: null, note: 'Electron shell-open; browser equivalent TBD' },
+  openSkillInEditor: {
+    rpc: null,
+    note: 'M2 documented degradation — Electron shell.openPath has no browser surface (M6 candidate); UI call sites try/catch and degrade',
+  },
+  showSkillInFolder: {
+    rpc: null,
+    note: 'M2 documented degradation — Electron shell.showItemInFolder has no browser surface (M6 candidate); UI call sites try/catch and degrade',
+  },
 
-  // ── connectors ─────────────────────────────────────────────────────────
-  getConnectors: { rpc: 'connectors.list' },
-  addConnector: { rpc: 'connectors.upsert' },
-  deleteConnector: { rpc: 'connectors.delete' },
-  setConnectorEnabled: { rpc: 'connectors.setEnabled' },
+  // ── connectors (M2 T2: custom-connector CRUD wired; OAuth family M6) ──
+  getConnectors: { rpc: 'connectors.list', note: 'T2 wired' },
+  addConnector: {
+    rpc: 'connectors.upsert',
+    note: 'T2 wired — shim builds the full McpConnector row client-side (desktop connectors:add parity)',
+  },
+  deleteConnector: {
+    rpc: 'connectors.delete',
+    note: 'T2 wired — pairs connectors.deleteTokens with the row delete (desktop connectors:delete parity)',
+  },
+  setConnectorEnabled: { rpc: 'connectors.setEnabled', note: 'T2 wired' },
   startConnectorOAuth: { rpc: null, note: 'M6 oauth re-homing to host loopbacks' },
   completeConnectorOAuth: { rpc: null, note: 'M6 oauth re-homing to host loopbacks' },
   disconnectConnector: {
-    rpc: null,
-    note: 'M6 — probable backing connectors.deleteTokens; confirm at implementation',
+    rpc: 'connectors.deleteTokens',
+    note: 'T2 wired — desktop parity: deleteTokens + connectors.setStatus(disconnected) (backing lists the token scrub; both allowlisted)',
   },
   onMcpAuthCallback: { rpc: null, note: 'WS control event mcp-callback (deep link)' },
   getBuiltInConnectorAuthStatus: { rpc: null, note: 'M6 built-in connector token state' },
@@ -1264,6 +1288,14 @@ const EXPECTED = {
   m2T1bImplemented: 42,
   m2T1bRegistered: 1,
   m2T1bAllowlistDelta: 2,
+  // Phase 3 M2 T2: skills CRUD (5 shim call sites) + custom-connector CRUD
+  // (5 shim call sites) + one new daemon RPC (skills.addFromGitHub) + the 9
+  // allowlist additions (skills trio + connectors.list/upsert/setEnabled/
+  // setStatus/delete/deleteTokens). openSkillInEditor/showSkillInFolder stay
+  // unavailable (documented degradation); the OAuth family stays M6.
+  m2T2Implemented: 10,
+  m2T2Registered: 1,
+  m2T2AllowlistDelta: 9,
 };
 
 const SANITY_CHECKS = [
@@ -1360,6 +1392,44 @@ const SANITY_CHECKS = [
     when: (rows) => {
       const r = rows.find((x) => x.name === 'saveVertexCredentials');
       return r.shimStatus === 'implemented' && r.backing === 'secrets.storeApiKey';
+    },
+  },
+  {
+    label: 'addSkillFromGitHub implemented, backing skills.addFromGitHub allowlisted (M2 T2)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'addSkillFromGitHub');
+      return r.shimStatus === 'implemented' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label: 'deleteSkill implemented, backing skills.delete allowlisted (M2 T2)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'deleteSkill');
+      return r.shimStatus === 'implemented' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label: 'getConnectors implemented, backing connectors.list allowlisted (M2 T2)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'getConnectors');
+      return r.shimStatus === 'implemented' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label:
+      'disconnectConnector implemented onto connectors.deleteTokens (desktop setStatus co-call noted, M2 T2)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'disconnectConnector');
+      return r.shimStatus === 'implemented' && r.backing === 'connectors.deleteTokens';
+    },
+  },
+  {
+    label:
+      'openSkillInEditor/showSkillInFolder stay unavailable (M2 documented degradation, M6 candidate)',
+    when: (rows) => {
+      const open = rows.find((x) => x.name === 'openSkillInEditor');
+      const show = rows.find((x) => x.name === 'showSkillInFolder');
+      return open.shimStatus === 'unavailable' && show.shimStatus === 'unavailable';
     },
   },
 ];
@@ -1486,33 +1556,40 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
   const rec = [];
   const check = (ok, text) => rec.push(`${ok ? '✓' : '✗'} ${text}`);
   const implInvariant =
-    totals.implemented + totals['no-op'] === EXPECTED.planImplemented + EXPECTED.m2T1bImplemented;
+    totals.implemented + totals['no-op'] ===
+    EXPECTED.planImplemented + EXPECTED.m2T1bImplemented + EXPECTED.m2T2Implemented;
   check(
     implInvariant,
     `plan "129 implemented" = ${totals.implemented} functional + ${totals['no-op']} no-op, where ` +
-      `functional = 84 pre-T1b + ${EXPECTED.m2T1bImplemented} T1b-shim-wired entries and measured no-op ${totals['no-op']} = ` +
+      `functional = 84 pre-T1b + ${EXPECTED.m2T1bImplemented} T1b-shim-wired entries + ` +
+      `${EXPECTED.m2T2Implemented} T2 skills/connector-CRUD entries and measured no-op ${totals['no-op']} = ` +
       `8 top-level no-ops + 37 analytics.*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op ` +
       'family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). ' +
       (implInvariant ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   const unavailInvariant =
     totals.unavailable + totals['optional-absent'] ===
-    EXPECTED.planUnavailable - EXPECTED.m2T1bImplemented;
+    EXPECTED.planUnavailable - EXPECTED.m2T1bImplemented - EXPECTED.m2T2Implemented;
   check(
     unavailInvariant,
     `plan "120 unavailable" = ${totals.unavailable} unavailable + ${totals['optional-absent']} optional-absent ` +
       `(browser-preview 6 + onWorkspaceDeleted), minus the ${EXPECTED.m2T1bImplemented} entries T1b promoted to ` +
-      'implemented. Plan\'s "GWS (8)" = the 8 gws.* sub-methods (shim-side they throw while the parent namespace ' +
+      `implemented and the ${EXPECTED.m2T2Implemented} entries T2 promoted (skills CRUD + connector CRUD). ` +
+      'Plan\'s "GWS (8)" = the 8 gws.* sub-methods (shim-side they throw while the parent namespace ' +
       'is absent). ' +
       (unavailInvariant ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   const m2ExpectedAllowlist =
-    EXPECTED.planAllowlist + EXPECTED.m2T1aAllowlistDelta + EXPECTED.m2T1bAllowlistDelta;
+    EXPECTED.planAllowlist +
+    EXPECTED.m2T1aAllowlistDelta +
+    EXPECTED.m2T1bAllowlistDelta +
+    EXPECTED.m2T2AllowlistDelta;
   const allowOk = parsed.allowlist.length === m2ExpectedAllowlist;
   check(
     allowOk,
     `allowlist ${parsed.allowlist.length} vs plan 62 + ${EXPECTED.m2T1aAllowlistDelta} M2 T1a entries + ` +
-      `${EXPECTED.m2T1bAllowlistDelta} T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) = ` +
+      `${EXPECTED.m2T1bAllowlistDelta} T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + ` +
+      `${EXPECTED.m2T2AllowlistDelta} T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) = ` +
       `${m2ExpectedAllowlist} — ` +
       `${allowOk ? 'matches the M2 expansion' : 'MISMATCH — allowlist changed since the M2 tripwire'}`,
   );
@@ -1520,7 +1597,8 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.planDaemonRegistered +
     EXPECTED.m1InternalRegistered +
     EXPECTED.m2T1aRegistered +
-    EXPECTED.m2T1bRegistered;
+    EXPECTED.m2T1bRegistered +
+    EXPECTED.m2T2Registered;
   const planDelta = parsed.registered.size;
   check(
     planDelta === m2ExpectedRegistered,
@@ -1528,7 +1606,8 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
       `vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods ` +
       '(daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), ' +
       `+${EXPECTED.m2T1aRegistered} M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) ` +
-      `+${EXPECTED.m2T1bRegistered} T1b method (provider.validateCredentials) = ${m2ExpectedRegistered}. ` +
+      `+${EXPECTED.m2T1bRegistered} T1b method (provider.validateCredentials) ` +
+      `+${EXPECTED.m2T2Registered} T2 method (skills.addFromGitHub) = ${m2ExpectedRegistered}. ` +
       (planDelta === m2ExpectedRegistered ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   push();

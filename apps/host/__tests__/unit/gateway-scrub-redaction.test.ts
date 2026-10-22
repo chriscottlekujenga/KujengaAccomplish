@@ -328,6 +328,73 @@ describe('gateway universal response scrubbing', () => {
     });
   });
 
+  // Phase 3 M2 T2 (§5.4(a/b) scrubber proof for the connector-CRUD
+  // expansion): connectors.list responses are plain registry metadata —
+  // tokens live in secure storage under `connector-tokens:<id>`, never in
+  // these rows. But a DCR client registration (clientSecret) IS stored
+  // inside the row's `clientRegistration` blob, and a daemon regression
+  // could hypothetically pack token-shaped fields in too — the universal
+  // scrubber must strip all of it at the boundary while the non-secret
+  // registry metadata the UI renders survives. (connectors.getEnabled
+  // serves the same row shape but stays unauthorized — no browser method
+  // maps to it; the shape-identical proof below covers any future
+  // allowlisting.)
+  describe('connectors.list responses carry no token material (M2 T2)', () => {
+    let scrubGateway: GatewayHandle;
+
+    beforeAll(async () => {
+      scrubGateway = await createGateway({
+        port: 0,
+        token: TOKEN,
+        webDist: null,
+        rpc: createFakeRpc({
+          'connectors.list': [
+            {
+              id: 'mcp-1',
+              name: 'Linear MCP',
+              url: 'https://mcp.linear.app/sse',
+              status: 'disconnected',
+              isEnabled: true,
+              createdAt: '2026-10-21T00:00:00.000Z',
+              updatedAt: '2026-10-21T00:00:00.000Z',
+              oauthMetadata: { authorizationEndpoint: 'https://mcp.linear.app/authorize' },
+              clientRegistration: {
+                clientId: 'dcr-client-42',
+                clientSecret: 'dcr-SHOULD-NOT-LEAK',
+              },
+              // Hypothetical daemon-regression fields — token-shaped.
+              accessToken: 'at_CONNECTOR_LEAK',
+              refreshToken: 'rt_CONNECTOR_LEAK',
+            },
+          ],
+        }),
+      });
+    });
+
+    afterAll(async () => {
+      await scrubGateway.close();
+    });
+
+    it('strips clientRegistration.clientSecret and token-shaped fields from connectors.list', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'connectors.list');
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('dcr-SHOULD-NOT-LEAK');
+      expect(json).not.toContain('"clientSecret"');
+      expect(json).not.toContain('at_CONNECTOR_LEAK');
+      expect(json).not.toContain('rt_CONNECTOR_LEAK');
+      expect(json).not.toContain('"accessToken"');
+      expect(json).not.toContain('"refreshToken"');
+      // Non-secret registry metadata the UI renders survives.
+      expect(json).toContain('"id":"mcp-1"');
+      expect(json).toContain('"name":"Linear MCP"');
+      expect(json).toContain('"url":"https://mcp.linear.app/sse"');
+      expect(json).toContain('"clientId":"dcr-client-42"');
+      const result = body.result as Array<Record<string, unknown>>;
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Linear MCP');
+    });
+  });
+
   describe('M2 secret-bearing request params never reach the host log (§5.4(d))', () => {
     let logGateway: GatewayHandle;
     const lines: LogLine[] = [];

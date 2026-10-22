@@ -27,6 +27,11 @@ const SECRET_VALUES: Record<string, string> = {
   accessToken: 'ya29.a0AfB_accessTokenValue',
   serviceAccountJson: '{"private_key":"-----BEGIN PRIVATE KEY-----"}',
   token: 'ghp_bearerTokenValue123456',
+  // T2 audit finding: MCP-DCR registration issues an OAuth client secret,
+  // and desktop upserts `clientRegistration` into connector rows — so
+  // connectors.list/getEnabled responses can carry it inside
+  // clientRegistration.
+  clientSecret: 'dcr_client_secret_LIVE_VALUE',
 };
 
 /** Nests `payload` under `levels` additional object wrappers. */

@@ -1231,6 +1231,240 @@ describe('M2 T1b provider/model-management shim (accomplish-http)', () => {
   });
 });
 
+describe('M2 T2 skills/connector CRUD shim (accomplish-http)', () => {
+  let calls: { method: string; params?: unknown }[];
+  let responses: Map<string, unknown>;
+  let transport: HttpTransport;
+
+  beforeEach(() => {
+    calls = [];
+    responses = new Map();
+    transport = {
+      call: async (method: string, params?: unknown) => {
+        calls.push({ method, params });
+        return responses.get(method) ?? null;
+      },
+      openExternal: async () => {},
+      pickFolder: vi.fn(async () => '/home/user/skills-dir'),
+      pickFiles: async () => [],
+      health: async () => ({ ok: true, version: '0.1.0', platform: 'linux' }),
+      clientLog: vi.fn(async () => undefined),
+      cliStatus: async () => ({
+        installed: true,
+        version: '1.14.18',
+        installCommand: 'npm i -g opencode-ai',
+      }),
+      autostartStatus: async () => ({ enabled: false, active: false }),
+    } as unknown as HttpTransport;
+  });
+
+  function makeApi() {
+    return createHttpAccomplishApi({
+      baseUrl: 'http://127.0.0.1:8123',
+      token: TEST_TOKEN,
+      transport,
+      events: new FakeEventStream() as unknown as GatewayEventStream,
+    });
+  }
+
+  const lastCall = (): { method: string; params?: unknown } => {
+    const last = calls.at(-1);
+    if (!last) {
+      throw new Error('no RPC call recorded');
+    }
+    return last;
+  };
+
+  describe('skills management', () => {
+    it('getUserSkillsPath reads the daemon skills directory', async () => {
+      responses.set('skills.getUserSkillsPath', '/home/user/.accomplish/skills');
+      const api = makeApi();
+      await expect(api.getUserSkillsPath()).resolves.toBe('/home/user/.accomplish/skills');
+      expect(lastCall()).toEqual({ method: 'skills.getUserSkillsPath', params: undefined });
+    });
+
+    it('pickSkillFolder reuses the host zenity folder picker (no RPC)', async () => {
+      const api = makeApi();
+      await expect(api.pickSkillFolder()).resolves.toBe('/home/user/skills-dir');
+      expect(transport.pickFolder).toHaveBeenCalledTimes(1);
+      expect(calls).toEqual([]);
+    });
+
+    it('addSkillFromFolder maps to skills.addFromPath { sourcePath }', async () => {
+      const skill = { id: 's1', name: 'From Folder', source: 'custom' };
+      responses.set('skills.addFromPath', skill);
+      const api = makeApi();
+      await expect(api.addSkillFromFolder('/home/user/my-skill')).resolves.toEqual(skill);
+      expect(lastCall()).toEqual({
+        method: 'skills.addFromPath',
+        params: { sourcePath: '/home/user/my-skill' },
+      });
+    });
+
+    it('addSkillFromGitHub maps to skills.addFromGitHub { rawUrl }', async () => {
+      const skill = { id: 's2', name: 'GitHub Skill', source: 'community' };
+      responses.set('skills.addFromGitHub', skill);
+      const api = makeApi();
+      await expect(api.addSkillFromGitHub('https://github.com/o/r/tree/main')).resolves.toEqual(
+        skill,
+      );
+      expect(lastCall()).toEqual({
+        method: 'skills.addFromGitHub',
+        params: { rawUrl: 'https://github.com/o/r/tree/main' },
+      });
+    });
+
+    it('deleteSkill maps to skills.delete { skillId }', async () => {
+      const api = makeApi();
+      await api.deleteSkill('s1');
+      expect(lastCall()).toEqual({ method: 'skills.delete', params: { skillId: 's1' } });
+    });
+
+    it('setSkillEnabled sends skillId (daemon zod param, not the pre-T2 `id`)', async () => {
+      const api = makeApi();
+      await api.setSkillEnabled('s1', false);
+      expect(lastCall()).toEqual({
+        method: 'skills.setEnabled',
+        params: { skillId: 's1', enabled: false },
+      });
+    });
+
+    it('getSkillContent sends skillId (daemon zod param, not the pre-T2 `id`)', async () => {
+      responses.set('skills.getContent', '# SKILL.md');
+      const api = makeApi();
+      await expect(api.getSkillContent('s1')).resolves.toBe('# SKILL.md');
+      expect(lastCall()).toEqual({ method: 'skills.getContent', params: { skillId: 's1' } });
+    });
+
+    it('openSkillInEditor / showSkillInFolder stay loud not-supported (M2 degradation)', () => {
+      const api = makeApi() as unknown as Record<string, () => unknown>;
+      for (const method of ['openSkillInEditor', 'showSkillInFolder']) {
+        expect(() => api[method]('/tmp/skill/SKILL.md')).toThrow(HttpShimNotSupportedError);
+        expect(() => api[method]('/tmp/skill/SKILL.md')).toThrow(new RegExp(method));
+      }
+    });
+  });
+
+  describe('custom MCP connector CRUD', () => {
+    it('getConnectors reads the connectors.list registry', async () => {
+      const connectors = [
+        { id: 'mcp-1', name: 'Linear', url: 'https://mcp.linear.app/sse', isEnabled: true },
+      ];
+      responses.set('connectors.list', connectors);
+      const api = makeApi();
+      await expect(api.getConnectors()).resolves.toEqual(connectors);
+      expect(lastCall()).toEqual({ method: 'connectors.list', params: undefined });
+    });
+
+    it('addConnector sanitizes, builds the desktop McpConnector row, upserts it, and echoes it back', async () => {
+      const api = makeApi();
+      const created = (await api.addConnector(
+        '  Linear MCP  ',
+        '  https://mcp.linear.app/sse  ',
+      )) as {
+        id: string;
+        name: string;
+        url: string;
+        status: string;
+        isEnabled: boolean;
+        createdAt: string;
+        updatedAt: string;
+      };
+      expect(lastCall()).toEqual({
+        method: 'connectors.upsert',
+        params: { connector: created },
+      });
+      expect(created.id).toMatch(/^mcp-[a-z0-9]+-[a-z0-9]+$/);
+      expect(created.name).toBe('Linear MCP');
+      expect(created.url).toBe('https://mcp.linear.app/sse');
+      expect(created.status).toBe('disconnected');
+      expect(created.isEnabled).toBe(true);
+      expect(created.createdAt).toBeTruthy();
+      expect(created.updatedAt).toBe(created.createdAt);
+      // No connectors.deleteTokens / setStatus side effects on plain add.
+      expect(calls).toHaveLength(1);
+    });
+
+    it('addConnector rejects malformed and non-http(s) URLs before any RPC', async () => {
+      const api = makeApi();
+      for (const badUrl of ['not a url', 'file:///etc/passwd', 'ws://mcp.example.com']) {
+        await expect(api.addConnector('x', badUrl)).rejects.toThrow(
+          errMessageRe(badUrl === 'not a url' ? 'Invalid connector URL' : 'http'),
+        );
+      }
+      expect(calls).toEqual([]);
+    });
+
+    it('addConnector length-guards name and url locally (sanitizeString)', async () => {
+      const api = makeApi();
+      await expect(api.addConnector('x'.repeat(129), 'https://mcp.example.com')).rejects.toThrow(
+        /exceeds maximum length of 128/,
+      );
+      await expect(api.addConnector('ok', `https://${'a'.repeat(600)}.com`)).rejects.toThrow(
+        /exceeds maximum length of 512/,
+      );
+      expect(calls).toEqual([]);
+    });
+
+    it('deleteConnector mirrors desktop connectors:delete — deleteTokens first, then the row delete', async () => {
+      const api = makeApi();
+      await api.deleteConnector('mcp-1');
+      expect(calls).toEqual([
+        { method: 'connectors.deleteTokens', params: { connectorId: 'mcp-1' } },
+        { method: 'connectors.delete', params: { id: 'mcp-1' } },
+      ]);
+    });
+
+    it('setConnectorEnabled maps to connectors.setEnabled { id, enabled }', async () => {
+      const api = makeApi();
+      await api.setConnectorEnabled('mcp-1', false);
+      expect(lastCall()).toEqual({
+        method: 'connectors.setEnabled',
+        params: { id: 'mcp-1', enabled: false },
+      });
+    });
+
+    it('disconnectConnector mirrors desktop: deleteTokens + setStatus(disconnected)', async () => {
+      const api = makeApi();
+      await api.disconnectConnector('mcp-1');
+      expect(calls).toEqual([
+        { method: 'connectors.deleteTokens', params: { connectorId: 'mcp-1' } },
+        { method: 'connectors.setStatus', params: { id: 'mcp-1', status: 'disconnected' } },
+      ]);
+    });
+
+    it('the M6-deferred OAuth family stays loud not-supported', () => {
+      const api = makeApi() as unknown as Record<string, () => unknown>;
+      for (const method of [
+        'startConnectorOAuth',
+        'completeConnectorOAuth',
+        'getBuiltInConnectorAuthStatus',
+        'loginBuiltInConnector',
+        'logoutBuiltInConnector',
+        'lightdashGetServerUrl',
+        'lightdashSetServerUrl',
+        'datadogGetServerUrl',
+        'datadogSetServerUrl',
+        'getOpenAiOauthStatus',
+        'loginOpenAiWithChatGpt',
+        'getSlackMcpOauthStatus',
+        'loginSlackMcp',
+        'logoutSlackMcp',
+        'getCopilotOAuthStatus',
+        'loginGithubCopilot',
+        'logoutGithubCopilot',
+      ]) {
+        expect(() => api[method]()).toThrow(HttpShimNotSupportedError);
+      }
+    });
+  });
+});
+
+/** Build a loose matcher for thrown shim error messages. */
+function errMessageRe(fragment: string): RegExp {
+  return new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+}
+
 describe('getAccomplish fallback chain', () => {
   // The web test setup installs a global window.accomplish mock for the
   // Electron path; these tests exercise the gateway fallback, so it is

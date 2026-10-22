@@ -31,24 +31,24 @@ Nestings are flattened: `gws.*` and `analytics.*` per sub-method; the namespace 
 | Measure                                                 | Value                                                          |
 | ------------------------------------------------------- | -------------------------------------------------------------- |
 | Declared AccomplishAPI entries                          | **249** (204 top-level methods + 8 gws._ + 37 analytics._)     |
-| Shim functional (implemented)                           | **126**                                                        |
+| Shim functional (implemented)                           | **136**                                                        |
 | Shim no-op                                              | **45**                                                         |
 | Shim optional-absent                                    | **7**                                                          |
-| Shim unavailable                                        | **71**                                                         |
+| Shim unavailable                                        | **61**                                                         |
 | Shim-implemented not declared on AccomplishAPI (extras) | 2                                                              |
-| Gateway allowlist entries                               | **85**                                                         |
+| Gateway allowlist entries                               | **94**                                                         |
 | Gateway blocklist entries                               | 7                                                              |
-| Daemon registered methods                               | **134** (132 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
-| Daemon registered not allowlisted                       | 49                                                             |
+| Daemon registered methods                               | **135** (133 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
+| Daemon registered not allowlisted                       | 41                                                             |
 
 ### Reconciliation with plan §2.2 (measured vs known facts)
 
 Plan §2.2 (verified 2026-10-21) states: AccomplishAPI = 249 methods · shim implements 129 (7 no-op) · 120 unavailable · allowlist 62 · daemon exposes 125. The checked-in numbers below are THIS run's real measure; each line reconciles the two accountings or flags drift.
 
-- ✓ plan "129 implemented" = 126 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
-- ✓ plan "120 unavailable" = 71 unavailable + 7 optional-absent (browser-preview 6 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented. Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
-- ✓ allowlist 85 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) = 85 — matches the M2 expansion
-- ✓ daemon registered 134 (132 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) = 134. Arithmetic matches.
+- ✓ plan "129 implemented" = 136 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries + 10 T2 skills/connector-CRUD entries and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
+- ✓ plan "120 unavailable" = 61 unavailable + 7 optional-absent (browser-preview 6 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented and the 10 entries T2 promoted (skills CRUD + connector CRUD). Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
+- ✓ allowlist 94 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + 9 T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) = 94 — matches the M2 expansion
+- ✓ daemon registered 135 (133 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) +1 T2 method (skills.addFromGitHub) = 135. Arithmetic matches.
 
 ## Summary per domain
 
@@ -65,8 +65,8 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | provider-configs    |      11 |          11 |     0 |               0 |           0 |          10 |                  0 |                      0 |            0 |          0 |
 | model-discovery     |      17 |          15 |     0 |               0 |           2 |           3 |                  0 |                      0 |            0 |          2 |
 | huggingface         |      10 |           0 |     1 |               0 |           9 |           0 |                  2 |                      0 |            0 |          8 |
-| skills              |      12 |           5 |     0 |               0 |           7 |           6 |                  2 |                      0 |            0 |          4 |
-| connectors          |      23 |           1 |     0 |               0 |          22 |           0 |                  4 |                      0 |            0 |         19 |
+| skills              |      12 |          10 |     0 |               0 |           2 |           9 |                  0 |                      0 |            0 |          3 |
+| connectors          |      23 |           6 |     0 |               0 |          17 |           5 |                  0 |                      0 |            0 |         18 |
 | gws                 |       8 |           0 |     0 |               0 |           8 |           0 |                  5 |                      0 |            0 |          2 |
 | whatsapp            |       6 |           2 |     0 |               0 |           4 |           0 |                  4 |                      0 |            0 |          2 |
 | speech              |       4 |           0 |     2 |               0 |           2 |           0 |                  0 |                      0 |            0 |          4 |
@@ -83,7 +83,7 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | build-capabilities  |       1 |           0 |     1 |               0 |           0 |           0 |                  0 |                      0 |            0 |          1 |
 | onboarding          |       2 |           2 |     0 |               0 |           0 |           2 |                  0 |                      0 |            0 |          0 |
 | opencode-cli        |       2 |           2 |     0 |               0 |           0 |           0 |                  0 |                      0 |            0 |          2 |
-| **TOTAL**           |     249 |         126 |    45 |               7 |          71 |          80 |                 18 |                      2 |            0 |        122 |
+| **TOTAL**           |     249 |         136 |    45 |               7 |          61 |          88 |                 12 |                      2 |            0 |        120 |
 
 ## Per-domain detail
 
@@ -263,52 +263,52 @@ Entries 10 — implemented 0 · no-op 1 · optional-absent 0 · unavailable 9 �
 
 ### skills
 
-Entries 12 — implemented 5 · no-op 0 · optional-absent 0 · unavailable 7 ｜ RPC: allowlisted 6 · registered-blocked 2 · blocklisted 0 · unregistered 0 · no-backing 4
+Entries 12 — implemented 10 · no-op 0 · optional-absent 0 · unavailable 2 ｜ RPC: allowlisted 9 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 3
 
-| Method               | Shim status | Backing RPC                | RPC policy status  | Note                                                          |
-| -------------------- | ----------- | -------------------------- | ------------------ | ------------------------------------------------------------- |
-| `getSkills`          | implemented | `skills.list`              | allowlisted        |                                                               |
-| `getEnabledSkills`   | implemented | `skills.listEnabled`       | allowlisted        |                                                               |
-| `setSkillEnabled`    | implemented | `skills.setEnabled`        | allowlisted        |                                                               |
-| `getSkillContent`    | implemented | `skills.getContent`        | allowlisted        |                                                               |
-| `getUserSkillsPath`  | unavailable | `skills.getUserSkillsPath` | allowlisted        | registered + allowlisted but shim method absent — M2 wires it |
-| `pickSkillFolder`    | unavailable | —                          | —                  | host /pick-folder (HTTP zenity) reuse — M2                    |
-| `addSkillFromFolder` | unavailable | `skills.addFromPath`       | registered-blocked |                                                               |
-| `addSkillFromGitHub` | unavailable | —                          | —                  | no daemon RPC — fetch+verify path TBD (post-M2)               |
-| `deleteSkill`        | unavailable | `skills.delete`            | registered-blocked |                                                               |
-| `resyncSkills`       | implemented | `skills.resync`            | allowlisted        |                                                               |
-| `openSkillInEditor`  | unavailable | —                          | —                  | Electron shell-open; browser equivalent TBD                   |
-| `showSkillInFolder`  | unavailable | —                          | —                  | Electron shell-open; browser equivalent TBD                   |
+| Method               | Shim status | Backing RPC                | RPC policy status | Note                                                                                                                                   |
+| -------------------- | ----------- | -------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `getSkills`          | implemented | `skills.list`              | allowlisted       |                                                                                                                                        |
+| `getEnabledSkills`   | implemented | `skills.listEnabled`       | allowlisted       |                                                                                                                                        |
+| `setSkillEnabled`    | implemented | `skills.setEnabled`        | allowlisted       |                                                                                                                                        |
+| `getSkillContent`    | implemented | `skills.getContent`        | allowlisted       |                                                                                                                                        |
+| `getUserSkillsPath`  | implemented | `skills.getUserSkillsPath` | allowlisted       | T2 wired — registered + allowlisted pre-T2; the shim method now exists                                                                 |
+| `pickSkillFolder`    | implemented | —                          | —                 | T2 wired — host /pick-folder reuse (same zenity folder dialog as workspace picking, v1)                                                |
+| `addSkillFromFolder` | implemented | `skills.addFromPath`       | allowlisted       | T2 wired                                                                                                                               |
+| `addSkillFromGitHub` | implemented | `skills.addFromGitHub`     | allowlisted       | T2 — new daemon RPC (§5.4-paired); URL normalization reuses agent-core addSkill → addFromUrl → resolveGithubRawUrl                     |
+| `deleteSkill`        | implemented | `skills.delete`            | allowlisted       | T2 wired                                                                                                                               |
+| `resyncSkills`       | implemented | `skills.resync`            | allowlisted       |                                                                                                                                        |
+| `openSkillInEditor`  | unavailable | —                          | —                 | M2 documented degradation — Electron shell.openPath has no browser surface (M6 candidate); UI call sites try/catch and degrade         |
+| `showSkillInFolder`  | unavailable | —                          | —                 | M2 documented degradation — Electron shell.showItemInFolder has no browser surface (M6 candidate); UI call sites try/catch and degrade |
 
 ### connectors
 
-Entries 23 — implemented 1 · no-op 0 · optional-absent 0 · unavailable 22 ｜ RPC: allowlisted 0 · registered-blocked 4 · blocklisted 0 · unregistered 0 · no-backing 19
+Entries 23 — implemented 6 · no-op 0 · optional-absent 0 · unavailable 17 ｜ RPC: allowlisted 5 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 18
 
-| Method                          | Shim status | Backing RPC             | RPC policy status  | Note                                                                     |
-| ------------------------------- | ----------- | ----------------------- | ------------------ | ------------------------------------------------------------------------ |
-| `getOpenAiOauthStatus`          | unavailable | —                       | —                  | M6 — maps to auth.openai.status                                          |
-| `loginOpenAiWithChatGpt`        | unavailable | —                       | —                  | M6 — maps to auth.openai.startLogin + awaitCompletion                    |
-| `getSlackMcpOauthStatus`        | unavailable | —                       | —                  | M6                                                                       |
-| `loginSlackMcp`                 | unavailable | —                       | —                  | M6 — built-in connector login path                                       |
-| `logoutSlackMcp`                | unavailable | —                       | —                  | M6                                                                       |
-| `getCopilotOAuthStatus`         | unavailable | —                       | —                  | M6                                                                       |
-| `loginGithubCopilot`            | unavailable | —                       | —                  | M6                                                                       |
-| `logoutGithubCopilot`           | unavailable | —                       | —                  | M6                                                                       |
-| `getConnectors`                 | unavailable | `connectors.list`       | registered-blocked |                                                                          |
-| `addConnector`                  | unavailable | `connectors.upsert`     | registered-blocked |                                                                          |
-| `deleteConnector`               | unavailable | `connectors.delete`     | registered-blocked |                                                                          |
-| `setConnectorEnabled`           | unavailable | `connectors.setEnabled` | registered-blocked |                                                                          |
-| `startConnectorOAuth`           | unavailable | —                       | —                  | M6 oauth re-homing to host loopbacks                                     |
-| `completeConnectorOAuth`        | unavailable | —                       | —                  | M6 oauth re-homing to host loopbacks                                     |
-| `disconnectConnector`           | unavailable | —                       | —                  | M6 — probable backing connectors.deleteTokens; confirm at implementation |
-| `onMcpAuthCallback?`            | implemented | —                       | —                  | WS control event mcp-callback (deep link)                                |
-| `getBuiltInConnectorAuthStatus` | unavailable | —                       | —                  | M6 built-in connector token state                                        |
-| `loginBuiltInConnector`         | unavailable | —                       | —                  | M6 oauth re-homing to host loopbacks                                     |
-| `logoutBuiltInConnector`        | unavailable | —                       | —                  | M6                                                                       |
-| `lightdashGetServerUrl`         | unavailable | —                       | —                  | M6                                                                       |
-| `lightdashSetServerUrl`         | unavailable | —                       | —                  | M6                                                                       |
-| `datadogGetServerUrl`           | unavailable | —                       | —                  | M6                                                                       |
-| `datadogSetServerUrl`           | unavailable | —                       | —                  | M6                                                                       |
+| Method                          | Shim status | Backing RPC               | RPC policy status | Note                                                                                                                           |
+| ------------------------------- | ----------- | ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `getOpenAiOauthStatus`          | unavailable | —                         | —                 | M6 — maps to auth.openai.status                                                                                                |
+| `loginOpenAiWithChatGpt`        | unavailable | —                         | —                 | M6 — maps to auth.openai.startLogin + awaitCompletion                                                                          |
+| `getSlackMcpOauthStatus`        | unavailable | —                         | —                 | M6                                                                                                                             |
+| `loginSlackMcp`                 | unavailable | —                         | —                 | M6 — built-in connector login path                                                                                             |
+| `logoutSlackMcp`                | unavailable | —                         | —                 | M6                                                                                                                             |
+| `getCopilotOAuthStatus`         | unavailable | —                         | —                 | M6                                                                                                                             |
+| `loginGithubCopilot`            | unavailable | —                         | —                 | M6                                                                                                                             |
+| `logoutGithubCopilot`           | unavailable | —                         | —                 | M6                                                                                                                             |
+| `getConnectors`                 | implemented | `connectors.list`         | allowlisted       | T2 wired                                                                                                                       |
+| `addConnector`                  | implemented | `connectors.upsert`       | allowlisted       | T2 wired — shim builds the full McpConnector row client-side (desktop connectors:add parity)                                   |
+| `deleteConnector`               | implemented | `connectors.delete`       | allowlisted       | T2 wired — pairs connectors.deleteTokens with the row delete (desktop connectors:delete parity)                                |
+| `setConnectorEnabled`           | implemented | `connectors.setEnabled`   | allowlisted       | T2 wired                                                                                                                       |
+| `startConnectorOAuth`           | unavailable | —                         | —                 | M6 oauth re-homing to host loopbacks                                                                                           |
+| `completeConnectorOAuth`        | unavailable | —                         | —                 | M6 oauth re-homing to host loopbacks                                                                                           |
+| `disconnectConnector`           | implemented | `connectors.deleteTokens` | allowlisted       | T2 wired — desktop parity: deleteTokens + connectors.setStatus(disconnected) (backing lists the token scrub; both allowlisted) |
+| `onMcpAuthCallback?`            | implemented | —                         | —                 | WS control event mcp-callback (deep link)                                                                                      |
+| `getBuiltInConnectorAuthStatus` | unavailable | —                         | —                 | M6 built-in connector token state                                                                                              |
+| `loginBuiltInConnector`         | unavailable | —                         | —                 | M6 oauth re-homing to host loopbacks                                                                                           |
+| `logoutBuiltInConnector`        | unavailable | —                         | —                 | M6                                                                                                                             |
+| `lightdashGetServerUrl`         | unavailable | —                         | —                 | M6                                                                                                                             |
+| `lightdashSetServerUrl`         | unavailable | —                         | —                 | M6                                                                                                                             |
+| `datadogGetServerUrl`           | unavailable | —                         | —                 | M6                                                                                                                             |
+| `datadogSetServerUrl`           | unavailable | —                         | —                 | M6                                                                                                                             |
 
 OpenAI (ChatGPT) / Slack-MCP / GitHub-Copilot OAuth methods are grouped here (built-in connector/OAuth login family); M6 re-homes their flows to host loopbacks.
 
@@ -562,4 +562,4 @@ Control events: `mcp-callback`, `daemon:disconnected`, `daemon:reconnected`, `da
 
 ## Appendix D — shim transport.call coverage (self-check)
 
-All 76 distinct `transport.call` targets are allowlisted — verified at generation time.
+All 86 distinct `transport.call` targets are allowlisted — verified at generation time.

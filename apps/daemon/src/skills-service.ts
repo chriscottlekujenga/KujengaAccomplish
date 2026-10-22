@@ -98,6 +98,23 @@ export class SkillsService extends EventEmitter {
     return skill;
   }
 
+  /**
+   * Import a skill from a raw GitHub URL (Phase 3 M2 T2). The URL is
+   * normalized inside agent-core (`addSkill` dispatches http(s) sources to
+   * `addFromUrl` → `resolveGithubRawUrl`, which re-validates the
+   * https + github.com/raw.githubusercontent.com host set). Desktop's
+   * `addFromGitHub` rides the same `addFromPath` RPC with the URL as
+   * source, so behavior parity is delegated, not duplicated.
+   */
+  async addFromGitHub(rawUrl: string): Promise<Skill> {
+    const skill = await this.inner.addSkill(rawUrl);
+    if (!skill) {
+      throw new Error('Failed to import skill from GitHub');
+    }
+    this.emitChange('added');
+    return skill;
+  }
+
   delete(skillId: string): void {
     const deleted = this.inner.deleteSkill(skillId);
     if (!deleted) {
