@@ -1460,6 +1460,94 @@ describe('M2 T2 skills/connector CRUD shim (accomplish-http)', () => {
   });
 });
 
+// ── M2 T3: file attachments routed through the authorized host picker ───────
+
+describe('M2 T3 file-attachment shim (accomplish-http)', () => {
+  let transport: HttpTransport;
+  let pickFiles: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    pickFiles = vi.fn(async () => [
+      {
+        id: 'u1',
+        name: 'a.md',
+        path: '/home/chris/a.md',
+        type: 'text',
+        size: 3,
+        content: 'hi\n',
+      },
+    ]);
+    transport = {
+      call: async () => null,
+      openExternal: async () => {},
+      pickFolder: async () => null,
+      pickFiles,
+      health: async () => ({ ok: true, version: '0.1.0', platform: 'linux' }),
+      clientLog: vi.fn(async () => undefined),
+      cliStatus: vi.fn(async () => ({
+        installed: true,
+        version: '1.14.18',
+        installCommand: 'npm i -g opencode-ai',
+      })),
+      autostartStatus: vi.fn(async () => ({ enabled: false, active: false })),
+    } as unknown as HttpTransport;
+  });
+
+  function makeApi() {
+    return createHttpAccomplishApi({
+      baseUrl: 'http://127.0.0.1:8123',
+      token: TEST_TOKEN,
+      transport,
+      events: new FakeEventStream() as unknown as GatewayEventStream,
+    });
+  }
+
+  it('processDroppedFiles re-opens the authorized host /pick-files flow (paths argument is unusable off-Electron)', async () => {
+    const api = makeApi();
+    // The paths argument documents the desktop contract only: browser-dropped
+    // File objects cannot reveal local paths, so the shim ignores it and
+    // re-opens the authorized picker.
+    const files = await api.processDroppedFiles(['/ignored', '/also-ignored']);
+    expect(pickFiles).toHaveBeenCalledTimes(1);
+    expect(pickFiles).toHaveBeenCalledWith();
+    expect(files).toEqual([
+      {
+        id: 'u1',
+        name: 'a.md',
+        path: '/home/chris/a.md',
+        type: 'text',
+        size: 3,
+        content: 'hi\n',
+      },
+    ]);
+  });
+
+  it('processDroppedFiles rows keep exact FileAttachmentInfo shape parity with /pick-files', async () => {
+    const api = makeApi();
+    const files = await api.processDroppedFiles([]);
+    // Host /pick-files rows already carry every FileAttachmentInfo field
+    // (id/name/path/type/size + optional content) — no shim normalization
+    // added, so the returned keys must match the host contract 1:1 and no
+    // synthetic fields (e.g. mimeType) sneak in.
+    expect(Object.keys(files[0]).sort()).toEqual(['content', 'id', 'name', 'path', 'size', 'type']);
+    expect(files[0].id).toBeTypeOf('string');
+    expect(files[0].type).toBe('text');
+    expect(files[0].size).toBeTypeOf('number');
+  });
+
+  it('processDroppedFiles surfaces picker cancel as an empty list', async () => {
+    pickFiles.mockResolvedValue([]);
+    const api = makeApi();
+    await expect(api.processDroppedFiles([])).resolves.toEqual([]);
+  });
+
+  it('getFilePath stays a loud not-supported stub (never pretends a browser File has a path)', () => {
+    const api = makeApi() as unknown as Record<string, (file: File) => string>;
+    expect(() => api.getFilePath(new File([], 'dropped.txt'))).toThrow(HttpShimNotSupportedError);
+    expect(() => api.getFilePath(new File([], 'dropped.txt'))).toThrow(errMessageRe('getFilePath'));
+  });
+});
+
 /** Build a loose matcher for thrown shim error messages. */
 function errMessageRe(fragment: string): RegExp {
   return new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));

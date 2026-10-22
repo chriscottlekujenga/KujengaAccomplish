@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FileAttachmentInfo } from '@accomplish_ai/agent-core/common';
 import { createLogger } from '../../lib/logger';
 import { MAX_FILES } from '../../lib/fileUtils';
-import { getAccomplish } from '../../lib/accomplish';
+import { getAccomplish, isRunningInElectron } from '../../lib/accomplish';
 
 const logger = createLogger('ExecutionAttachments');
 
@@ -79,6 +79,27 @@ export function useExecutionAttachments(accomplish: Accomplish) {
       }
     }
     if (filePaths.length === 0) {
+      // Browser drops cannot surface local paths — the picker flow is the
+      // authorized path (plan §6 M2.3). Re-open the authorized host picker
+      // once and treat its result as the drop's attachments. Electron keeps
+      // today's silent return (zero behavior change): paths always resolve
+      // there, and no-file drops already returned above.
+      if (!isRunningInElectron()) {
+        try {
+          const newAttachments = await accomplish.processDroppedFiles([]);
+          if (newAttachments.length > 0) {
+            setAttachments((prev) => {
+              const remaining = MAX_FILES - prev.length;
+              if (remaining <= 0) {
+                return prev;
+              }
+              return [...prev, ...newAttachments.slice(0, remaining)];
+            });
+          }
+        } catch (err) {
+          logger.error('Failed to process dropped files:', err);
+        }
+      }
       return;
     }
     try {

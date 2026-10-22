@@ -1081,6 +1081,17 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     pickFolder: () => transport.pickFolder() as Promise<string | null>,
     pickFiles: () => transport.pickFiles() as Promise<FileAttachmentInfo[]>,
 
+    // ── File attachments (Phase 3 M2 T3; grouped decisions, plan §6 M2.3) ──
+    // Drag-dropped browser `File` objects cannot reveal local paths, so
+    // `processDroppedFiles` ignores its paths argument (unusable off-Electron)
+    // and re-opens the AUTHORIZED host picker — the picker flow remains the
+    // authorized path. `/pick-files` rows already match `FileAttachmentInfo`
+    // exactly (id/name/path/type/size/content?), so no normalization.
+    // `getFilePath` stays UNAVAILABLE (loud Proxy throw): it must never
+    // pretend a browser `File` has a path.
+    processDroppedFiles: (_paths: string[]): Promise<FileAttachmentInfo[]> =>
+      transport.pickFiles() as Promise<FileAttachmentInfo[]>,
+
     // ── Deep-link callbacks (accomplish:// OAuth) ──
     onMcpAuthCallback: (callback: (url: string) => void): (() => void) =>
       events.onControlEvent('mcp-callback', (params) => {

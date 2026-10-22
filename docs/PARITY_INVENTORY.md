@@ -31,10 +31,10 @@ Nestings are flattened: `gws.*` and `analytics.*` per sub-method; the namespace 
 | Measure                                                 | Value                                                          |
 | ------------------------------------------------------- | -------------------------------------------------------------- |
 | Declared AccomplishAPI entries                          | **249** (204 top-level methods + 8 gws._ + 37 analytics._)     |
-| Shim functional (implemented)                           | **136**                                                        |
+| Shim functional (implemented)                           | **137**                                                        |
 | Shim no-op                                              | **45**                                                         |
 | Shim optional-absent                                    | **7**                                                          |
-| Shim unavailable                                        | **61**                                                         |
+| Shim unavailable                                        | **60**                                                         |
 | Shim-implemented not declared on AccomplishAPI (extras) | 2                                                              |
 | Gateway allowlist entries                               | **94**                                                         |
 | Gateway blocklist entries                               | 7                                                              |
@@ -45,8 +45,8 @@ Nestings are flattened: `gws.*` and `analytics.*` per sub-method; the namespace 
 
 Plan §2.2 (verified 2026-10-21) states: AccomplishAPI = 249 methods · shim implements 129 (7 no-op) · 120 unavailable · allowlist 62 · daemon exposes 125. The checked-in numbers below are THIS run's real measure; each line reconciles the two accountings or flags drift.
 
-- ✓ plan "129 implemented" = 136 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries + 10 T2 skills/connector-CRUD entries and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
-- ✓ plan "120 unavailable" = 61 unavailable + 7 optional-absent (browser-preview 6 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented and the 10 entries T2 promoted (skills CRUD + connector CRUD). Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
+- ✓ plan "129 implemented" = 137 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries + 10 T2 skills/connector-CRUD entries + 1 T3 file-attachment-drop entry (processDroppedFiles → host picker) and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
+- ✓ plan "120 unavailable" = 60 unavailable + 7 optional-absent (browser-preview 6 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented, the 10 entries T2 promoted (skills CRUD + connector CRUD), and the 1 entry T3 promoted (processDroppedFiles via the host picker). Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
 - ✓ allowlist 94 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + 9 T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) = 94 — matches the M2 expansion
 - ✓ daemon registered 135 (133 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage — deliberately not allowlisted), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) +1 T2 method (skills.addFromGitHub) = 135. Arithmetic matches.
 
@@ -70,7 +70,7 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | gws                 |       8 |           0 |     0 |               0 |           8 |           0 |                  5 |                      0 |            0 |          2 |
 | whatsapp            |       6 |           2 |     0 |               0 |           4 |           0 |                  4 |                      0 |            0 |          2 |
 | speech              |       4 |           0 |     2 |               0 |           2 |           0 |                  0 |                      0 |            0 |          4 |
-| file-attachments    |       4 |           2 |     0 |               0 |           2 |           0 |                  0 |                      0 |            0 |          4 |
+| file-attachments    |       4 |           3 |     0 |               0 |           1 |           0 |                  0 |                      0 |            0 |          4 |
 | browser-preview     |       6 |           0 |     0 |               6 |           0 |           0 |                  0 |                      0 |            0 |          6 |
 | daemon-control      |       5 |           1 |     0 |               0 |           4 |           2 |                  0 |                      0 |            0 |          3 |
 | bug-report          |       6 |           1 |     1 |               0 |           4 |           0 |                  1 |                      0 |            0 |          4 |
@@ -83,7 +83,7 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | build-capabilities  |       1 |           0 |     1 |               0 |           0 |           0 |                  0 |                      0 |            0 |          1 |
 | onboarding          |       2 |           2 |     0 |               0 |           0 |           2 |                  0 |                      0 |            0 |          0 |
 | opencode-cli        |       2 |           2 |     0 |               0 |           0 |           0 |                  0 |                      0 |            0 |          2 |
-| **TOTAL**           |     249 |         136 |    45 |               7 |          61 |          88 |                 12 |                      2 |            0 |        120 |
+| **TOTAL**           |     249 |         137 |    45 |               7 |          60 |          88 |                 12 |                      2 |            0 |        120 |
 
 ## Per-domain detail
 
@@ -355,16 +355,16 @@ Entries 4 — implemented 0 · no-op 2 · optional-absent 0 · unavailable 2 ｜
 
 ### file-attachments
 
-Entries 4 — implemented 2 · no-op 0 · optional-absent 0 · unavailable 2 ｜ RPC: allowlisted 0 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 4
+Entries 4 — implemented 3 · no-op 0 · optional-absent 0 · unavailable 1 ｜ RPC: allowlisted 0 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 4
 
-| Method                | Shim status | Backing RPC | RPC policy status | Note                                                                           |
-| --------------------- | ----------- | ----------- | ----------------- | ------------------------------------------------------------------------------ |
-| `pickFolder`          | implemented | —           | —                 | host /pick-folder (HTTP zenity)                                                |
-| `pickFiles`           | implemented | —           | —                 | host /pick-files (HTTP zenity)                                                 |
-| `getFilePath`         | unavailable | —           | —                 | M2 documented interface change: browser File objects cannot reveal local paths |
-| `processDroppedFiles` | unavailable | —           | —                 | M2: route drops through the host picker flow                                   |
+| Method                | Shim status | Backing RPC | RPC policy status | Note                                                                                                                                              |
+| --------------------- | ----------- | ----------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pickFolder`          | implemented | —           | —                 | host /pick-folder (HTTP zenity)                                                                                                                   |
+| `pickFiles`           | implemented | —           | —                 | host /pick-files (HTTP zenity; rows match FileAttachmentInfo 1:1)                                                                                 |
+| `getFilePath`         | unavailable | —           | —                 | stays unavailable (loud Proxy throw) — must never pretend a browser File has a path; the T3 drop flow routes around it                            |
+| `processDroppedFiles` | implemented | —           | —                 | T3 wired — re-opens the authorized host /pick-files flow (browser drops cannot reveal local paths, so the paths argument is ignored off-Electron) |
 
-`pickFolder` also serves the skills picker. M2 documents that browser-dropped `File` objects cannot reveal local paths — the picker flow is the authorized path (plan §6 M2.3).
+`pickFolder` also serves the skills picker. M2 T3 documents that browser-dropped `File` objects cannot reveal local paths: `processDroppedFiles` re-opens the authorized host `/pick-files` flow (the paths argument is unusable off-Electron) while `getFilePath` stays unavailable — the picker flow is the authorized path (plan §6 M2.3).
 
 ### browser-preview
 

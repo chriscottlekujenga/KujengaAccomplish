@@ -84,6 +84,11 @@
  *     The T2 scrubber also grew SECRET_FIELD_NAMES by 'clientSecret'
  *     (DCR-issued OAuth client secret riding clientRegistration in
  *     connectors.list rows).
+ *   M2 T3 wires file-attachment drops through the AUTHORIZED host picker:
+ *     processDroppedFiles promotes to implemented via transport.pickFiles
+ *     (host /pick-files — no new RPC, no allowlist delta), while
+ *     getFilePath stays unavailable by design (browser File objects cannot
+ *     reveal local paths; picker flow is the authorized path, plan §6 M2.3).
  *
  * ── Self-checks (exit 1 on failure) ────────────────────────────────────────
  *   - parse-unknown: any declared entry without a domain → loud failure.
@@ -446,7 +451,7 @@ const DOMAIN_METHODS = {
 /** Per-domain footnotes (optional; rendered under each table). */
 const DOMAIN_NOTES = {
   'file-attachments':
-    '`pickFolder` also serves the skills picker. M2 documents that browser-dropped `File` objects cannot reveal local paths — the picker flow is the authorized path (plan §6 M2.3).',
+    '`pickFolder` also serves the skills picker. M2 T3 documents that browser-dropped `File` objects cannot reveal local paths: `processDroppedFiles` re-opens the authorized host `/pick-files` flow (the paths argument is unusable off-Electron) while `getFilePath` stays unavailable — the picker flow is the authorized path (plan §6 M2.3).',
   scheduler:
     '`isAutoStartEnabled` reads host systemd autostart over HTTP, not scheduler RPC; kept in scheduler as it feeds the same settings page.',
   connectors:
@@ -763,14 +768,20 @@ const SHIM_RPC_MAP = {
   speechValidate: { rpc: null, note: 'M6 — feature-flagged OFF, graceful degradation' },
   speechTranscribe: { rpc: null, note: 'M6 — feature-flagged OFF, graceful degradation' },
 
-  // ── file-attachments ───────────────────────────────────────────────────
+  // ── file-attachments (M2 T3: drop flow routed through the picker) ──────
   pickFolder: { rpc: null, note: 'host /pick-folder (HTTP zenity)' },
-  pickFiles: { rpc: null, note: 'host /pick-files (HTTP zenity)' },
+  pickFiles: {
+    rpc: null,
+    note: 'host /pick-files (HTTP zenity; rows match FileAttachmentInfo 1:1)',
+  },
   getFilePath: {
     rpc: null,
-    note: 'M2 documented interface change: browser File objects cannot reveal local paths',
+    note: 'stays unavailable (loud Proxy throw) — must never pretend a browser File has a path; the T3 drop flow routes around it',
   },
-  processDroppedFiles: { rpc: null, note: 'M2: route drops through the host picker flow' },
+  processDroppedFiles: {
+    rpc: null,
+    note: 'T3 wired — re-opens the authorized host /pick-files flow (browser drops cannot reveal local paths, so the paths argument is ignored off-Electron)',
+  },
 
   // ── browser-preview ────────────────────────────────────────────────────
   onBrowserFrame: { rpc: null, note: 'M2 on-demand screenshot v1 (dev-browser bridge)' },
@@ -1296,6 +1307,10 @@ const EXPECTED = {
   m2T2Implemented: 10,
   m2T2Registered: 1,
   m2T2AllowlistDelta: 9,
+  // Phase 3 M2 T3: file-attachment drop flow. processDroppedFiles promotes
+  // to implemented via the existing host /pick-files surface (getFilePath
+  // stays unavailable by design) — no new daemon RPC, no allowlist delta.
+  m2T3Implemented: 1,
 };
 
 const SANITY_CHECKS = [
@@ -1432,6 +1447,19 @@ const SANITY_CHECKS = [
       return open.shimStatus === 'unavailable' && show.shimStatus === 'unavailable';
     },
   },
+  {
+    label:
+      'processDroppedFiles implemented via host /pick-files reuse while getFilePath stays unavailable (M2 T3)',
+    when: (rows) => {
+      const dropped = rows.find((x) => x.name === 'processDroppedFiles');
+      const gfp = rows.find((x) => x.name === 'getFilePath');
+      return (
+        dropped.shimStatus === 'implemented' &&
+        gfp.shimStatus === 'unavailable' &&
+        dropped.backing === null
+      );
+    },
+  },
 ];
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -1557,24 +1585,33 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
   const check = (ok, text) => rec.push(`${ok ? '✓' : '✗'} ${text}`);
   const implInvariant =
     totals.implemented + totals['no-op'] ===
-    EXPECTED.planImplemented + EXPECTED.m2T1bImplemented + EXPECTED.m2T2Implemented;
+    EXPECTED.planImplemented +
+      EXPECTED.m2T1bImplemented +
+      EXPECTED.m2T2Implemented +
+      EXPECTED.m2T3Implemented;
   check(
     implInvariant,
     `plan "129 implemented" = ${totals.implemented} functional + ${totals['no-op']} no-op, where ` +
       `functional = 84 pre-T1b + ${EXPECTED.m2T1bImplemented} T1b-shim-wired entries + ` +
-      `${EXPECTED.m2T2Implemented} T2 skills/connector-CRUD entries and measured no-op ${totals['no-op']} = ` +
+      `${EXPECTED.m2T2Implemented} T2 skills/connector-CRUD entries + ` +
+      `${EXPECTED.m2T3Implemented} T3 file-attachment-drop entry (processDroppedFiles → host picker) ` +
+      `and measured no-op ${totals['no-op']} = ` +
       `8 top-level no-ops + 37 analytics.*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op ` +
       'family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). ' +
       (implInvariant ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   const unavailInvariant =
     totals.unavailable + totals['optional-absent'] ===
-    EXPECTED.planUnavailable - EXPECTED.m2T1bImplemented - EXPECTED.m2T2Implemented;
+    EXPECTED.planUnavailable -
+      EXPECTED.m2T1bImplemented -
+      EXPECTED.m2T2Implemented -
+      EXPECTED.m2T3Implemented;
   check(
     unavailInvariant,
     `plan "120 unavailable" = ${totals.unavailable} unavailable + ${totals['optional-absent']} optional-absent ` +
       `(browser-preview 6 + onWorkspaceDeleted), minus the ${EXPECTED.m2T1bImplemented} entries T1b promoted to ` +
-      `implemented and the ${EXPECTED.m2T2Implemented} entries T2 promoted (skills CRUD + connector CRUD). ` +
+      `implemented, the ${EXPECTED.m2T2Implemented} entries T2 promoted (skills CRUD + connector CRUD), and the ` +
+      `${EXPECTED.m2T3Implemented} entry T3 promoted (processDroppedFiles via the host picker). ` +
       'Plan\'s "GWS (8)" = the 8 gws.* sub-methods (shim-side they throw while the parent namespace ' +
       'is absent). ' +
       (unavailInvariant ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
