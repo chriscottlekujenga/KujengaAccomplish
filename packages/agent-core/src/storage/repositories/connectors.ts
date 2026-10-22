@@ -76,6 +76,10 @@ export function getConnectorById(id: string): McpConnector | null {
 
 export function upsertConnector(connector: McpConnector): void {
   const db = getDatabase();
+  // The upsert contract tolerates connector payloads without timestamps
+  // (e.g. authorized socket clients); both columns are NOT NULL, so default
+  // them here at the storage choke point rather than trusting every caller.
+  const now = new Date().toISOString();
   db.prepare(
     `
     INSERT INTO connectors (id, name, url, status, is_enabled, oauth_metadata_json, client_registration_json, last_connected_at, created_at, updated_at)
@@ -99,8 +103,8 @@ export function upsertConnector(connector: McpConnector): void {
     connector.oauthMetadata ? JSON.stringify(connector.oauthMetadata) : null,
     connector.clientRegistration ? JSON.stringify(connector.clientRegistration) : null,
     connector.lastConnectedAt || null,
-    connector.createdAt,
-    connector.updatedAt,
+    connector.createdAt ?? now,
+    connector.updatedAt ?? now,
   );
 }
 
