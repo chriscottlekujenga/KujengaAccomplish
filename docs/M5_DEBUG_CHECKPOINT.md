@@ -80,6 +80,31 @@ The soak harness `/tmp/opencode/m4-soak/soak.mjs` was LOST (non-persistent `/tmp
 4. Daemon spawn env includes `ACCOMPLISH_APP_PATH=<repo>/apps/desktop` (dev-mode CLI resolution; same value the host passes).
 5. The shared soak data dir was wiped once after a failed attempt poisoned it with future-dated seeds; the green builder+formal pair ran on the fresh dir. Within-run DB durability is fully demonstrated (restarts + recovery asserts on the same sqlite); the M4 cross-run history-adoption evidence was not re-reproduced (not a T3 acceptance item).
 
+### D. T4 — M3/C3 linux-desktop recheck at final HEAD (2026-10-23, no code, verified)
+
+The Phase-1 driver `/tmp/opencode/m3c3-poc/driver.mjs` was LOST (non-persistent `/tmp`) and recreated from §21.2 semantics: `StdioClientTransport` + `env: process.env`, per-call timeout 170 s, bundled Node bin + `packages/agent-core/mcp-tools/linux-desktop/dist/index.mjs` (mirroring production `resolveMcpCommand`), blocklist stub `.desktop` under `/tmp/opencode/m3c3-poc/stubs/`, SDK 1.32.1 imported via a `/tmp` node_modules symlink to the package's npm tree. `desktop_screenshot` EXCLUDED per T4 (portal consent = T7 checklist item). Operator present and informed (calculator launch + button clicks on the live desktop).
+
+**Result — ALL PASS (all six recorded steps):**
+
+| Step           | Outcome                                                                                                                                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| blocklist-deny | PASS — `/tmp/…/1password-stub.desktop` → `Blocked by desktop-control blocklist: 1Password` (deny BEFORE any gio call — M1 security surface re-proven live)                                                                 |
+| list_windows   | PASS — 7 applications (gnome-shell, ibus-extension-gtk3, update-notifier, evolution-alarm-notify, xdg-desktop-portal-gtk, gjs, org.gnome.Terminal)                                                                         |
+| launch         | PASS — `Launched org.gnome.Calculator.desktop.`                                                                                                                                                                            |
+| controls       | PASS — application `gnome-calculator`, **62 controls** (§21.2 parity), 24 buttons incl. the full grid; calc keys resolved with ids `a7/f0/p0.0.0.0.0.0.1.0.0.0.0.{0,6,17,7,23}` for C/4/×/5/= — same ids as §21.2's record |
+| calc           | PASS — 5 invokes (fresh discovery re-walk per click, per-click resolved ids): C:ok 4:ok ×:ok 5:ok =:ok                                                                                                                     |
+| read           | PASS — nameless display node `a7/f0/p0.0.0.0.0.0.0.1.0.0.0` → text **"20"** (4 × 5 = 20 verified)                                                                                                                          |
+
+Driver summary: `SUMMARY blocklist-deny=PASS list_windows=PASS launch=PASS controls=PASS calc=PASS read=PASS (ALL PASS)`, exit 0. The M3/C3 desktop MCP tool surface is intact at final M5 HEAD (incl. the agent-core config-generation neighborhood touched by `c505e74` — this package's registration path is unchanged and its dist was fresh vs src).
+
+**Recreation findings (transparent, all harness-side; no repo code changed):**
+
+1. **Bundled-arch selection (lesson, not a product bug).** First attempt spawned the `linux-x64` bundled Node → instant child death: bash `cannot execute binary file: Exec format error` (126); inside the SDK's cross-spawn path the symptom was `…/bin/node: 1: Syntax error: ")" unexpected` → `MCP error -32000: Connection closed`. Cause: **this machine is aarch64** (`uname -m` = aarch64, `process.arch` = arm64) and a linux-x64 ELF simply cannot exec here. Production is unaffected — `config-generator.ts` passes the `<platform>-<arch>` bundle for the running platform (the C3 Phase-2 full-stack task at §21.2 used it), so this was a harness recreation bug. Driver now resolves `resources/nodejs/linux-{arm64|x64}/…/bin/node` by `process.arch`. Corroborates T5's ARM64 evidence (bundled linux-arm64 Node v24.15.0 present and executes).
+2. **Window-mapping latency.** Attempt 2 (after the arch fix) exhausted a 6×2 s retry while Calculator was absent from the AT-SPI tree; the operator confirms the app DID appear on the desktop during this period and may have been closed mid-test. The final attempt (8×3 s ≈ 24 s window, fresh launch, no interference) mapped the window on its FIRST retry attempt. Tool behavior unchanged; treat as environment/timing note.
+3. **§21.2 parity details.** Two nameless `role:'text'` nodes this run — the Calculator display `p0.0.0.0.0.0.0.1.0.0.0` and a companion `…1.1.0`; deepest-path selection picked the display correctly and `desktop_read` needed the `nodeId` exactly as §21.2/§21.4 recorded (name-based resolution cannot reach the nameless display).
+
+**Cleanup:** 0 leftover MCP server/child processes; no listeners on 9224/9324/9420; the launched Calculator instance was closed gracefully (SIGTERM) after verification (operator had agreed to keep it open only until testing finished). Production daemon pid 3945 untouched: cmdline-md5 `e08b3e1c87580f5bfc226dece18862eb` and environ-md5 `c7fa03b6db7000256ef0bab99fd81bdd` IDENTICAL pre/post (§1.C baseline). Repo tree clean — harness remains non-persistent by design (`/tmp/opencode/m3c3-poc/`).
+
 ---
 
 ## 2. Current bugs / open issues
@@ -117,6 +142,6 @@ No new product bugs discovered. All M1-M4 security/protection suites green at ha
 
 ## 5. Remaining tasks for M5
 
-**Handoff moved to `docs/M5_REMAINING_TASKS.md`** (small per-session tasks, 30–50K tokens each, one objective each, dependency-ordered T1–T8). Progress: **T1 DONE at `96a3fbe`** (flake fixed, suite committed, verified green twice consecutively; T2's commit folded into T1 per T1's own commit line — its post-commit re-verification remains). **T3 DONE** (M4 soak recheck — builder 2/2 + formal 6/6 PASS at final HEAD; §1.C). Next: T4 desktop-MCP → T5 ARM64 → T6 battery → T7 manual (with user) → T8 checkpoint closure.
+**Handoff moved to `docs/M5_REMAINING_TASKS.md`** (small per-session tasks, 30–50K tokens each, one objective each, dependency-ordered T1–T8). Progress: **T1 DONE at `96a3fbe`** (flake fixed, suite committed, verified green twice consecutively; T2's commit folded into T1 per T1's own commit line — its post-commit re-verification remains). **T3 DONE** (M4 soak recheck — builder 2/2 + formal 6/6 PASS at final HEAD; §1.C). **T4 DONE** (linux-desktop MCP recheck — all six steps PASS at final HEAD, §21.2 parity incl. live blocklist deny; §1.D). Next: T5 ARM64 → T6 battery → T7 manual (with user) → T8 checkpoint closure.
 
 **STOP after M5; M6 requires separate approval.**

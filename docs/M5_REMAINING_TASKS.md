@@ -1,6 +1,6 @@
 # M5 REMAINING TASKS — Small-Session Handoff Plan
 
-**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `96a3fbe` (T1 done; T3 soak recheck complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
+**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `a709b19` (code at T1 `96a3fbe`; T3 soak recheck + T4 desktop recheck complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
 
 **Session rules for every task:** one objective · 30–50K token budget · fresh session · run only the listed focused tests · commit verified results via the architect (or as instructed) · concise handoff report (state deltas only) · never touch `~/Accomplish`, `~/.local/share/Accomplish`, the production systemd daemon, or gateway policy files (`apps/host/src/policy.ts`) · never weaken M1 security.
 
@@ -63,12 +63,14 @@
 - **Commit:** no code; paste outcomes for the checkpoint docs (T8).
 - **Complexity:** S (harness is proven; runtime ~6 min).
 
-### T4 — M3/C3 linux-desktop re-check at final HEAD
+### T4 — M3/C3 linux-desktop re-check at final HEAD — **DONE (2026-10-23, no code)**
 
+- **Outcome:** driver recreated from checkpoint §21.2 after `/tmp` loss (arch-correct bundled Node v24.15.0 linux-arm64 + package dist + SDK 1.32.1). ALL six steps PASS in one run: `blocklist-deny=PASS list_windows=PASS launch=PASS controls=PASS calc=PASS read=PASS` — 62 controls (§21.2 parity); button ids `a7/f0/p0.0.0.0.0.0.1.0.0.0.0.{0,6,17,7,23}`; display node `a7/f0/p0.0.0.0.0.0.0.1.0.0.0` → text **"20"** (4 × 5). Screenshot correctly EXCLUDED (T7 item). Recreation findings recorded in debug checkpoint §1.D — notably: the `linux-x64` bundled Node is ENOEXEC on this **aarch64** machine (harness now arch-resolves like production; product unaffected) and the window-mapping retry window was widened (operator-confirmed mid-test close); M1 blocklist deny re-proven live BEFORE any `gio` call. Production daemon cmdline/environ md5s unchanged pre/post; 0 process leftovers; calculator instance closed gracefully post-verify. No repo files touched; harness non-persistent.
 - **Objective:** prove the desktop MCP surface still works after M5 changes (it shares agent-core config generation touched by `c505e74`).
-- **Files:** none in repo; harness `/tmp/opencode/m3c3-poc/driver.mjs` (exists per survey; recreate from checkpoint §21.2 if lost: MCP stdio driver → `desktop_list_windows` → launch Calculator → `desktop_find_controls` → 5 invokes → `desktop_read` → expect "20").
-- **Run:** driver as recorded; do NOT include `desktop_screenshot` (portal consent needs the operator — that is a T7 checklist item).
-- **Acceptance:** blocklist-deny + launch + controls + calc + read all PASS; record outcome lines. If a live Wayland prerequisite fails (at-spi down), record as environment note and defer to T7 — do not debug system services.
+- **Files:** none in repo.
+- **Run:** driver per §21.2 (`node /tmp/opencode/m3c3-poc/driver.mjs` — StdioClientTransport, env inherited, 170 s per-call timeout; `desktop_list_windows` → launch → `desktop_find_controls` (8×3 s retry) → 5 invokes → `desktop_read`); WITHOUT `desktop_screenshot` (portal consent needs the operator — T7 checklist item).
+- **Acceptance:** met — blocklist-deny + launch + controls + calc + read all PASS; full evidence `docs/M5_DEBUG_CHECKPOINT.md` §1.D.
+- **Commit:** no code; outcomes recorded for the checkpoint docs (T8).
 - **Complexity:** S.
 
 ### T5 — ARM64 compatibility record
