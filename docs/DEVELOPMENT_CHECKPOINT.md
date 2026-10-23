@@ -1,7 +1,7 @@
 # Development Checkpoint — Firefox Migration, Phase 2 / Phase 3 M1·M2
 
-**Date:** 2026-10-22/23 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `62e9aca` (+C3 commit)
-**Status:** Phase 2 complete (§B) AND Phase 3 M1 (security foundation) committed `d644f92` (§18) AND Phase 3 M2 (essential API functionality) complete (§19, 8 implementation commits + docs commit) AND Phase 3 M3 (Wayland desktop-control feasibility research) complete (§20, planning deliverable only). **C3 prototype (Phase-5B approval granted): COMPLETE 2026-10-23 — implemented, unit-verified, live-verified (Phase-1 driver + Phase-2 full-stack opencode task), battery green, committed (this commit; see §21). Nothing pushed/merged; `/home/chris/Accomplish` untouched.**
+**Date:** 2026-10-22/23 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `f40db12` (+M4 commits)
+**Status:** Phase 2 complete (§B) AND Phase 3 M1 (security foundation) committed `d644f92` (§18) AND Phase 3 M2 (essential API functionality) complete (§19, 8 implementation commits + docs commit) AND Phase 3 M3 (Wayland desktop-control feasibility research) complete (§20, planning deliverable only). **C3 prototype (Phase-5B approval granted): COMPLETE 2026-10-23 — implemented, unit-verified, live-verified, committed `a06b0ea` (see §21). Phase 3 M4 (unattended reliability + human-wait state machine): COMPLETE 2026-10-23, commits `43a68ea` (plan), `f40db12` (implementation), `0b428de` (sidecar shutdown fix) — see §22. Nothing pushed/merged; `/home/chris/Accomplish` untouched.**
 
 ---
 
@@ -432,3 +432,82 @@ Environment restored after the reboot: Wayland session + fresh at-spi/portal pro
 - Calculator button grid lives at ≤12 depth; default depth changed 8→12 (helper constant + discoverWindow + findControls) — live-proven at 62 controls.
 - Environment note (transparency): the FIRST Phase-2 run inherited the default `XDG_DATA_HOME`, so one demo session row landed in opencode's own session store (`~/.local/share/opencode` — opencode-native, no credentials involved); the second run scoped `XDG_DATA_HOME` to the /tmp userdata. Driver scripts now isolate storage by default.
 - Reboot kills the session: at-spi/portal processes (`at-spi-bus-launcher` pid 5340 etc.) respawn at next login with fresh pids/sockets — helper does not cache handles across calls (by design). Proven across the 2026-10-22→23 reboot boundary (fresh pids 16986+; no residue).
+
+---
+
+## 22. Phase 3 — M4 Unattended Reliability + Human-Wait State Machine (2026-10-23, commits `43a68ea`, `f40db12`, `0b428de`)
+
+Approved basis: Phase 3 plan §7 (M4) + the M4 approval directive's background-first / human-in-the-loop principles. Plan of record: `docs/PHASE_3_M4_PLAN.md` (Rev. 1; A/B/C separation honored — no silent scope expansion). Scope discipline: (A) approved M4 reliability work + (B) ONLY the minimal human-assistance infrastructure M4 requires; browser-session handoff and the agent-side assistance-request trigger are DESIGNED, NOT IMPLEMENTED (§C of the plan, dispositioned for later approval). M1 security surface untouched: allowlist 98 · blocklist 7 unchanged, scrubber/redaction/presence gate/socket 0600 intact (host suite green incl. tripwires).
+
+### 22.1 What was implemented (A — reliability)
+
+1. **Resume-time working-directory preservation (plan §7.1).** Migration `v032-task-working-directory` (`tasks.working_directory TEXT`, nullable, `CURRENT_VERSION`=32); `Task.workingDirectory?`; `saveTask` + `updateTaskWorkingDirectory`; `startTask` persists the injected cwd on the task row; `resumeSession` cwd resolution = explicit `params.workingDirectory` → the ORIGINAL task's stored `working_directory` → undefined (TaskManager default fallback — pre-migration rows behave exactly as before). `resumeSessionSchema` gained optional `workingDirectory` (additive; the daemon `session.resume` handler passes it through; both UI shims typecheck unchanged). Kills the checkpoint §17 debt item "resumeSession workingDirectory threading still M4": a resumed turn no longer risks (a) re-spawning `opencode serve` with the daemon cwd or (b) losing a user-picked folder.
+2. **Extensible watchdog keep-alive set (plan §7.2).** `AdapterOptions.watchdogKeepAliveEventTypes?: ReadonlySet<string>` merged over new defaults `['server.heartbeat', 'file.watcher.updated']` (the §17 "extensible set" item; a second high-frequency no-progress event can no longer mask stalls). `TaskInactivityWatchdog` itself unchanged.
+3. **systemd restart policy (plan §7.3) — verified already present, now locked.** Generator + installed unit both carried `Restart=on-failure` + `RestartSec=5`; host regression test now asserts both (`daemon-service.test.ts`), so the fields cannot silently regress. Restart behavior = 5 s respawn → PID-lock reclaim → crash-recovery sweep.
+4. **Rate-limiter reliability (plan §7.4, checkpoint §17 flake).** Per-token budget 600 → **1500**/60 s (fixed-window algorithm + keying unchanged; abuse cap retained) + env override `ACCOMPLISH_GATEWAY_RATE_LIMIT` (validated 60..100000, strict integer parse, invalid → default + `[host]` warning). Gateway resolves env only when the caller did not inject explicit options (tests always win). +12 tests incl. the reconnect-flood regression (1000-burst all allowed) and abuse-throttle (limit 5 → 6th throttled).
+5. **Correct restart behavior (plan §7.5 / directive §4).** Crash recovery extracted to `apps/daemon/src/crash-recovery.ts` (`recoverStaleTasks`) — semantics: ONLY stale `running` → `failed`; waiting/resuming/terminal rows survive byte-identically. New unit suite (10 seeded statuses) locks this. A `running` row remains the true-orphan signal; a waiting task is preserved with `session_id` + cwd so `session.resume` is the recovery path. Sidecar leak found by the soak and fixed (`0b428de`): daemon `shutdown()` now calls `devBrowserService.shutdown()` (self-healing POST/`port-kill` → `{stopped:false}` when absent) after task drain — previously one dev-browser orphan per daemon lifetime.
+6. **30-minute soak — see 22.4.**
+
+### 22.2 What was implemented (B — minimal human-assistance infrastructure)
+
+**State machine (additive, backward-compatible; existing 8 statuses untouched) — `TaskStatus` gains:**
+
+| Status               | Meaning                                                                                                                   | Set by (daemon)                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `waiting_permission` | (existing member, NOW WIREABLE — previously never set at runtime) permission/question prompt delivered to a human surface | `task-callbacks.onPermissionRequest` in BOTH emit branches (interactive-UI, WhatsApp-bridge); auto-deny branches never set it; restore via `sendResponse` |
+| `waiting_for_user`   | reserved general human-verification state (CAPTCHA/MFA/passkey); plumbing + UI live, trigger DEFERRED (plan §C1)          | none yet                                                                                                                                                  |
+| `resuming`           | transient: resume turn starting on a previously-waiting task                                                              | `resumeSession` when prior status ∈ {`waiting_permission`,`waiting_for_user`} (event + persisted; final status persists at completion as before)          |
+
+Transitions: `waiting_permission` → set on emit-to-human; → restored to `running` when `taskService.sendResponse` completes AND the stored status is a waiting\_\* status (never stomps completion states; auto-deny path unaffected). All three statuses ride the existing `statusChange` → `task.statusChange` RPC notification chain, and the SQLite UPDATE path (statuses are TEXT — no CHECK constraint). UI compatibility (additive only): `task-utils.ts` STATUS_COLORS + `useExecutionActions` active list + `TaskHistory.tsx` exhaustive record gained the two new members; no layout/flow changes, no new locales (header badge degrades via default).
+
+**Watchdog & timeout coverage of human wait (B2):** the watchdog already treats a pending permission/question as non-stall (`sampleWatchdogState` → `inProgress:false` when `pendingRequest !== null`) — human thinking time never fires the 90 s/2.5 min stall machinery; regression-tested. The 5-min in-flight permission timeout (M1 mechanics) and the M1 no-interactive-clients auto-deny (≥90 s-class latency) are unchanged — a waiting task with a live UI stays alive indefinitely without being marked hung.
+
+**Session preservation (B3):** waiting tasks survive daemon restarts with `session_id` + `working_directory` intact (crash-recovery skip + v032) — `session.resume` reuses the SAME opencode session (conversation + browser-session state live in the untouched opencode/sidecar stores); soak-proven end-to-end across mid-task kills.
+
+### 22.3 Test results (HEAD `0b428de`, full battery green)
+
+| Suite                     | Result (Δ vs M3 battery)                                                                                                                                                                     |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| daemon                    | **344/344** (+19: cwd persistence/resume-threads, `resuming` transitions, `sendResponse` restore + no-overwrite, crash-recovery suite, task-callbacks waiting-parking + auto-deny no-status) |
+| agent-core                | **802 pass + 1 pre-existing skip** (+11: v032 migration + round-trips + watchdog exclusion set)                                                                                              |
+| host                      | **332/332** (+12: rate-limit flood/abuse/env-override + `Restart=` unit lock)                                                                                                                |
+| web unit                  | **488/488** (+3: status-map entries; `FAVORITABLE_STATUSES` guard)                                                                                                                           |
+| desktop (Electron bridge) | **522/522** (unchanged — zero desktop code touched)                                                                                                                                          |
+| typecheck                 | all 5 workspaces ✓ (incl. additive `resumeSessionSchema` field, no downstream break)                                                                                                         |
+| lint:eslint               | 0 errors (3 pre-existing `useExecutionEffects.ts` warnings)                                                                                                                                  |
+| format:check              | clean                                                                                                                                                                                        |
+
+Pre-existing failures unchanged (not M4's): web integration 61 (upstream baseline), dev-browser-mcp integration 1 (rebrowser regression), lint 3 warnings. `/home/chris/Accomplish` untouched; nothing pushed/merged.
+
+### 22.4 Soak (30-minute stability test)
+
+Harness `/tmp/opencode/m4-soak/soak.mjs` (non-persistent, cycles ≈ 2 min: isolated daemon on `/tmp/opencode/m4-soak/data`, newline-delimited JSON-RPC 2.0 over `<data>/daemon.sock`, zero production-data contact; per-cycle verdicts in `soak-results.jsonl`, full RPC log `soak.log`). Cycle content: short real ollama task (file write + exact-content assert) · SIGTERM restart → boot-recovery asserts (only `running`→`failed`; synthetic `waiting_permission`/`waiting_for_user`/`resuming` rows survive byte-identically — verified pre-start sqlite seeding + post-boot sqlite compare) · `session.resume` continuity (cwd thread + completion) · every-6th-cycle mid-task kill → `running`→`failed` → resume from captured sessionId → task continues to completion with all step files present.
+
+RESULTS (two formal runs + the 2-cycle builder validation, ~30 min of harness activity total; **ALL PASS**):
+
+| Run                          | Cycles                                                                                   | Wall     | Verdict                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------- |
+| Builder validation (2-cycle) | 2                                                                                        | ~2 min   | 2/2 PASS                                                             |
+| Soak run 1 (`--cycles 12`)   | 12 (incl. mid-task kill @6, waiting-protection @3/7/11)                                  | 10.7 min | 11/12 PASS¹ — cycle 12 mechanically flagged; outcome CORRECT (see ¹) |
+| Soak run 2 (`--cycles 14`)   | 14 (incl. mid-task kill @6; @12 task finished before kill window — correctly not forced) | 12.1 min | **14/14 PASS**                                                       |
+
+¹ **Run 1 cycle 12 — graceful drain, not a reliability defect:** the 12-step task was parked in `waiting_permission` when SIGTERM landed; the daemon's drain phase kept the connected client alive long enough for the pending permission to be answered and the task COMPLETED (12/12 files; boot sweep had no `running` row to flip). This is the designed behavior — a waiting task was resolved, not failed — and directly evidences the directive's "waiting tasks are not incorrectly treated as hung or failed." The mechanical verdict flag is a harness expectation artifact (it assumed `running`-at-kill), corrected in run 2's leniency.
+
+Verified across ~30 daemon lifecycle events (starts, 25+ SIGTERM restarts, cleanups):
+
+- **Crash recovery:** ONLY `running` rows flip to `failed` at boot (live + synthetic probes at cycles 3/7/11 in both runs; `waiting_permission`/`waiting_for_user`/`resuming`/terminal rows byte-identical — status, `session_id`, `working_directory` preserved).
+- **Mid-task kill + recovery resume (run 1 cycle 6, run 2 cycle 6):** task killed mid-tool-execution → row `running`→`failed` at boot → sessionId captured (proves opencode session store survives the daemon) → `session.resume` continues the SAME opencode session → task completes with ALL step files present (continuity across process death).
+- **Resume-time cwd preservation:** every `session.resume` reused the persisted row cwd (`cwdPreservedInRow` true throughout; content-continuity asserted per cycle).
+- **Repeated-task durability:** ~30 real ollama tasks completed over both runs; every cycle's short task returned exact file content; run 2 adopted run 1's history rows (`noise` probes read prior tasks' statuses through the SAME sqlite — DB durability across harness runs proven).
+- **Sidecar-leak fix (`0b428de`) corroborated:** "soak child leftovers killed: 0" at every final cleanup across both runs (pre-fix validation had observed one leaked dev-browser sidecar).
+- Watchdog stall/fire behavior remains unit-verified (watchdog exclusion-set tests); the soak's LLM tasks don't deterministically stall, so no dedicated stall cycle was attempted (documented limitation of the live harness — behavior covered by agent-core regression tests).
+
+### 22.5 Designed but NOT implemented (deferred for later approval — no silent expansion)
+
+- **Agent-triggered assistance (plan §C1):** no agent-callable `request_human_assistance` tool exists; `waiting_for_user` has plumbing/UI/live-but-no-trigger. Two trigger designs recorded in the plan (daemon-side tool-name watcher vs. opencode question flow) awaiting milestone approval (proposed for M5 alongside E2E work).
+- **Browser-session handoff (plan §C2):** constraints documented (SAME sidecar profile required — a different browser profile would not carry the verification challenge; task must pause safely first; daemon RPC + shim + allowlist expansion per §5.4 policy when implemented). Phase 5/5B or M6 candidate.
+- **Unattended authorization seam** (`task.permissions.untrusted`-class flags): still the documented Stage-2 extension-point only (plan §5.2.6); no auto-approve introduced anywhere.
+
+### 22.6 Next gate
+
+**M5 (E2E testing, plan §8) requires separate approval.** Soak evidence complete; the deferred designs in §22.5 are ready to be reviewed as part of that approval. Nothing pushed/merged; no M5 work started.
