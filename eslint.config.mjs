@@ -13,6 +13,8 @@ export default tseslint.config(
       '**/release/**',
       '**/node_modules/**',
       '**/playwright-report/**',
+      'apps/host/e2e/html-report/**',
+      'apps/host/e2e/test-results/**',
       'scripts/**',
       '**/scripts/**/*.cjs',
       '**/scripts/**/*.mjs',

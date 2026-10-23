@@ -51,6 +51,10 @@ apps/desktop/e2e/provider-tests/test-results/
 apps/desktop/e2e/provider-tests/html-report/
 apps/desktop/e2e/provider-tests/test-results.json
 apps/desktop/e2e/provider-tests/secrets.json
+apps/host/e2e/html-report/
+apps/host/e2e/test-results/
+apps/host/e2e/test-results.json
+apps/host/e2e/.playwright-artifacts/
 
 # Test coverage
 coverage/
@@ -71,6 +75,11 @@ docs/plans/
 # Speckit
 .specify/
 specs/
+# Scoped negation: the unscoped `specs/` above silently ignores the gateway
+# E2E suite's spec dir — re-include the M5 Playwright tree explicitly.
+!apps/host/e2e/
+!apps/host/e2e/specs/
+!apps/host/e2e/fixtures/
 
 # Misc
 *.pem

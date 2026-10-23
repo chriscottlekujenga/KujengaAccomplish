@@ -7,6 +7,10 @@ pnpm-lock.yaml
 dist-electron/
 playwright-report/
 coverage/
+apps/host/e2e/html-report/
+apps/host/e2e/test-results/
+apps/host/e2e/.playwright-artifacts/
+apps/host/e2e/test-results.json
 # Auto-generated files not tracked by git
 **/public/theme-init.js
 # Build artifacts

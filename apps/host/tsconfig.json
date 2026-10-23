@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -18,6 +18,12 @@
       "@accomplish_ai/agent-core/*": ["../../packages/agent-core/src/*"]
     }
   },
-  "include": ["src/**/*", "__tests__/**/*", "../../packages/agent-core/src/**/*"],
+  "include": [
+    "src/**/*",
+    "__tests__/**/*",
+    "e2e/**/*.ts",
+    "playwright.config.ts",
+    "../../packages/agent-core/src/**/*"
+  ],
   "exclude": ["node_modules", "dist"]
 }
