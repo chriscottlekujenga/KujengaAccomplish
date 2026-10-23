@@ -433,6 +433,13 @@ describe('ConfigGenerator', () => {
         delete: 'ask',
         question: 'allow',
         todowrite: 'allow',
+        // linux-desktop MCP tools — every action needs explicit user approval
+        'linux-desktop_desktop_launch_app': 'ask',
+        'linux-desktop_desktop_list_windows': 'ask',
+        'linux-desktop_desktop_find_controls': 'ask',
+        'linux-desktop_desktop_invoke': 'ask',
+        'linux-desktop_desktop_read': 'ask',
+        'linux-desktop_desktop_screenshot': 'ask',
       });
     });
 
@@ -540,6 +547,12 @@ describe('ConfigGenerator', () => {
         delete: 'ask',
         question: 'allow',
         todowrite: 'allow',
+        'linux-desktop_desktop_launch_app': 'ask',
+        'linux-desktop_desktop_list_windows': 'ask',
+        'linux-desktop_desktop_find_controls': 'ask',
+        'linux-desktop_desktop_invoke': 'ask',
+        'linux-desktop_desktop_read': 'ask',
+        'linux-desktop_desktop_screenshot': 'ask',
       });
       expect(defaultConfig.plugin).toEqual(['keep-this-plugin']);
       expect(taskConfig.permission).not.toHaveProperty('*');
@@ -558,6 +571,12 @@ describe('ConfigGenerator', () => {
         delete: 'ask',
         question: 'allow',
         todowrite: 'allow',
+        'linux-desktop_desktop_launch_app': 'ask',
+        'linux-desktop_desktop_list_windows': 'ask',
+        'linux-desktop_desktop_find_controls': 'ask',
+        'linux-desktop_desktop_invoke': 'ask',
+        'linux-desktop_desktop_read': 'ask',
+        'linux-desktop_desktop_screenshot': 'ask',
       });
     });
 
@@ -603,6 +622,12 @@ describe('ConfigGenerator', () => {
         delete: 'ask',
         question: 'allow',
         todowrite: 'allow',
+        'linux-desktop_desktop_launch_app': 'ask',
+        'linux-desktop_desktop_list_windows': 'ask',
+        'linux-desktop_desktop_find_controls': 'ask',
+        'linux-desktop_desktop_invoke': 'ask',
+        'linux-desktop_desktop_read': 'ask',
+        'linux-desktop_desktop_screenshot': 'ask',
       });
     });
 

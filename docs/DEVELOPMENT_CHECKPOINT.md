@@ -1,7 +1,7 @@
 # Development Checkpoint — Firefox Migration, Phase 2 / Phase 3 M1·M2
 
-**Date:** 2026-10-22 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `docs-commit (M2)`
-**Status:** Phase 2 complete (§B) AND Phase 3 M1 (security foundation) committed `d644f92` (§18) AND Phase 3 M2 (essential API functionality) complete (§19, 8 implementation commits + this docs commit). Awaiting approval before M3.
+**Date:** 2026-10-22/23 · **Repo:** `~/KujengaAccomplish-AI` · **Branch:** `linux-firefox-ai` · **HEAD:** `62e9aca` (+C3 commit)
+**Status:** Phase 2 complete (§B) AND Phase 3 M1 (security foundation) committed `d644f92` (§18) AND Phase 3 M2 (essential API functionality) complete (§19, 8 implementation commits + docs commit) AND Phase 3 M3 (Wayland desktop-control feasibility research) complete (§20, planning deliverable only). **C3 prototype (Phase-5B approval granted): COMPLETE 2026-10-23 — implemented, unit-verified, live-verified (Phase-1 driver + Phase-2 full-stack opencode task), battery green, committed (this commit; see §21). Nothing pushed/merged; `/home/chris/Accomplish` untouched.**
 
 ---
 
@@ -25,14 +25,14 @@ Security model: loopback-only bind, timing-safe bearer token delivered in the la
 
 ## 2. Six-Phase Roadmap (`.opencode/plans/FIREFOX_MIGRATION_PLAN.md`)
 
-| Phase | Scope                                                                                              | Status                                                                                                             |
-| ----- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1     | Browser gateway foundation (host, connector, shim)                                                 | ✅ committed `7f238d4`                                                                                             |
-| 2     | Ubuntu ARM64 shell (launcher, .desktop, systemd, pickers, deep links)                              | ✅ done + AI-task acceptance PASSED (uncommitted)                                                                  |
-| 3     | Full API parity + hardening + Firefox E2E harness                                                  | in progress — M1 security foundation `d644f92` (§18); **M2 essential APIs complete (§19)**; M3–M6 pending approval |
-| 4     | Kujenga feature port (SFTP, WordPress, orchestration, messaging, renaming) from `main` @ `690b447` | not started                                                                                                        |
-| 5     | Firefox WebDriver BiDi automation backend (port from `backup-arm64-bidi` @ `be1415e`)              | not started                                                                                                        |
-| 6     | Packaging (deb/AppImage arm64), updater, Electron retirement                                       | not started                                                                                                        |
+| Phase | Scope                                                                                              | Status                                                                                                                                                       |
+| ----- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1     | Browser gateway foundation (host, connector, shim)                                                 | ✅ committed `7f238d4`                                                                                                                                       |
+| 2     | Ubuntu ARM64 shell (launcher, .desktop, systemd, pickers, deep links)                              | ✅ done + AI-task acceptance PASSED (uncommitted)                                                                                                            |
+| 3     | Full API parity + hardening + Firefox E2E harness                                                  | in progress — M1 security foundation `d644f92` (§18); **M2 essential APIs complete (§19)**; **M3 feasibility report complete (§20)**; M4–M6 pending approval |
+| 4     | Kujenga feature port (SFTP, WordPress, orchestration, messaging, renaming) from `main` @ `690b447` | not started                                                                                                                                                  |
+| 5     | Firefox WebDriver BiDi automation backend (port from `backup-arm64-bidi` @ `be1415e`)              | not started                                                                                                                                                  |
+| 6     | Packaging (deb/AppImage arm64), updater, Electron retirement                                       | not started                                                                                                                                                  |
 
 ## 3. Current Phase & Acceptance Criteria (Phase 2)
 
@@ -347,3 +347,88 @@ Provider/model + skills + file-attach + browser-preview domains green per `docs/
 ### 19.6 Git
 
 M2 implementation on `linux-firefox-ai`: `fcd4cc6`·`780301f`·`4bd6817`·`6ab738f`·`09cea4f`·`40146e2`·`03658c0`·`fa0e377` + docs commit. Nothing pushed/merged/reset; `/home/chris/Accomplish` untouched; working tree clean after this commit.
+
+---
+
+## 20. Phase 3 — M3 Wayland Desktop-Control Feasibility (2026-10-22, PLANNING DELIVERABLE — no code, no system changes)
+
+Approved scope: plan §10 — feasibility research ONLY on this Ubuntu 26.04.1 ARM64 (Snapdragon, GNOME Shell 50.1, Wayland) machine; read-only probes; no package installs; no application-source changes; prototype NOT implemented. Full report: **`docs/PHASE_3_M3_WAYLAND_DESKTOP_CONTROL_FEASIBILITY.md`** (§10.2 criteria per technique, live evidence, prototype plan §4–§7, acceptance battery §9).
+
+### 20.1 Verdict
+
+**Desktop control is feasible with ZERO new system packages.** Recommended stack: AT-SPI (targeting/verification — element-aware, live-proven) + XDG portal RemoteDesktop (authorization-bearing input injection; uinput fallback already device-writable via ACL) + portal Screenshot (result verification). Integration sketch: `linux-desktop` MCP package (dev-browser pattern) with a stdio Python helper (`python3-gi` preinstalled) and a new daemon `desktop` permission type (per-action prompt + blocklist + M1 unattended auto-deny). **Disposition: Phase 5B / C3 approval gate together with the inert `settings.sandbox` decision.**
+
+### 20.2 Evidence highlights (all probed live 2026-10-22; full transcripts in report)
+
+1. **Environment prerequisite PASS:** daemon (`accomplish-fox-daemon`, systemd --user) `/proc/<pid>/environ` contains `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `DISPLAY`, `XDG_SESSION_TYPE=wayland` — daemon-spawned helpers can reach session bus + compositor unchanged.
+2. **AT-SPI PASS (live):** registryd running (pid 5349), a11y bus `/run/user/1000/at-spi/bus`; enumeration probe → 8 apps / 4 frames incl. active Terminal; deep probe → named, actionable control tree (`button 'Close' actions=['click']`, menus, page tabs). `python3-gi`/Atspi preinstalled (zero installs). **Finding:** GNOME 50 pygobject text-API signatures mismatched (at-spi2 2.55 churn) → prototype reads text/state via raw D-Bus on the a11y bus (protocol confirmed reachable: `busctl --address=…at-spi/bus` tree walk) or gjs.
+3. **Portal PASS:** portal-gnome/-gtk running; `Screenshot` v2, `ScreenCast` v5 (`AvailableSourceTypes=7`, `AvailableCursorModes=7`), `RemoteDesktop` v2 (`AvailableDeviceTypes=7`; full `Notify*` pointer/keyboard/touch + clipboard + `ConnectToEIS`; libei/libeis/libportal/libpipewire present on arm64). Open question: plain-client `Notify*` call-gating (unverifiable read-only) — uinput fallback already validated at device layer.
+4. **uinput PARTIAL-PASS:** kernel-builtin module; `/dev/uinput` ACL grants `user:chris:rw-` (O_WRONLY open probe passed, no device created); ydotool absent (install optional, approval-required, not needed).
+5. **FAIL/recorded:** `wtype` (mutter lacks `zwp_input_method_v1`) · GNOME Shell `Eval` → `(false,'')` locked · Shell `Screenshot` → `AccessDenied` · `Introspect` not exposed → window mgmt via custom shell extension possible but approval-gated and NOT required for MVP.
+6. **Existing capabilities (do-not-rebuild):** OpenCode 1.14.18 has no native-UI surface; `dev-browser-mcp` browser\_\* = Chromium-only (not native desktop); upstream `desktop-control` MCP removed at `05a25bc` — nut.js X11-only not to be revived, but its **design** (15 action types, per-action approval, password-manager blocklist, `needs_planning`, `SKILL.md`, `PermissionDialogDesktopTool.tsx`) is recoverable from git (`git show 05a25bc^:…`).
+
+### 20.3 M3 acceptance
+
+- [x] Feasibility report checked into `docs/` with probe outputs from this machine
+- [x] Prototype plan written + dispositioned to separate approval gate (plan §10.3, §12)
+- [x] Zero application-source changes / zero system modifications / `/home/chris/Accomplish` untouched / nothing pushed, merged, or committed beyond these docs (docs commit pending user approval)
+- [x] Probe tooling non-persistent under `/tmp/opencode/` (`m3-probe-atspi.py`, `m3-probe-atspi-deep.py`, `portal-introspect.txt`)
+
+### 20.4 Next gate
+
+**C3 granted 2026-10-22** — the minimal desktop-control prototype was implemented (§21). Do not start M4 without approval.
+
+---
+
+## 21. C3 Prototype — linux-desktop MCP tool (COMPLETE 2026-10-23, committed this commit)
+
+Approved scope: smallest viable linux-desktop MCP tool (AT-SPI discovery/verification, portal screenshot; NO synthetic input in PoC). Implementation COMPLETE, unit-verified, live-verified on the real machine (Phase-1 driver + Phase-2 full-stack opencode task, both pass), battery green, committed 2026-10-23 in THIS commit (`feat(agent-core): linux-desktop MCP tool prototype (C3 Wayland desktop control)`). `/home/chris/Accomplish` untouched; nothing pushed/merged.
+
+### 21.1 Completed and verified (unit level)
+
+1. **`packages/agent-core/mcp-tools/linux-desktop/`** (NEW, 11 files; `node_modules/` 65 MB + `dist/` 528 KB are build artifacts, not for commit):
+   - `scripts/desktop-helper.py` — architect-written, **live-validated** AT-SPI/portal helper (stdlib+`python3-gi`): `list` / `controls --window --max-depth` / `invoke --id --action` / `read --id --start --end` / `screenshot --out`. One-JSON-line stdout contract `{"ok":..}`/`{"ok":false,"error":..}`, exit 0/1. Node ids `a<AppIdx>/f<FrameIdx>/p<i.j.k>` minted per discovery; resolution re-walks (stale ids → "target not found"). GNOME 50 text read via unbound-interface call `Atspi.Text.get_text(acc, start, end)` (proven on terminal); portal screenshot consent timeout 90 s.
+   - `src/index.ts` — MCP stdio server (low-level `Server` pattern like start-task), 6 tools (exact names matter for permission keys): `desktop_launch_app` (gio launch, absolute-.desktop validation, blocklist on basename), `desktop_list_windows`, `desktop_find_controls` (default depth 12 — GTK4 nests ~11), `desktop_invoke` (exact-then-substring resolution, ambiguity error, blocklist), `desktop_read` (+ optional `nodeId` for nameless GTK4 display widgets), `desktop_screenshot` (portal consent). Exported `toolHandlers` map (testable); audit log via console.error.
+   - `src/blocklist.ts` — lean port of upstream (05a25bc^) list: 1Password/Bitwarden/LastPass/KeePass/Dashlane + Keychain Access/Credential Manager/Windows Security/Registry Editor; `findBlocklistMatch()` case-insensitive substring; applied at launch, discovery, invoke, read (matched against input title + helper-returned window title + application name).
+   - `src/helper-exec.ts` — `runDesktopHelper()`: `execFile('python3', …, {timeout 95 s, maxBuffer 4 MiB})`, last-parseable-JSON-line parse, non-zero-exit still honors stdout JSON contract.
+   - `src/__tests__/` (26 tests) + `tsconfig.json`/`vitest.config.ts`/`package.json` (npm-installed: @modelcontextprotocol/sdk, zod; devDeps vitest, @types/node) + `README.md` (security model + PoC unsupported-ops list).
+2. **Registration + permission wiring** (verified spike, below): `generator-mcp.ts` (+`platform` option; registers `linux-desktop` only on Linux, gmail-mcp-style silent skip if dist missing) · `config-generator.ts` (six `linux-desktop_desktop_*: 'ask'` keys in `ACCOMPLISH_PERMISSION_POLICY` + comment; `platform` threaded into `buildMcpServers`) · `apps/desktop/scripts/bundle-skills.cjs` (+`linux-desktop` entry + `SKILLS_FULLY_BUNDLED`).
+3. **Permission spike (the load-bearing discovery):** opencode 1.14.18 raises `permission.asked` for an MCP tool iff the config `permission` block contains the `<serverKey>_<toolName>` key — event shape `{"id":"per_…","permission":"spike-echo_spike_echo","patterns":["*"],"always":["*"],"tool":{messageID,callID}}`; `client.permission.reply({requestID, reply:'once'})` proceeds pending→running→completed. Proven with /tmp spike (`spike-echo.mjs` + `spike-config.json` + `driver.mjs`, ollama glm-5.3:cloud). Existing adapter path handles ANY permission key generically (`type:'tool'`) — **zero daemon/UI changes needed.** Limitation recorded: patterns are `['*']`, so per-target descriptions ride the transcript, not the prompt card.
+4. **Test/verification state (final, 2026-10-23):** in-package vitest 26/26 green (re-run after the final prettier pass) · agent-core `config-generator.test.ts`+`generator-mcp.test.ts` 67/67 green · agent-core full suite **791 pass + 1 pre-existing skip** · in-package tsc clean · `pnpm typecheck` 5/5 · `pnpm lint:eslint` 0 errors / 3 pre-existing warnings · `pnpm -F @accomplish/desktop test` 522/522 · `pnpm -F @accomplish/desktop build:mcp-tools:dev` re-bundles linux-desktop (521.8 kb) from the final source · `pnpm format:check` clean (the 3 M3 docs + `src/index.ts` prettier-formatted).
+
+### 21.2 Live demo evidence (real machine, 2026-10-23 post-reboot — both phases PASS)
+
+Environment restored after the reboot: Wayland session + fresh at-spi/portal processes (new pids), daemon env prerequisites unchanged. `/tmp` was cleared → driver/config scripts recreated from the checkpoint description; `/tmp` harness files remain NON-PERSISTENT by design.
+
+**Phase 1 — driver over MCP stdio (`/tmp/opencode/m3c3-poc/driver.mjs`, `StdioClientTransport` + `env: process.env`, per-call timeout 170 s): SUMMARY `blocklist-deny=PASS launch=PASS controls=PASS calc=PASS read=PASS screenshot=AUTH-HOLD`**
+
+1. `desktop_launch_app` on `/tmp/…/1password-stub.desktop` → `Blocked by desktop-control blocklist: 1Password` (deny BEFORE any gio call). PASS.
+2. `desktop_launch_app` `/usr/share/applications/org.gnome.Calculator.desktop` → `Launched org.gnome.Calculator.desktop.` (Calculator opened). PASS.
+3. `desktop_find_controls` "Calculator" (default depth 12) → **62 controls** incl. full button grid (`button:Backspace C 7 8 9 4 5 6 … ÷ × − + mod % ( ) = Basic`) — deep-button path finally proven live (was 18 at depth 8 pre-fix). PASS.
+4. `desktop_invoke` ×5: `C` → `4` → `×` → `5` → `=` — every click OK with per-click resolved node ids (`a7/f0/p0.0.0.0.0.0.1.0.0.0.0.{0,6,17,7,23}`). PASS.
+5. `desktop_read` via the nameless display widget's nodeId `a7/f0/p0.0.0.0.0.0.0.1.0.0.0` (role `text`, clipboard actions) → **text="20"** (4 × 5 = 20 verified). PASS.
+6. `desktop_screenshot` → portal dialog surfaced; consent not granted within the 90 s helper window → `Response code=None`; recorded **AUTH-HOLD** (authorization-bearing, not a bug — the operator wasn't watching). PASS-as-evidence.
+
+**Phase 2 — full-stack task through a REAL `opencode serve` (`/tmp/opencode/m3c3-poc/fullstack/m3c3-fullstack.mjs`, run twice — both complete in ~140 s):**
+
+- Config generated by the REPO's own `generateConfig` (agent-core dist, `platform:'linux'`, ollama glm-5.3:cloud, `browser:{mode:'none'}`): permission block carries all six `linux-desktop_desktop_*: 'ask'` keys; `mcp['linux-desktop']` registered with the bundled Node bin + `dist/index.mjs`.
+- Task flow: `opencode serve` (cwd=workspace, isolated `XDG_DATA_HOME`) → `event.subscribe` → `session.create` (`ses_e96d32883ffefKPkPG4d5687gy`) → `session.prompt({agent:'accomplish', parts:[text], model:{providerID:'ollama', modelID:'glm-5.3:cloud'}})` → **12 × `permission.asked`** (each desktop action individually: 1× list*windows, 1× launch_app, 2× find_controls, 5× invoke, 2× read, 1× screenshot — keys exactly `linux-desktop_desktop*_`, patterns `["_"]`) → each auto-approved via `permission.reply({requestID, reply:'once'})`→ tools executed →`complete-task_complete_task`completed →`session.idle`. ZERO daemon/UI changes — the existing adapter path handled every ask generically, as the spike predicted.
+- Agent's own verification (from its transcript): windows enumerated → Calculator launched → controls discovered (node ids for C/4/×/5/=) → clicked in strict order → re-enumerated for FRESH node ids → read the focused nameless display node `a7/f0/p0.0.0.0.0.0.0.1.0.0.0` → **"The Calculator display reads 20 — 4 × 5 = 20 confirmed"** → screenshot attempt reported as a permission consent outcome (denied, portal timeout), no file written. The full four-step C3 demonstration (open → identify → interact → verify) passed with per-action authorization.
+
+### 21.3 REMAINING WORK — none (all items completed 2026-10-23)
+
+1. ✅ Phase-1 driver re-run (recreated after /tmp reboot-clear) — outcomes recorded verbatim in §21.2.
+2. ✅ Phase-2 full-stack demo — §21.2 (2 runs, 12 asks each, task completes, verification "20").
+3. ✅ Battery re-run at final state — §21.1 item 4 (prettier applied to the 3 docs + `src/index.ts`).
+4. ✅ Commit: `packages/agent-core/mcp-tools/linux-desktop/` MINUS `node_modules/`, `dist/`, `package-lock.json` (gitignore covers all three) + `tests/unit/opencode/generator-mcp.test.ts` + 4 modified files + 3 docs — single conventional commit, this commit.
+5. ✅ Report to user; **M4 requires separate approval.**
+
+### 21.4 Known notes & caveats for resumption
+
+- MCP SDK in the new package resolved to 1.32.x (`^1.0.0`); ToolResult is a type-alias (SDK index-signature constraint). `tsconfig` adds `"types": ["node"]` (npm-isolated package; no tsc in its own node_modules — check with the repo-level `pnpm exec tsc -p …/linux-desktop/tsconfig.json`).
+- `desktop_read` on the GTK4 Calculator display REQUIRES `nodeId` (display widget is nameless); name-based resolution can't reach it. Verify channel: display text node id from find_controls (role `text` with clipboard actions, deep path ~`p0.0.0.0.0.0.0.1.0.0.0`).
+- Helper blocks up to 90 s on portal consent; killed client auto-cancels the pending portal request (dialog disappears).
+- **Portal-consent vs opencode MCP timeout mismatch (Phase-2 finding):** inside a real task, opencode's MCP client errored the screenshot call at ~60 s (`MCP error -32001: Request timed out`) BEFORE the helper's 90 s consent window elapsed — in-task screenshot consent effectively needs the user to approve quickly. Phase-5B tuning item (raise `experimental.mcp_timeout` per tool, shorten helper window, or surface a "watch for the GNOME dialog" hint in the task prompt).
+- Calculator button grid lives at ≤12 depth; default depth changed 8→12 (helper constant + discoverWindow + findControls) — live-proven at 62 controls.
+- Environment note (transparency): the FIRST Phase-2 run inherited the default `XDG_DATA_HOME`, so one demo session row landed in opencode's own session store (`~/.local/share/opencode` — opencode-native, no credentials involved); the second run scoped `XDG_DATA_HOME` to the /tmp userdata. Driver scripts now isolate storage by default.
+- Reboot kills the session: at-spi/portal processes (`at-spi-bus-launcher` pid 5340 etc.) respawn at next login with fresh pids/sockets — helper does not cache handles across calls (by design). Proven across the 2026-10-22→23 reboot boundary (fresh pids 16986+; no residue).

@@ -78,6 +78,8 @@ export interface BuildMcpServersOptions {
    * and gws-mcp are registered and receive this path via GWS_ACCOUNTS_MANIFEST.
    */
   gwsAccountsManifestPath?: string;
+  /** Running platform. linux-desktop control tools are registered only on linux. */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -169,6 +171,20 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
       ...(Object.keys(browserEnv).length > 0 && { environment: browserEnv }),
       timeout: 30000,
     };
+  }
+
+  // Wayland desktop control PoC — Linux only, optional (gmail-mcp pattern).
+  if (options.platform === 'linux') {
+    try {
+      mcpServers['linux-desktop'] = {
+        type: 'local',
+        command: resolveMcpCommand(mcpToolsPath, 'linux-desktop', 'dist/index.mjs', nodeExe),
+        enabled: true,
+        timeout: 30000,
+      };
+    } catch {
+      // linux-desktop not built — skip silently (gmail-mcp pattern)
+    }
   }
 
   if (gwsAccountsManifestPath) {

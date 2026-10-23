@@ -46,6 +46,7 @@ const SKILLS_FULLY_BUNDLED = [
   'start-task',
   'whatsapp',
   'request-google-file-picker',
+  'linux-desktop',
 ];
 
 // Skills that need googleapis at runtime — bundle JS but mark googleapis as external
@@ -88,6 +89,13 @@ const bundles = [
   },
   {
     name: 'request-google-file-picker',
+    entry: 'src/index.ts',
+    outfile: 'dist/index.mjs',
+  },
+  {
+    // Wayland desktop control PoC — bundles the python helper path lookup; the
+    // python helper itself ships from the package's scripts/ directory.
+    name: 'linux-desktop',
     entry: 'src/index.ts',
     outfile: 'dist/index.mjs',
   },

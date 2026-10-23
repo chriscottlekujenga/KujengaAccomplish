@@ -1,7 +1,7 @@
 # PHASE 3 IMPLEMENTATION PLAN — KujengaAccomplish Firefox Migration (Rev. 2)
 
 **Date:** 2026-10-21 · **Branch:** `linux-firefox-ai` · **HEAD:** `9ad4b5e`
-**Status:** Rev. 2 approved; **M1 (security foundation) committed `d644f92`** — results in `docs/DEVELOPMENT_CHECKPOINT.md` §18. **M2 (essential API functionality) complete 2026-10-22, commits `fcd4cc6`…`fa0e377` + docs commit** — results in checkpoint §19 (parity gate per `docs/PARITY_INVENTORY.md`). M3–M6 await separate approval. No implementation beyond M2.
+**Status:** Rev. 2 approved; **M1 (security foundation) committed `d644f92`** — results in `docs/DEVELOPMENT_CHECKPOINT.md` §18. **M2 (essential API functionality) complete 2026-10-22, commits `fcd4cc6`…`fa0e377` + docs commit** — results in checkpoint §19 (parity gate per `docs/PARITY_INVENTORY.md`). **M3 (feasibility research) complete 2026-10-22 — no code, no system changes; findings in `docs/PHASE_3_M3_WAYLAND_DESKTOP_CONTROL_FEASIBILITY.md` (checkpoint §20); prototype proposal awaits the C3 / Phase-5B approval gate.** M4–M6 await separate approval. No implementation beyond M2.
 **Inputs:** `.opencode/plans/FIREFOX_MIGRATION_PLAN.md` (six-phase roadmap), `docs/DEVELOPMENT_CHECKPOINT.md` (Phase 2 complete, AI-task acceptance PASSED), capability inventories (2026-10-21).
 
 **Rev. 2 changes from Rev. 1 (per review):** security foundation moved ahead of all API expansion; permission-gate design corrected (presence must not be inferred from the gateway's persistent socket); milestone order = M1 security → M2 essential API → M3 desktop-control feasibility → M4 reliability → M5 E2E → M6 remaining parity; desktop-control feasibility added as a Phase 3 planning milestone (prototype not implemented); incremental parity rules; preservation constraints codified.
@@ -209,7 +209,9 @@ Side services (9224/9225/9228/9229/9230) ▶ loopback + per-process bearer token
 
 ---
 
-## 10. M3 — Wayland Desktop-Control Feasibility (planning deliverable, no prototype implementation)
+## 10. M3 — Wayland Desktop-Control Feasibility (planning deliverable, no prototype implementation) — **✅ COMPLETE 2026-10-22**
+
+**Outcome:** feasibility report delivered: [docs/PHASE_3_M3_WAYLAND_DESKTOP_CONTROL_FEASIBILITY.md](PHASE_3_M3_WAYLAND_DESKTOP_CONTROL_FEASIBILITY.md) — all §10.1 techniques probed live on this machine (read-only; zero installs/changes). Verdict: **feasible with zero new system packages** — AT-SPI (targeting/verify; live control-tree evidence) + XDG portal RemoteDesktop (authorized input; uinput fallback already device-writable via ACL) + portal Screenshot; `wtype` and GNOME Shell `Eval`/`Screenshot`/`Introspect` recorded FAIL/locked; integration sketch = `linux-desktop` MCP package (dev-browser pattern) with a stdio Python helper and a new daemon `desktop` permission type. Prototype plan + acceptance battery (§ report) dispositioned to **Phase 5B / C3 approval gate** together with the inert `settings.sandbox` decision.
 
 **Goal (from review):** determine — on _this_ Ubuntu 26.04 ARM64 (Snapdragon, GNOME/Wayland) machine — which approaches can eventually support a desktop-control capability, and produce the prototype plan for separate approval. **No prototype is implemented in Phase 3.** No package installation without explicit user approval (probe with preinstalled tools and read-only queries first).
 
@@ -268,13 +270,13 @@ The plan deliverable specifies: chosen technique combination (driven by §10.1 f
 
 ## 13. Approval Checkpoints & Cost Plan
 
-| Checkpoint             | Gate                                                                                                                               |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **C0 — this document** | Approval to begin M1                                                                                                               |
-| **C1 — end of M1**     | Security review: presence-gate evidence, socket/side-service sweep results, secrets audit presented **before M2 expands anything** |
-| **C2 — end of M2**     | Parity inventory + paired-test evidence review                                                                                     |
-| **C3 — M3 findings**   | Desktop-control prototype (and sandbox decision) approval before any implementation                                                |
-| **C4 — end of M6**     | Final parity audit (0 unreachable) + phase review before Phase 4                                                                   |
+| Checkpoint             | Gate                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **C0 — this document** | Approval to begin M1                                                                                                                                                                                                                                                                                                                         |
+| **C1 — end of M1**     | Security review: presence-gate evidence, socket/side-service sweep results, secrets audit presented **before M2 expands anything**                                                                                                                                                                                                           |
+| **C2 — end of M2**     | Parity inventory + paired-test evidence review                                                                                                                                                                                                                                                                                               |
+| **C3 — M3 findings**   | Desktop-control prototype (and sandbox decision) approval before any implementation — evidence ready: `docs/PHASE_3_M3_WAYLAND_DESKTOP_CONTROL_FEASIBILITY.md` (2026-10-22); **C3 GRANTED → minimal linux-desktop MCP prototype implemented + live-verified 2026-10-23 (checkpoint §21). Sandbox decision still open at the Phase-5B gate.** |
+| **C4 — end of M6**     | Final parity audit (0 unreachable) + phase review before Phase 4                                                                                                                                                                                                                                                                             |
 
 Per-milestone conventional commits; checkpoint doc updated at C1–C4. **No push/merge/reset at any point without approval.**
 

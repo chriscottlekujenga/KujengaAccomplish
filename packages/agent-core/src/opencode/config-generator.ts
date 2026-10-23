@@ -62,6 +62,12 @@ const BASH_PERMISSION_POLICY = {
   'unzip *': 'ask',
   'rsync *': 'ask',
 } as const;
+// MCP permission keys follow opencode's `<serverKey>_<toolName>` convention;
+// opencode raises permission.asked for an MCP tool only when a matching key
+// exists here. Every linux-desktop action routes through opencode
+// permission.asked → daemon TaskCallbacks → renderer PermissionCard;
+// per-target descriptions arrive only via the tool call transcript
+// (Phase-5B item).
 const ACCOMPLISH_PERMISSION_POLICY = {
   bash: BASH_PERMISSION_POLICY,
   edit: 'ask',
@@ -72,6 +78,12 @@ const ACCOMPLISH_PERMISSION_POLICY = {
   delete: 'ask',
   question: 'allow',
   todowrite: 'allow',
+  'linux-desktop_desktop_launch_app': 'ask',
+  'linux-desktop_desktop_list_windows': 'ask',
+  'linux-desktop_desktop_find_controls': 'ask',
+  'linux-desktop_desktop_invoke': 'ask',
+  'linux-desktop_desktop_read': 'ask',
+  'linux-desktop_desktop_screenshot': 'ask',
 } as const;
 
 // LANGUAGE_DISPLAY_NAMES uses keys matching LanguagePreference (BCP-47/ISO 639-1, e.g., 'zh-CN', 'ru', 'fr').
@@ -334,6 +346,7 @@ ${options.knowledgeContext}
     devBrowserToken,
     connectors: options.connectors,
     gwsAccountsManifestPath,
+    platform,
   });
 
   const hasBrowser = browserConfig.mode !== 'none';
