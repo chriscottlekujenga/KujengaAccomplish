@@ -1,6 +1,6 @@
 # M5 REMAINING TASKS — Small-Session Handoff Plan
 
-**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `96a3fbe` (T1 done) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
+**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `96a3fbe` (T1 done; T3 soak recheck complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
 
 **Session rules for every task:** one objective · 30–50K token budget · fresh session · run only the listed focused tests · commit verified results via the architect (or as instructed) · concise handoff report (state deltas only) · never touch `~/Accomplish`, `~/.local/share/Accomplish`, the production systemd daemon, or gateway policy files (`apps/host/src/policy.ts`) · never weaken M1 security.
 
@@ -52,7 +52,9 @@
 - **Tests/commands:** same as T1.
 - **Complexity:** S.
 
-### T3 — M4 reliability re-check at final HEAD (soak re-run, reduced)
+### T3 — M4 reliability re-check at final HEAD (soak re-run, reduced) — **DONE (2026-10-23, no code)**
+
+- **Outcome:** harness recreated from checkpoint §22.4 (its `/tmp` tree is non-persistent; semantics reproduced, incl. synthetic-row boot-recovery asserts, `session.resume` continuity, every-6th-cycle kill). Daemon dist rebuilt from clean HEAD before running (gitignored dist only; production daemon NOT restarted). Builder validation `--cycles 2` → **2/2 PASS** (97.9 s). Formal `--cycles 6` → **6/6 PASS** (wall 166 s): cycle 3 = waiting-probe (synthetic `waiting_permission`/`waiting_for_user`/`resuming`/`completed` rows byte-identical across boot; only `running`→`failed`), cycle 6 = mid-task-kill (SIGKILL mid-execution → boot flips real row `running`→`failed` → sessionId captured → `session.resume` same opencode session → completed, 5/5 step files with exact content, pre-kill files preserved). Every graceful SIGTERM sweep `0`; final cleanup `soak child leftovers killed: 0` (cycle-6 post-SIGKILL orphan sweep 18 — mechanical hard-kill consequence, swept immediately by the harness needle). Production daemon pid 3945 untouched: cmdline/environ md5 identical before/after both runs. Full evidence + harness deviations: `docs/M5_DEBUG_CHECKPOINT.md` §1.C.
 
 - **Objective:** re-prove M4 behaviors on the final M5 tree (restart recovery, cwd preservation, waiting-state survival, crash recovery, sidecar cleanup).
 - **Files:** none in repo; harness `/tmp/opencode/m4-soak/soak.mjs` (exists — read checkpoint §22.4 for semantics; recreate from that section if lost).

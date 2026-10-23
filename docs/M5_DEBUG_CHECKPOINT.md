@@ -55,6 +55,31 @@ Preserved files (untracked/modified):
 - `30-unauthenticated`: 401 without/wrong bearer; 403 for blocklisted secrets methods even when authed; WS wrong-token → closed, no auth-ok; page without token fragment shows the shell-access error state.
 - `70-settings`: theme round-trip UI→RPC→UI(reload). `80-provider-model`: ollama connected + selected model reflection via scrubbed RPC. `90-secrets-redaction`: interception mechanism proven (masked metadata crossed, no raw key). `10-rate-burst` + `20-boot`: green (burst ordering first in serial chain).
 
+### C. T3 — M4 reliability soak recheck at final HEAD (2026-10-23, no code, verified)
+
+The soak harness `/tmp/opencode/m4-soak/soak.mjs` was LOST (non-persistent `/tmp`) and recreated with §22.4-of-`DEVELOPMENT_CHECKPOINT.md` semantics (isolated daemon on `/tmp/opencode/m4-soak/data`, newline JSON-RPC 2.0 over `<data>/daemon.sock`, isolated workspace, synthetic-row sqlite seeding + byte-compare, `session.resume`, every-6th-cycle kill, needle-scoped sweeps — kill matchers keyed to the ISOLATED data dir only; the production needle is used solely for the invariance snapshot). Daemon `dist` was rebuilt from clean HEAD before the runs (`pnpm --filter @accomplish/daemon build`; gitignored dist only; production daemon NOT restarted).
+
+**Results — ALL PASS:**
+
+| Run                             | Cycles                                                     | Wall   | Verdict      |
+| ------------------------------- | ---------------------------------------------------------- | ------ | ------------ |
+| Builder validation `--cycles 2` | 2 (basic: task + SIGTERM restart + boot-recovery + resume) | 97.9 s | 2/2 PASS     |
+| Formal `--cycles 6`             | 6 (waiting-probe @3, mid-task-kill @6, basic 1/2/4/5)      | 166 s  | **6/6 PASS** |
+
+- Every formal cycle: real ollama task with exact stamp-content assert → SIGTERM restart → boot-recovery asserts (synthetic `running`→`failed`; `waiting_permission`/`waiting_for_user`/`resuming`/`completed` byte-identical incl. `session_id` + `working_directory`) → `session.resume` continuity (exact content + `cwdPreservedInRow`).
+- Cycle 6 (mid-task-kill): SIGKILL while row `running` → boot flips the REAL row `running`→`failed` → sessionId captured (`task.message` notification; persisted `task_messages` composite ids confirm the opencode session store survived the kill) → `session.resume` SAME sessionId → task completed with **5/5 step files** present, pre-kill files preserved.
+- **Leftovers:** every graceful SIGTERM restart sweep `0`; final cleanup `soak child leftovers killed: 0` (also `0 matched` — corroborates the `0b428de` sidecar-leak fix); cycle-6 post-SIGKILL orphan sweep `18` — mechanical (a hard kill cannot drain its child tree), swept immediately by the harness within its own chain scope. Port 9420: zero listeners post-run; chain needle matches: none.
+- **Production invariance:** prod pid 3945 (cmdline `…apps/daemon/dist/index.js --data-dir /home/chris/.local/share/Accomplish`) cmdline-md5 `e08b3e1c87580f5bfc226dece18862eb` and environ-md5 `c7fa03b6db7000256ef0bab99fd81bdd` IDENTICAL before/after both runs; process alive at end.
+- Repo tree clean after both runs (no source changes; M1–M4 security surface untouched — no product code executed beyond the daemon build).
+
+**Harness deviations from §22.4 (all harness-side, recorded for future recreation):**
+
+1. Synthetic seed ids carry an invocation stem (data dir is shared across attempts → `UNIQUE` collisions otherwise).
+2. **Synthetic seed timestamps must be recent-dated.** Future-dated seeds (a) crowd the newest-100 `getTasks()` window that `recoverStaleTasks` iterates (a real killed `running` row outside the window then does NOT flip at boot — caught in the first formal attempt) and (b) push real rows past the 100-item history trim (`task.status` null). Edge observation on product behavior, recorded as a watch-item only: `apps/daemon/src/crash-recovery.ts` inherits `getTasks()`'s `ORDER BY created_at DESC LIMIT 100` window — unreachable with real (monotonic) timestamps; no fix applied.
+3. Killed-task sessionId is NOT on the row (product writes `session_id` at completion) — recovered live from `task.message` notifications, with persisted `task_messages` composite ids as the durable fallback.
+4. Daemon spawn env includes `ACCOMPLISH_APP_PATH=<repo>/apps/desktop` (dev-mode CLI resolution; same value the host passes).
+5. The shared soak data dir was wiped once after a failed attempt poisoned it with future-dated seeds; the green builder+formal pair ran on the fresh dir. Within-run DB durability is fully demonstrated (restarts + recovery asserts on the same sqlite); the M4 cross-run history-adoption evidence was not re-reproduced (not a T3 acceptance item).
+
 ---
 
 ## 2. Current bugs / open issues
@@ -92,6 +117,6 @@ No new product bugs discovered. All M1-M4 security/protection suites green at ha
 
 ## 5. Remaining tasks for M5
 
-**Handoff moved to `docs/M5_REMAINING_TASKS.md`** (small per-session tasks, 30–50K tokens each, one objective each, dependency-ordered T1–T8). Progress: **T1 DONE at `96a3fbe`** (flake fixed, suite committed, verified green twice consecutively; T2's commit folded into T1 per T1's own commit line — its post-commit re-verification remains). Next: T3 soak → T4 desktop-MCP → T5 ARM64 → T6 battery → T7 manual (with user) → T8 checkpoint closure.
+**Handoff moved to `docs/M5_REMAINING_TASKS.md`** (small per-session tasks, 30–50K tokens each, one objective each, dependency-ordered T1–T8). Progress: **T1 DONE at `96a3fbe`** (flake fixed, suite committed, verified green twice consecutively; T2's commit folded into T1 per T1's own commit line — its post-commit re-verification remains). **T3 DONE** (M4 soak recheck — builder 2/2 + formal 6/6 PASS at final HEAD; §1.C). Next: T4 desktop-MCP → T5 ARM64 → T6 battery → T7 manual (with user) → T8 checkpoint closure.
 
 **STOP after M5; M6 requires separate approval.**
