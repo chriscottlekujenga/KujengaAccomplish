@@ -1,6 +1,6 @@
 # M5 REMAINING TASKS — Small-Session Handoff Plan
 
-**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `a709b19` (code at T1 `96a3fbe`; T3 soak recheck + T4 desktop recheck complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
+**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `d9b1af8` (code at T1 `96a3fbe`; T3 soak recheck + T4 desktop recheck + T5 ARM64 evidence complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
 
 **Session rules for every task:** one objective · 30–50K token budget · fresh session · run only the listed focused tests · commit verified results via the architect (or as instructed) · concise handoff report (state deltas only) · never touch `~/Accomplish`, `~/.local/share/Accomplish`, the production systemd daemon, or gateway policy files (`apps/host/src/policy.ts`) · never weaken M1 security.
 
@@ -73,12 +73,13 @@
 - **Commit:** no code; outcomes recorded for the checkpoint docs (T8).
 - **Complexity:** S.
 
-### T5 — ARM64 compatibility record
+### T5 — ARM64 compatibility record — **DONE (2026-10-23, no code)**
 
+- **Outcome:** full evidence bundle collected on the Ubuntu Snapdragon ARM64 host (debug checkpoint §1.E): `uname -m` = aarch64 · system Node v24.22.0 / `process.arch` = arm64 · NO emulators present (qemu-user/box64 absent) · bundled `linux-arm64` Node v24.15.0 = ARM aarch64 ELF and executes natively (`--version` verified; live-proven again by T4's driver) · opencode launch chain: `.bin/opencode` shim (POSIX shell script per the T5 spec command) → `opencode-ai` 1.14.18 launcher → `opencode-linux-arm64/bin/opencode` = ARM aarch64 ELF, `--version` → 1.14.18 through the production launch path (musl optional-dep variant also arm64, unused on this glibc host) · chromium-1248 present with markers; BOTH `chrome-linux/chrome` and `chrome-linux-arm64/chrome` are ARM aarch64 (same BuildID) and host+desktop Playwright CLI both 1.59.1 · one line: ALL suites ran natively on aarch64 this milestone (agent-core 807+1skip, daemon 345, dev-browser-mcp 111/111 at `c505e74`; host gateway E2E 14/14 ×2 at `96a3fbe`; desktop 522/host 332 per developer report; T3 soak 6/6; T4 driver ALL-PASS via bundled linux-arm64 Node). Platform bundles for other OSes exist on disk by design and are never selected here (`config-generator.ts` resolves `<platform>-<arch>`). **No fixes; zero repo changes; production daemon pid 3945 cmdline/environ md5s identical to §1.C baseline.**
 - **Objective:** record the M5 ARM64 compatibility evidence bundle.
 - **Files:** none.
-- **Run/collect (all cheap):** ` uname -m`; `node -v`; `node -p process.arch`; `file apps/desktop/resources/nodejs/linux-arm64/…/bin/node` (bundled node arch); `file $(readlink -f apps/desktop/node_modules/.bin/opencode)`; `ls ~/.cache/ms-playwright` (chromium-1248 = the suite's browser); Playwright CLI version; one line: which suites ran natively on aarch64 this milestone (all).
-- **Acceptance:** evidence lines collected in the handoff (no fixes expected — this machine is the ARM64 target).
+- **Acceptance:** met — evidence lines collected in the handoff (§1.E); no fixes needed (this machine is the ARM64 target).
+- **Commit:** no code; outcomes recorded for the checkpoint docs (T8).
 - **Complexity:** S.
 
 ### T6 — Full regression battery at final HEAD
