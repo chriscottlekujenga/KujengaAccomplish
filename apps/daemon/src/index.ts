@@ -368,6 +368,19 @@ async function main(): Promise<void> {
     whatsappService.dispose();
     openAiOauthManager.dispose();
     taskService.dispose();
+    // Stop the daemon-owned dev-browser sidecar AFTER task runtimes are gone
+    // (drain complete). Without this the sidecar leaked across daemon
+    // restarts — one orphan per daemon lifetime (found by the M4 soak).
+    // `shutdown()` is self-healing (graceful POST /shutdown, then port-kill
+    // fallback) and reports `{stopped:false}` when no sidecar is running.
+    try {
+      const sidecar = await devBrowserService.shutdown();
+      log.info(`[Daemon] dev-browser sidecar stopped: ${sidecar.stopped}`);
+    } catch (err) {
+      log.warn(
+        `[Daemon] dev-browser sidecar shutdown degraded (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     await rpc.stop();
     storageService.close();
     pidLock?.release();
