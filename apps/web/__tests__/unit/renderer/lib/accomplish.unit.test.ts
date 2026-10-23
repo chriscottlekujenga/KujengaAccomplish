@@ -178,6 +178,66 @@ describe('Accomplish API', () => {
     });
   });
 
+  describe('getAccomplish identity memoization (T7 rate-drain fix)', () => {
+    it('returns the SAME cached wrapper for repeated calls (Electron surface)', async () => {
+      const mockApi = { getVersion: vi.fn(), startTask: vi.fn() };
+      (globalThis as unknown as { window: Record<string, unknown> }).window = {
+        accomplish: mockApi,
+      };
+
+      const { getAccomplish } = await import('@/lib/accomplish');
+      expect(getAccomplish()).toBe(getAccomplish());
+    });
+
+    it('returns the SAME cached shim for repeated calls (HTTP gateway surface)', async () => {
+      (globalThis as unknown as { window: unknown }).window = originalWindow;
+      const w = window as unknown as {
+        location: Location;
+        sessionStorage: Storage;
+        accomplish?: unknown;
+      };
+      delete w.accomplish;
+      w.location.hash = '#token=t7identityprobelongtoken1';
+      w.sessionStorage.clear();
+
+      const { getAccomplish } = await import('@/lib/accomplish');
+      const first = getAccomplish();
+      expect(typeof (first as { logEvent?: unknown }).logEvent).toBe('function');
+      expect(getAccomplish()).toBe(first);
+
+      w.location.hash = '';
+      w.sessionStorage.clear();
+      w.accomplish = undefined;
+    });
+
+    it('prefers a later-arriving Electron bridge over a cached HTTP shim', async () => {
+      (globalThis as unknown as { window: unknown }).window = originalWindow;
+      const w = window as unknown as {
+        location: Location;
+        sessionStorage: Storage;
+        accomplish?: unknown;
+      };
+      delete w.accomplish;
+      w.location.hash = '#token=t7precedenceprobelongtok';
+      w.sessionStorage.clear();
+
+      const { getAccomplish, __resetAccomplishApiCacheForTests } = await import('@/lib/accomplish');
+      const httpApi = getAccomplish();
+      expect(typeof (httpApi as { logEvent?: unknown }).logEvent).toBe('function');
+
+      const electronStub = { getVersion: vi.fn() };
+      w.accomplish = electronStub;
+      const electronApi = getAccomplish();
+      expect(electronApi).not.toBe(httpApi);
+      expect(electronApi.getVersion).toBe(electronStub.getVersion);
+
+      __resetAccomplishApiCacheForTests();
+      w.location.hash = '';
+      w.sessionStorage.clear();
+      w.accomplish = undefined;
+    });
+  });
+
   describe('useAccomplish', () => {
     it('should return accomplish API when available', async () => {
       const mockApi = { getVersion: vi.fn(), startTask: vi.fn() };

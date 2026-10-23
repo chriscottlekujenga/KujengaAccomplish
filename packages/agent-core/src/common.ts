@@ -219,7 +219,9 @@ export {
 } from './common/constants/model-display.js';
 
 // === SANITIZATION ===
-export { PROMPT_DEFAULT_MAX_LENGTH } from './utils/sanitize.js';
+export { sanitizeString, PROMPT_DEFAULT_MAX_LENGTH } from './utils/sanitize.js';
+// Pure URL validation used by browser-safe consumers (gateway shim picker flows).
+export { validateHttpUrl } from './utils/url.js';
 
 // === BROWSER-SAFE UTILS ===
 export {

@@ -915,6 +915,25 @@ function buildElectronAccomplishApi() {
 /** Structural type of the Electron wrapper — the stable getAccomplish() signature. */
 type ElectronAccomplishApi = ReturnType<typeof buildElectronAccomplishApi>;
 
+// Stable API identities. getAccomplish() historically rebuilt a fresh
+// wrapper (Electron) or a fresh gateway shim (HTTP) on EVERY call, so any
+// React effect with `accomplish` in its dependency array re-fired on every
+// render — the SettingsDialog mount effect fetched 4 RPCs per render at
+// fetch-chain speed, exhausting the gateway's 1500/60s per-token budget and
+// 429-ing unrelated user actions (T7 live finding, 2026-10-23). Cache both
+// surfaces module-wide. The Electron bridge is injected once by the preload
+// and never replaced in production, so a cached wrapper is stable; the
+// reset hook keeps test environments isolated (web test files also reset
+// modules per scenario, which clears these caches).
+let cachedElectronApi: ElectronAccomplishApi | null = null;
+let cachedHttpApi: ElectronAccomplishApi | null = null;
+
+/** Test hook: clear the memoized API instances (call after window swaps). */
+export function __resetAccomplishApiCacheForTests(): void {
+  cachedElectronApi = null;
+  cachedHttpApi = null;
+}
+
 /**
  * Get the accomplish API.
  *
@@ -925,12 +944,15 @@ type ElectronAccomplishApi = ReturnType<typeof buildElectronAccomplishApi>;
  */
 export function getAccomplish(): ElectronAccomplishApi {
   if (window.accomplish) {
-    return buildElectronAccomplishApi();
+    cachedElectronApi ??= buildElectronAccomplishApi();
+    return cachedElectronApi;
   }
 
-  const httpApi = tryCreateHttpAccomplishApi();
-  if (httpApi) {
-    return httpApi as unknown as ElectronAccomplishApi;
+  if (cachedHttpApi === null) {
+    cachedHttpApi = (tryCreateHttpAccomplishApi() ?? null) as ElectronAccomplishApi | null;
+  }
+  if (cachedHttpApi) {
+    return cachedHttpApi;
   }
 
   throw new Error('Accomplish API not available - not running in Electron');
