@@ -1,6 +1,6 @@
 # M5 REMAINING TASKS — Small-Session Handoff Plan
 
-**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `d9b1af8` (code at T1 `96a3fbe`; T3 soak recheck + T4 desktop recheck + T5 ARM64 evidence complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
+**Date:** 2026-10-23 · **Branch:** `linux-firefox-ai` · **HEAD:** `dbbdc1f` + this T6 doc commit (code unchanged at T1 `96a3fbe`; T3 soak recheck + T4 desktop recheck + T5 ARM64 evidence + T6 regression battery complete — no code) · **Read first:** `docs/M5_DEBUG_CHECKPOINT.md` (all investigation findings — do NOT re-investigate), `docs/PHASE_3_M5_PLAN.md` (approved design).
 
 **Session rules for every task:** one objective · 30–50K token budget · fresh session · run only the listed focused tests · commit verified results via the architect (or as instructed) · concise handoff report (state deltas only) · never touch `~/Accomplish`, `~/.local/share/Accomplish`, the production systemd daemon, or gateway policy files (`apps/host/src/policy.ts`) · never weaken M1 security.
 
@@ -21,13 +21,13 @@
 
 ## 2. Known failures (do-not-fix list + the one open item)
 
-| Failure                                                                                                                                                                     | Disposition                                                                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `90-secrets-redaction` serial-chain flake (isolation PASS 4.0 s)                                                                                                            | **CLOSED by T1 at `96a3fbe`** (root causes + evidence: debug checkpoint §1.B) |
-| `50-task-deny` 90 s card-wait / `60-history` task.list poll — ONE failure each under cold-model back-to-back load (recorded in debug checkpoint §1.B), not reproduced since | Record-only; watch during T6/T7 — out of T1 scope                             |
-| web integration 61                                                                                                                                                          | Upstream baseline — record only                                               |
-| Desktop docker e2e                                                                                                                                                          | Environment-blocked (no Docker on machine) — record only                      |
-| 3 lint warnings `useExecutionEffects.ts`                                                                                                                                    | Pre-existing — do not touch                                                   |
+| Failure                                                                                                                                                                     | Disposition                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `90-secrets-redaction` serial-chain flake (isolation PASS 4.0 s)                                                                                                            | **CLOSED by T1 at `96a3fbe`** (root causes + evidence: debug checkpoint §1.B)                               |
+| `50-task-deny` 90 s card-wait / `60-history` task.list poll — ONE failure each under cold-model back-to-back load (recorded in debug checkpoint §1.B), not reproduced since | Record-only; watch during T6/T7 — out of T1 scope                                                           |
+| web integration 61                                                                                                                                                          | Upstream baseline — record only (T6 re-run: identical 158 pass / 61 fail, zero new — debug checkpoint §1.F) |
+| Desktop docker e2e                                                                                                                                                          | Environment-blocked (no Docker on machine) — record only                                                    |
+| 3 lint warnings `useExecutionEffects.ts`                                                                                                                                    | Pre-existing — do not touch                                                                                 |
 
 ## 3. Task queue (dependency order)
 
@@ -82,8 +82,9 @@
 - **Commit:** no code; outcomes recorded for the checkpoint docs (T8).
 - **Complexity:** S.
 
-### T6 — Full regression battery at final HEAD
+### T6 — Full regression battery at final HEAD — **DONE (2026-10-23, no code)**
 
+- **Outcome:** all commands run in order at `dbbdc1f` (code at `96a3fbe`, tree clean). ACCEPTANCE MET, zero regressions: typecheck **5/5**; eslint **0 errors** + exactly the 3 pre-existing `useExecutionEffects.ts` warnings; prettier clean; host **332/332** (16 files); daemon **345/345** (27 files); agent-core **807 pass + 1 skip** (63 files); web unit **488/488** (30 files) with integration **158 pass / 61 fail = EXACTLY the documented upstream baseline** (219 tests, 12 files: taskStore 52 / Home 8 / TaskLauncher 1 failures; grep-verified zero M5-surface references in failing files); desktop **522/522** (23 files); gateway E2E **14 passed (3.1 m)** with both §1.B load-tolerance watch items green (`50-task-deny` 36.6 s, `60-history` 1.6 s) and `90-secrets-redaction` green in-chain. Production daemon pid 3945 cmdline/environ md5s identical pre/post battery; no orphans; no listeners on 9224/9324/9420; tree clean. Full evidence: `docs/M5_DEBUG_CHECKPOINT.md` §1.F. (Also banks one more post-commit full-suite green E2E run; T2's formal "twice after commit" item remains its own if the user wants it closed.)
 - **Objective:** final-state battery proving no regressions from M5.
 - **Files:** none (read-only runs).
 - **Commands (in order):** `pnpm typecheck && pnpm lint:eslint && pnpm format:check && pnpm -F @accomplish/host test && pnpm -F @accomplish/daemon test && pnpm -F @accomplish_ai/agent-core test && pnpm -F @accomplish/web test && pnpm -F @accomplish/desktop test` then `pnpm -F @accomplish/host test:e2e` once more.

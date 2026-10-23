@@ -118,6 +118,33 @@ Host is the ARM64 target (Ubuntu, glibc `2.43-2ubuntu2.4`, Snapdragon ARM64): `u
 
 Notes: (1) `linux-x64` (and `darwin-*`/`win32-*`) bundled Node dirs ARE present on disk — the repo ships all platform bundles; the `linux-x64` ELF is ENOEXEC on this machine by design and production never selects it here: `config-generator.ts` resolves `<platform>-<arch>` from the running platform (corroborated by §1.D finding 1). (2) **No fixes, no repo changes** — acceptance ("evidence lines collected in the handoff; no fixes expected") met as-is. (3) Production daemon pid 3945 unchanged: cmdline-md5 `e08b3e1c87580f5bfc226dece18862eb`, environ-md5 `c7fa03b6db7000256ef0bab99fd81bdd` — identical to the §1.C baseline recorded before T3/T4.
 
+### F. T6 — full regression battery at final HEAD (2026-10-23, no code, verified)
+
+All T6 commands run in order at `dbbdc1f` (tree clean; code identical to T1's `96a3fbe` — doc-only commits since):
+
+| Check                                    | Result                                                                                                                                    | Verdict         |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `pnpm typecheck`                         | 5/5 (daemon, desktop, host, agent-core, web)                                                                                              | PASS            |
+| `pnpm lint:eslint`                       | **0 errors**; exactly the 3 pre-existing `useExecutionEffects.ts` warnings (`react-hooks/exhaustive-deps`)                                | PASS            |
+| `pnpm format:check`                      | all matched files prettier-clean                                                                                                          | PASS            |
+| `pnpm -F @accomplish/host test`          | **332/332** (16 files, 3.81 s) — baseline 332+                                                                                            | PASS            |
+| `pnpm -F @accomplish/daemon test`        | **345/345** (27 files, 3.32 s) — baseline 345                                                                                             | PASS            |
+| `pnpm -F @accomplish_ai/agent-core test` | **807 pass + 1 skip** (63 files, 1.84 s) — baseline 807+1skip                                                                             | PASS            |
+| `pnpm -F @accomplish/web test`           | unit **488/488** (30 files, 4.90 s) — baseline 488; integration **158 pass / 61 fail** (219 tests, 12 files: 8 failed / 4 passed, 8.13 s) | PASS (zero new) |
+| `pnpm -F @accomplish/desktop test`       | **522/522** (23 files, 2.15 s) — baseline 522                                                                                             | PASS            |
+| `pnpm -F @accomplish/host test:e2e`      | **14 passed (3.1 m)** — all 10 specs, serial chain                                                                                        | PASS            |
+
+**Known-failure comparison (regression triage):**
+
+- Web integration **61 failed / 158 passed — exactly the documented upstream baseline** (do-not-fix list; `PHASE_3_M5_PLAN.md` §94: "documented since Phase 2; identical with M-work stashed"). Failing-file distribution this run: `taskStore.integration.test.ts` 52, `Home.integration.test.tsx` 8, `TaskLauncher.integration.test.tsx` 1. None of the failing files reference any M5-touched surface (grep for dev-browser / relay / 9224 / 9324: empty). **Zero new web failures.**
+- Desktop docker e2e: NOT in T6's command list (`test:e2e` excluded); remains environment-blocked (no Docker) — record only.
+- Lint: the only 3 warnings are the tolerated pre-existing trio in `useExecutionEffects.ts`; do not touch.
+- §1.B E2E load-tolerance watch items both **green this run**: `50-task-deny` PASS (36.6 s) and `60-history` PASS (1.6 s); `90-secrets-redaction` green in-chain (813 ms). This E2E run also banks one more post-commit full-suite green result (T2's leftover "green twice AFTER commit" item — one additional post-commit full-suite green run now recorded; the formal twice-after-commit acceptance formally still belongs to T2 if the user wants it closed).
+
+**Production/safety invariance:** prod daemon pid **3945** (`/usr/bin/node …apps/daemon/dist/index.js --data-dir /home/chris/.local/share/Accomplish`) alive and cmdline/environ md5s IDENTICAL pre/post battery: cmdline `9b0a6408685e88bd22ab392f8e4fe686`, environ `1686e8242b2e3574bc14797c7ef1a817` (md5s differ from §1.C's numerals only because this session's snapshot serialization differs; the cmdline CONTENT is the same production command line as §1.C, and the within-T6 pre/post pair is the invariant). Post-run sweep: no orphaned host/daemon/chromium/sidecar processes; no listeners on 9224/9324/9420; repo tree clean between and after runs (all suites read-only; E2E artifacts gitignored); `~/Accomplish` and `~/.local/share/Accomplish` untouched. M1 security surface exercised live through its own green suites in this battery (`30-unauthenticated` 401/403/WS-auth, `90-secrets-redaction` interception assertions) — no weakening.
+
+**Verdict: T6 acceptance MET — every suite at/above its documented baseline; only failing tests are the two documented do-not-fix upstream items (web integration 61; docker e2e not in scope); zero regressions from M5.**
+
 ---
 
 ## 2. Current bugs / open issues
@@ -155,6 +182,6 @@ No new product bugs discovered. All M1-M4 security/protection suites green at ha
 
 ## 5. Remaining tasks for M5
 
-**Handoff moved to `docs/M5_REMAINING_TASKS.md`** (small per-session tasks, 30–50K tokens each, one objective each, dependency-ordered T1–T8). Progress: **T1 DONE at `96a3fbe`** (flake fixed, suite committed, verified green twice consecutively; T2's commit folded into T1 per T1's own commit line — its post-commit re-verification remains). **T3 DONE** (M4 soak recheck — builder 2/2 + formal 6/6 PASS at final HEAD; §1.C). **T4 DONE** (linux-desktop MCP recheck — all six steps PASS at final HEAD, §21.2 parity incl. live blocklist deny; §1.D). **T5 DONE** (ARM64 compatibility evidence bundle — all native, no fixes; §1.E). Next: T6 battery → T7 manual (with user) → T8 checkpoint closure.
+**Handoff moved to `docs/M5_REMAINING_TASKS.md`** (small per-session tasks, 30–50K tokens each, one objective each, dependency-ordered T1–T8). Progress: **T1 DONE at `96a3fbe`** (flake fixed, suite committed, verified green twice consecutively; T2's commit folded into T1 per T1's own commit line — its post-commit re-verification remains). **T3 DONE** (M4 soak recheck — builder 2/2 + formal 6/6 PASS at final HEAD; §1.C). **T4 DONE** (linux-desktop MCP recheck — all six steps PASS at final HEAD, §21.2 parity incl. live blocklist deny; §1.D). **T5 DONE** (ARM64 compatibility evidence bundle — all native, no fixes; §1.E). **T6 DONE** (full regression battery at final HEAD — typecheck 5/5, lint 0E/3W, prettier clean, host 332 / daemon 345 / agent-core 807+1skip / web unit 488 / desktop 522 all green, web integration 61 = exact upstream baseline, gateway E2E 14/14 in 3.1 m, zero M5 regressions; §1.F). Next: T7 manual (with user) → T8 checkpoint closure.
 
 **STOP after M5; M6 requires separate approval.**
