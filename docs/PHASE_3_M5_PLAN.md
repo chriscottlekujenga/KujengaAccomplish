@@ -56,28 +56,28 @@ Everything else — allowlist (98), blocklist (7), scrubber/redaction, presence 
 
 **A. Boot & auth (no LLM):**
 
-| Spec | Asserts |
-| --- | --- |
-| `boot.spec.ts` | Gateway URL loads; UI renders (no error page); token captured from fragment (fragment stripped); `daemon.ping` alive; onboarding auto-completes (`onboarding_complete=1`) |
-| `unauthenticated.spec.ts` | Page without `#token` → shell-access error page (not the app); HTTP without bearer → 401; `secrets.getApiKey`/`getAllApiKeys` → 403 via WS/RPC path even when authed |
-| `rate-burst.spec.ts` | ~1000 rapid authed requests → none throttled (1500/60 s budget; complements the M4 host unit test at the real gateway layer) |
+| Spec                      | Asserts                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boot.spec.ts`            | Gateway URL loads; UI renders (no error page); token captured from fragment (fragment stripped); `daemon.ping` alive; onboarding auto-completes (`onboarding_complete=1`) |
+| `unauthenticated.spec.ts` | Page without `#token` → shell-access error page (not the app); HTTP without bearer → 401; `secrets.getApiKey`/`getAllApiKeys` → 403 via WS/RPC path even when authed      |
+| `rate-burst.spec.ts`      | ~1000 rapid authed requests → none throttled (1500/60 s budget; complements the M4 host unit test at the real gateway layer)                                              |
 
 **B. Core lifecycle (real ollama tasks, isolated workspace under the temp data dir):**
 
-| Spec | Asserts |
-| --- | --- |
-| `task-approve.spec.ts` | Prompt → submit → execution page; permission card for bash/write; **Allow via UI**; streaming transcript renders assistant content before completion; terminal status success; exact file created |
-| `task-deny.spec.ts` | Task requested; **Deny via UI**; card closes; terminal state reached (agent reacts to denial); no file created (or denial surfaced in transcript) |
-| `history.spec.ts` | After a completed task, history page lists it with correct status (SQLite persistence through the UI) |
-| `settings.spec.ts` | Settings page loads over the gateway; a non-secret setting change round-trips (UI → RPC → UI), verified additionally via direct HTTP `/rpc` |
-| `provider-model.spec.ts` | Ollama visible as connected provider; model selection change persists (`provider.getSettings` selectedModel via scrubbed HTTP read) |
+| Spec                     | Asserts                                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task-approve.spec.ts`   | Prompt → submit → execution page; permission card for bash/write; **Allow via UI**; streaming transcript renders assistant content before completion; terminal status success; exact file created |
+| `task-deny.spec.ts`      | Task requested; **Deny via UI**; card closes; terminal state reached (agent reacts to denial); no file created (or denial surfaced in transcript)                                                 |
+| `history.spec.ts`        | After a completed task, history page lists it with correct status (SQLite persistence through the UI)                                                                                             |
+| `settings.spec.ts`       | Settings page loads over the gateway; a non-secret setting change round-trips (UI → RPC → UI), verified additionally via direct HTTP `/rpc`                                                       |
+| `provider-model.spec.ts` | Ollama visible as connected provider; model selection change persists (`provider.getSettings` selectedModel via scrubbed HTTP read)                                                               |
 
 **C. Security battery (extends M1/M2 → E2E layer):**
 
-| Spec | Asserts |
-| --- | --- |
+| Spec                        | Asserts                                                                                                                                                                                                                                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `presence-autodeny.spec.ts` | Task started by a transient WS client which then disconnects → permission request → **auto-deny with no UI** → denial delivered to opencode → task reaches terminal state (M1 §5.2 browser-layer proof). A second page-open variant: close page while prompt pending → auto-deny; reopen → UI consistent |
-| `secrets-redaction.spec.ts` | Network-level Playwright interception of `/rpc` responses during settings/provider browsing → response bodies contain no raw secret values (only masked shapes); DOM contains no plaintext secrets |
+| `secrets-redaction.spec.ts` | Network-level Playwright interception of `/rpc` responses during settings/provider browsing → response bodies contain no raw secret values (only masked shapes); DOM contains no plaintext secrets                                                                                                       |
 
 **D. Harness-level (daemon/socket scripts, `/tmp/opencode/`, non-persistent — NOT Playwright):**
 
@@ -89,12 +89,12 @@ Reused proven patterns from `/tmp/opencode/` (m4-soak harness, m3c3-poc driver) 
 
 ## 5. Triage of pre-existing failures (baseline vs regression)
 
-| Failure | Disposition |
-| --- | --- |
-| web integration 61 | Upstream baseline (documented since Phase 2; identical with M-work stashed annually) — record, do not fix in M5 |
-| dev-browser-mcp integration 1 | **Fix in M5** (§3.2 — test-side API removal repair) |
-| lint 3 warnings (`useExecutionEffects.ts`) | Pre-existing; untouched |
-| Desktop docker E2E | Unavailable (no Docker on this machine) — not a code defect; documented |
+| Failure                                    | Disposition                                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| web integration 61                         | Upstream baseline (documented since Phase 2; identical with M-work stashed annually) — record, do not fix in M5 |
+| dev-browser-mcp integration 1              | **Fix in M5** (§3.2 — test-side API removal repair)                                                             |
+| lint 3 warnings (`useExecutionEffects.ts`) | Pre-existing; untouched                                                                                         |
+| Desktop docker E2E                         | Unavailable (no Docker on this machine) — not a code defect; documented                                         |
 
 ## 6. Manual acceptance (real Firefox, real machine)
 
