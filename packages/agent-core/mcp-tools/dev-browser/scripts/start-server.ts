@@ -1,4 +1,5 @@
 import { serve } from '@/index.js';
+import { resolveHeadlessFromEnv } from '@/headless.js';
 import { execSync } from 'child_process';
 import { mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
@@ -205,7 +206,7 @@ function installPlaywrightChromium(): void {
 }
 
 console.log('Starting dev browser server...');
-const headless = process.env.HEADLESS === 'true';
+const headless = resolveHeadlessFromEnv();
 
 async function startServer(retry = false): Promise<void> {
   try {
