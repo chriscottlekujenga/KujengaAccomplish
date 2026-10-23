@@ -185,3 +185,102 @@ describe('OpenCodeAdapter watchdog wiring', () => {
     expect(priv.watchdogActivityCounter).toBe(before + 1);
   });
 });
+
+/**
+ * Phase 3 M4: the keep-alive exclusion set must (a) exclude
+ * `file.watcher.updated` by default (second fixed-cadence, no-progress event
+ * identified alongside `server.heartbeat`), (b) keep excluding
+ * `server.heartbeat` (regression), and (c) accept runtime-provided
+ * `AdapterOptions.watchdogKeepAliveEventTypes` as an EXTENSION of the
+ * defaults — custom types are added to the exclusion set, defaults are never
+ * dropped (replacing them would resurrect the "watchdog never fires during
+ * a stall" bug).
+ */
+describe('OpenCodeAdapter watchdog keep-alive exclusions', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function constructAdapter(
+    extra?: { watchdogKeepAliveEventTypes?: ReadonlySet<string> },
+    taskId = 'tsk_watchdog_keepalive',
+  ): OpenCodeAdapter {
+    return new OpenCodeAdapter(
+      {
+        platform: 'darwin',
+        isPackaged: false,
+        tempPath: '/tmp',
+        ...extra,
+      },
+      taskId,
+    );
+  }
+
+  function drive(adapter: OpenCodeAdapter): {
+    counter: () => number;
+    feed: (type: string) => void;
+  } {
+    const priv = adapter as unknown as {
+      handleSdkEvent: (event: unknown) => void;
+      watchdogActivityCounter: number;
+    };
+    return {
+      counter: () => priv.watchdogActivityCounter,
+      feed: (type: string) => priv.handleSdkEvent({ type, properties: {} }),
+    };
+  }
+
+  it('file.watcher.updated does not advance the watchdog counter (excluded by default)', () => {
+    const { counter, feed } = drive(constructAdapter());
+
+    const before = counter();
+    // The file watcher emits this on its own cadence whenever a watched
+    // workspace changes on disk — independent of LLM progress. Counting it
+    // kept the fingerprint advancing during a real generation stall that
+    // coincided with editor saves.
+    feed('file.watcher.updated');
+    feed('file.watcher.updated');
+    feed('file.watcher.updated');
+
+    expect(counter()).toBe(before);
+  });
+
+  it('server.heartbeat remains excluded by default (regression)', () => {
+    const { counter, feed } = drive(constructAdapter());
+
+    const before = counter();
+    feed('server.heartbeat');
+    feed('server.heartbeat');
+
+    expect(counter()).toBe(before);
+  });
+
+  it('watchdogKeepAliveEventTypes extends the defaults (custom type excluded, defaults kept)', () => {
+    const { counter, feed } = drive(
+      constructAdapter({ watchdogKeepAliveEventTypes: new Set(['gateway.ping']) }),
+    );
+
+    const before = counter();
+
+    // Custom type — excluded via the provided extension set.
+    feed('gateway.ping');
+    feed('gateway.ping');
+
+    // Defaults must still be excluded (merged, NOT replaced).
+    feed('server.heartbeat');
+    feed('file.watcher.updated');
+
+    expect(counter()).toBe(before);
+
+    // A real event still advances the counter — the extension must not be
+    // so broad as to mask genuine progress.
+    feed('session.idle');
+    expect(counter()).toBe(before + 1);
+  });
+});

@@ -12,6 +12,8 @@ export interface StoredTask {
   startedAt?: string;
   completedAt?: string;
   workspaceId?: string;
+  /** Preserved across resume turns — see `Task.workingDirectory`. */
+  workingDirectory?: string;
 }
 
 export interface TaskRow {
@@ -24,6 +26,7 @@ export interface TaskRow {
   started_at: string | null;
   completed_at: string | null;
   workspace_id: string | null;
+  working_directory: string | null;
 }
 
 export interface MessageRow {
@@ -128,6 +131,7 @@ export function rowToTask(row: TaskRow): StoredTask {
     startedAt: row.started_at || undefined,
     completedAt: row.completed_at || undefined,
     workspaceId: row.workspace_id || undefined,
+    workingDirectory: row.working_directory || undefined,
     messages: getMessagesForTask(row.id),
   };
 }

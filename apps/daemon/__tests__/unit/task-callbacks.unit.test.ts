@@ -33,6 +33,8 @@ function buildFixture(options: { source: TaskSource; hasInteractiveClients: bool
   // what makes `listenerCount <= 1` the right "no bridge" threshold.
   const rpcForwardListener = vi.fn();
   emitter.on('permission', rpcForwardListener);
+  const statusChangeSpy = vi.fn();
+  emitter.on('statusChange', statusChangeSpy);
 
   const sendPermissionResponse = vi.fn(async () => {});
 
@@ -59,7 +61,14 @@ function buildFixture(options: { source: TaskSource; hasInteractiveClients: bool
     sendPermissionResponse,
   });
 
-  return { callbacks, emitter, rpcForwardListener, sendPermissionResponse };
+  return {
+    callbacks,
+    emitter,
+    rpcForwardListener,
+    sendPermissionResponse,
+    storage,
+    statusChangeSpy,
+  };
 }
 
 const fakeRequest: PermissionRequest = {
@@ -164,5 +173,88 @@ describe('createTaskCallbacks — onPermissionRequest dispatch', () => {
 
     expect(f.sendPermissionResponse).toHaveBeenCalled();
     expect(elapsed).toBeLessThan(50);
+  });
+});
+
+/**
+ * Phase 3 M4 (docs/PHASE_3_M4_PLAN.md §B1): a permission request emitted to
+ * a human-facing surface (WhatsApp bridge OR interactive UI) parks the task
+ * in `waiting_permission` — persisted via storage AND announced through
+ * `statusChange` so the WS `task.statusChange` notification reaches the UI.
+ * Auto-deny branches must NEVER touch the status: the deny is immediate, no
+ * human waits, and the task stays `running`.
+ */
+describe('createTaskCallbacks — waiting_permission parking (M4)', () => {
+  it("source='ui', UI connected → persists waiting_permission + emits statusChange", () => {
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+    const bridgeListener = vi.fn();
+    f.emitter.on('permission', bridgeListener);
+
+    f.callbacks.onPermissionRequest?.(fakeRequest);
+
+    expect(bridgeListener).toHaveBeenCalledWith(fakeRequest);
+    expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_permission');
+    expect(f.statusChangeSpy).toHaveBeenCalledWith({
+      taskId: 'tsk_abc',
+      status: 'waiting_permission',
+    });
+  });
+
+  it("source='whatsapp', bridge attached → parks in waiting_permission too (bridge reply restores running)", () => {
+    const f = buildFixture({ source: 'whatsapp', hasInteractiveClients: false });
+    const bridgeListener = vi.fn();
+    f.emitter.on('permission', bridgeListener);
+
+    f.callbacks.onPermissionRequest?.(fakeRequest);
+
+    expect(bridgeListener).toHaveBeenCalledWith(fakeRequest);
+    expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_permission');
+    expect(f.statusChangeSpy).toHaveBeenCalledWith({
+      taskId: 'tsk_abc',
+      status: 'waiting_permission',
+    });
+  });
+
+  it("source='whatsapp', bridge NOT attached → auto-deny does NOT touch the status", () => {
+    const f = buildFixture({ source: 'whatsapp', hasInteractiveClients: false });
+
+    f.callbacks.onPermissionRequest?.(fakeRequest);
+
+    expect(f.sendPermissionResponse).toHaveBeenCalled();
+    expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
+    expect(f.statusChangeSpy).not.toHaveBeenCalled();
+  });
+
+  it("source='ui', no UI connected → auto-deny does NOT touch the status", () => {
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: false });
+
+    f.callbacks.onPermissionRequest?.(fakeRequest);
+
+    expect(f.sendPermissionResponse).toHaveBeenCalled();
+    expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
+    expect(f.statusChangeSpy).not.toHaveBeenCalled();
+  });
+
+  it("source='scheduler', UI connected → emits AND parks in waiting_permission", () => {
+    const f = buildFixture({ source: 'scheduler', hasInteractiveClients: true });
+
+    f.callbacks.onPermissionRequest?.(fakeRequest);
+
+    expect(f.rpcForwardListener).toHaveBeenCalledWith(fakeRequest);
+    expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_permission');
+    expect(f.statusChangeSpy).toHaveBeenCalledWith({
+      taskId: 'tsk_abc',
+      status: 'waiting_permission',
+    });
+  });
+
+  it("source='scheduler', no UI → auto-deny does NOT touch the status", () => {
+    const f = buildFixture({ source: 'scheduler', hasInteractiveClients: false });
+
+    f.callbacks.onPermissionRequest?.(fakeRequest);
+
+    expect(f.sendPermissionResponse).toHaveBeenCalled();
+    expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
+    expect(f.statusChangeSpy).not.toHaveBeenCalled();
   });
 });

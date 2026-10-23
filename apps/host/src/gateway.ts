@@ -39,7 +39,11 @@ import { noopLogger, type HostLogger } from './logger.js';
 import { checkMethodPolicy } from './policy.js';
 import { scrubResponse } from './provider-settings-scrubber.js';
 import { isDaemonServiceActive, isDaemonServiceEnabled } from './daemon-service.js';
-import { TokenRateLimiter, DEFAULT_RATE_LIMIT, type RateLimiterOptions } from './rate-limit.js';
+import {
+  TokenRateLimiter,
+  resolveRateLimiterOptions,
+  type RateLimiterOptions,
+} from './rate-limit.js';
 
 /** Custom JSON-RPC error code: method exists but is not authorized here. */
 const METHOD_NOT_AUTHORIZED = -32003;
@@ -240,7 +244,10 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
   const logger = options.logger ?? noopLogger;
   const version = options.version ?? HOST_VERSION;
   const platform = process.platform;
-  const rateLimiter = new TokenRateLimiter(options.rateLimiterOptions ?? DEFAULT_RATE_LIMIT);
+  // Explicit options (tests/embedders) always win over the env-derived config.
+  const rateLimiter = new TokenRateLimiter(
+    options.rateLimiterOptions ?? resolveRateLimiterOptions(process.env),
+  );
   const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
   const maxWsMessageBytes = options.maxWsMessageBytes ?? MAX_WS_MESSAGE_BYTES;
   const wsAuthTimeoutMs = options.wsAuthTimeoutMs ?? WS_AUTH_TIMEOUT_MS;

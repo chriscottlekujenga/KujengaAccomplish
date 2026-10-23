@@ -91,6 +91,17 @@ export function createTaskCallbacks(
             // Swallow — auto-deny failures are logged at the sendResponse layer.
           });
       };
+      // M4: a request emitted to a human-facing surface parks the task in
+      // 'waiting_permission' — the turn is blocked on a HUMAN reply, so the
+      // boot-time crash sweep (recoverStaleTasks — 'running' only) must not
+      // record it as a stale orphan: a waiting task keeps its resumable
+      // sessionId + cwd and is recovered via resumeSession. The auto-deny
+      // branches below deliberately skip this: the deny is immediate, no
+      // human ever waits, and the task stays 'running' throughout.
+      const markWaitingOnHuman = (): void => {
+        storage.updateTaskStatus(taskId, 'waiting_permission');
+        emitter.emit('statusChange', { taskId, status: 'waiting_permission' });
+      };
 
       if (source === 'whatsapp') {
         // Plan decision #10: if `source === 'whatsapp'` but no WhatsApp
@@ -105,6 +116,7 @@ export function createTaskCallbacks(
           autoDeny();
           return;
         }
+        markWaitingOnHuman();
         emitter.emit('permission', request);
         return;
       }
@@ -114,6 +126,7 @@ export function createTaskCallbacks(
         return;
       }
 
+      markWaitingOnHuman();
       emitter.emit('permission', request);
     },
     onComplete: (result: TaskResult) => {

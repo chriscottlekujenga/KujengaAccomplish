@@ -18,6 +18,7 @@ import {
   type PermissionResponse,
   type TaskSource,
   type FileAttachmentInfo,
+  type StoredTask,
 } from '@accomplish_ai/agent-core';
 import {
   type TaskConfigBuilderOptions,
@@ -262,6 +263,13 @@ export class TaskService extends EventEmitter {
     };
     task.messages = [initialUserMessage];
     this.storage.saveTask(task, params.workspaceId);
+    // M4: persist the configured cwd on the task row (v032). saveTask stores
+    // `task.workingDirectory || null` and the TaskManager-built task carries
+    // no cwd, so without this the row stays NULL and a resume turn would not
+    // be able to recover the original folder. Must run AFTER saveTask.
+    if (validatedConfig.workingDirectory) {
+      this.storage.updateTaskWorkingDirectory(taskId, validatedConfig.workingDirectory);
+    }
 
     runTaskSummaryGeneration(taskId, validatedConfig.prompt, this.storage, (summary) => {
       this.emit('summary', { taskId, summary });
@@ -318,11 +326,21 @@ export class TaskService extends EventEmitter {
      * notes keep flowing across resume turns.
      */
     workspaceId?: string;
+    /**
+     * Caller-supplied host cwd for the resumed turn (M4). When provided it
+     * wins over — and is persisted as — the task's working directory (the
+     * new turn establishes a new cwd). When omitted, the ORIGINAL task's
+     * persisted cwd is reused so a lazily-respawned `opencode serve` runs
+     * in the original workspace instead of the daemon cwd.
+     */
+    workingDirectory?: string;
   }): Promise<Task> {
     const { sessionId, prompt, existingTaskId, attachments } = params;
     const taskId = existingTaskId || createTaskId();
 
+    let storedTask: StoredTask | undefined;
     if (existingTaskId) {
+      storedTask = this.storage.getTask(existingTaskId);
       const userMessage: TaskMessage = {
         id: createMessageId(),
         type: 'user',
@@ -330,6 +348,21 @@ export class TaskService extends EventEmitter {
         timestamp: new Date().toISOString(),
       };
       this.storage.addTaskMessage(existingTaskId, userMessage);
+
+      // M4: a resume turn on a task parked for human assistance is a
+      // recovery action, not a failure. Flip a waiting_* status to the
+      // transient 'resuming' so the UI knows the turn restarted and the
+      // boot-time crash sweep (recoverStaleTasks — 'running' only) can
+      // never misclassify the task. Non-waiting statuses (e.g. a resumed
+      // 'failed' task) are left untouched so the prior outcome stays
+      // visible until the new turn resolves it.
+      if (
+        storedTask?.status === 'waiting_permission' ||
+        storedTask?.status === 'waiting_for_user'
+      ) {
+        this.storage.updateTaskStatus(existingTaskId, 'resuming');
+        this.emit('statusChange', { taskId: existingTaskId, status: 'resuming' });
+      }
     }
 
     const activeModel = this.storage.getActiveProviderModel();
@@ -340,7 +373,21 @@ export class TaskService extends EventEmitter {
     //   3. undefined (fresh session with no workspace context)
     let workspaceId = params.workspaceId;
     if (!workspaceId && existingTaskId) {
-      workspaceId = this.storage.getTask(existingTaskId)?.workspaceId;
+      workspaceId = storedTask?.workspaceId;
+    }
+    // Working-directory resolution order (M4):
+    //   1. explicit `params.workingDirectory` (caller wins; persisted as the
+    //      task's new cwd — this turn establishes it)
+    //   2. the ORIGINAL task's persisted cwd: a resumed turn used to build
+    //      its TaskConfig without any cwd, so a lazily-respawned
+    //      `opencode serve` inherited the daemon cwd and user-picked folders
+    //      were lost on every follow-up
+    //   3. undefined → TaskManager default fallback (identical to pre-M4)
+    let workingDirectory = params.workingDirectory;
+    if (workingDirectory && existingTaskId) {
+      this.storage.updateTaskWorkingDirectory(existingTaskId, workingDirectory);
+    } else if (!workingDirectory) {
+      workingDirectory = storedTask?.workingDirectory;
     }
     const task = await this._runTask(taskId, {
       prompt,
@@ -350,6 +397,7 @@ export class TaskService extends EventEmitter {
       provider: selectedModel?.provider,
       files: attachments,
       workspaceId,
+      workingDirectory,
     });
 
     if (existingTaskId) {
@@ -404,6 +452,15 @@ export class TaskService extends EventEmitter {
 
   async sendResponse(taskId: string, response: PermissionResponse): Promise<void> {
     await this.taskManager.sendResponse(taskId, response);
+    // M4: after a successful human reply the turn continues, so a task that
+    // was parked at a waiting_* status goes back to 'running'. A terminal
+    // status may have raced in while the reply was in flight — the guard
+    // only flips waiting_* statuses, never completion/failure/cancellation.
+    const storedStatus = this.storage.getTask(taskId)?.status;
+    if (storedStatus === 'waiting_permission' || storedStatus === 'waiting_for_user') {
+      this.storage.updateTaskStatus(taskId, 'running');
+      this.emit('statusChange', { taskId, status: 'running' });
+    }
   }
 
   /**

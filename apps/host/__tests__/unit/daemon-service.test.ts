@@ -28,6 +28,8 @@ describe('getUnitContent', () => {
       `ExecStart=/usr/bin/node /repo/apps/daemon/dist/index.js --data-dir /tmp/accomplish-data`,
     );
     expect(content).toContain('Restart=on-failure');
+    // M4 regression lock: the unit must self-restart after a daemon failure.
+    expect(content).toContain('RestartSec=5');
     expect(content).toContain('Environment=XDG_DATA_HOME=/tmp/accomplish-data');
     expect(content).toContain('Environment=ACCOMPLISH_APP_PATH=/repo');
     expect(content).toContain('WantedBy=default.target');

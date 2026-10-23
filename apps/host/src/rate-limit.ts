@@ -26,7 +26,39 @@ interface Bucket {
   windowStart: number;
 }
 
-export const DEFAULT_RATE_LIMIT: RateLimiterOptions = { limit: 600, windowMs: 60_000 };
+/**
+ * Per-token budget of 1500 requests/60 s: the old 600 budget was consumed by
+ * web-UI reconnect floods after every daemon restart, producing spurious 429s
+ * (DEVELOPMENT_CHECKPOINT §17). 1500 leaves headroom for those legitimate
+ * bursts while still capping abusive per-token traffic.
+ */
+export const DEFAULT_RATE_LIMIT: RateLimiterOptions = { limit: 1500, windowMs: 60_000 };
+
+/** Valid `ACCOMPLISH_GATEWAY_RATE_LIMIT` range: sane floor, abuse-guard ceiling. */
+const RATE_LIMIT_MIN = 60;
+const RATE_LIMIT_MAX = 100_000;
+
+/**
+ * Resolve rate-limiter options from the environment.
+ *
+ * `ACCOMPLISH_GATEWAY_RATE_LIMIT` overrides the per-token request budget;
+ * absent or invalid values (non-numeric, or outside 60..100000) fall back to
+ * the default with a warning. Pure/deterministic — never reads a clock.
+ */
+export function resolveRateLimiterOptions(env: NodeJS.ProcessEnv): RateLimiterOptions {
+  const raw = env.ACCOMPLISH_GATEWAY_RATE_LIMIT;
+  if (raw === undefined) {
+    return DEFAULT_RATE_LIMIT;
+  }
+  const parsed = /^[0-9]+$/.test(raw) ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isInteger(parsed) && parsed >= RATE_LIMIT_MIN && parsed <= RATE_LIMIT_MAX) {
+    return { limit: parsed, windowMs: DEFAULT_RATE_LIMIT.windowMs };
+  }
+  console.warn(
+    `[host] Invalid ACCOMPLISH_GATEWAY_RATE_LIMIT "${raw}" — using default ${DEFAULT_RATE_LIMIT.limit}/60s`,
+  );
+  return DEFAULT_RATE_LIMIT;
+}
 
 export class TokenRateLimiter {
   private buckets = new Map<string, Bucket>();

@@ -173,6 +173,14 @@ export interface AdapterOptions {
    * Undefined in pure OSS builds — the adapter is a no-op on this axis.
    */
   setProxyTaskId?: (taskId: string | undefined) => void;
+  /**
+   * Extra SDK event types that must NOT advance the inactivity watchdog's
+   * activity counter — additional fixed-cadence, no-progress keep-alive
+   * events identified by an embedding runtime. Merged with the built-in
+   * `DEFAULT_WATCHDOG_KEEP_ALIVE_EVENT_TYPES` (`server.heartbeat`,
+   * `file.watcher.updated`); the defaults are never replaced.
+   */
+  watchdogKeepAliveEventTypes?: ReadonlySet<string>;
 }
 
 export interface OpenCodeAdapterEvents {
@@ -227,8 +235,20 @@ interface PendingRequest {
  * Bumping the watchdog fingerprint for them keeps it advancing forever during
  * a real stall (e.g. `server.heartbeat` fires ~1/s), so the inactivity
  * watchdog never fires.
+ *
+ * `file.watcher.updated` is the second such event: the file watcher emits it
+ * on its own cadence whenever a watched workspace changes on disk, entirely
+ * independent of the task's LLM — a hung generation that coincides with
+ * editor saves would otherwise look like progress.
+ *
+ * Runtimes that know about further fixed-cadence events extend this set via
+ * `AdapterOptions.watchdogKeepAliveEventTypes` (merged with these defaults,
+ * never replacing them).
  */
-const WATCHDOG_KEEP_ALIVE_EVENT_TYPES: ReadonlySet<string> = new Set(['server.heartbeat']);
+const DEFAULT_WATCHDOG_KEEP_ALIVE_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'server.heartbeat',
+  'file.watcher.updated',
+]);
 
 export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private options: AdapterOptions;
@@ -354,11 +374,25 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
    */
   private watchdogActivityCounter = 0;
   private watchdog: TaskInactivityWatchdog | null = null;
+  /**
+   * Effective keep-alive exclusion set for `watchdogActivityCounter`:
+   * built-in defaults merged with `AdapterOptions.watchdogKeepAliveEventTypes`.
+   */
+  private watchdogKeepAliveEventTypes: ReadonlySet<string>;
 
   constructor(options: AdapterOptions, taskId?: string) {
     super();
     this.options = options;
     this.currentTaskId = taskId ?? null;
+
+    // Extensible, not replacing: caller-supplied exclusions are ADDED to the
+    // fixed-cadence defaults so a runtime can never accidentally un-exclude
+    // `server.heartbeat` / `file.watcher.updated` (that would resurrect the
+    // "watchdog never fires during a stall" bug).
+    this.watchdogKeepAliveEventTypes = new Set([
+      ...DEFAULT_WATCHDOG_KEEP_ALIVE_EVENT_TYPES,
+      ...(options.watchdogKeepAliveEventTypes ?? []),
+    ]);
 
     // Sandbox wiring preserved from the prior PTY adapter.
     if (options.sandboxFactory) {
@@ -920,10 +954,11 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     // event (message, part, delta, permission, question, idle, error,
     // todo…) counts as progress. A hang that produces no events will
     // leave this counter stable, letting the watchdog detect the stall.
-    // Keep-alive events (`server.heartbeat`) are excluded — they fire on
-    // a fixed cadence regardless of progress, so counting them would
-    // mask any real stall (the watchdog could never fire).
-    if (!WATCHDOG_KEEP_ALIVE_EVENT_TYPES.has(event.type)) {
+    // Keep-alive events (`server.heartbeat`, `file.watcher.updated`, plus
+    // adapter-provided extras) are excluded — they fire on a fixed cadence
+    // regardless of progress, so counting them would mask any real stall
+    // (the watchdog could never fire).
+    if (!this.watchdogKeepAliveEventTypes.has(event.type)) {
       this.watchdogActivityCounter += 1;
     }
     switch (event.type) {

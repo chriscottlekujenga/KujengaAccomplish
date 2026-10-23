@@ -105,23 +105,23 @@ function buildTaskFixture(
   callbacks: ReturnType<typeof createTaskCallbacks>;
   permissionListener: ReturnType<typeof vi.fn>;
   deny: ReturnType<typeof vi.fn>;
+  updateTaskStatus: ReturnType<typeof vi.fn>;
 } {
   const deny = vi.fn(async () => {});
   const emitter = new EventEmitter();
   const permissionListener = vi.fn();
   emitter.on('permission', permissionListener);
-  const callbacks = createTaskCallbacks(
-    'tsk_gate',
-    emitter,
-    {} as StorageAPI,
-    {} as TaskManagerAPI,
-    {
-      presence: { hasInteractiveClients: () => server.hasInteractiveClients() },
-      getTaskSource: () => source,
-      sendPermissionResponse: deny,
-    },
-  );
-  return { callbacks, permissionListener, deny };
+  // M4: the emitted-branch parks the task in 'waiting_permission' via
+  // storage.updateTaskStatus, so the stub must carry that method (auto-deny
+  // branches never touch it).
+  const updateTaskStatus = vi.fn();
+  const storage = { updateTaskStatus } as unknown as StorageAPI;
+  const callbacks = createTaskCallbacks('tsk_gate', emitter, storage, {} as TaskManagerAPI, {
+    presence: { hasInteractiveClients: () => server.hasInteractiveClients() },
+    getTaskSource: () => source,
+    sendPermissionResponse: deny,
+  });
+  return { callbacks, permissionListener, deny, updateTaskStatus };
 }
 
 const fakeRequest: PermissionRequest = {

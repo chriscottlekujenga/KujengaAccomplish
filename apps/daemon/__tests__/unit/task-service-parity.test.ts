@@ -4,11 +4,24 @@
  * - resumeSession passes attachments into resumed config
  * - saveTask uses workspaceId
  * - per-task config file isolation under concurrency
+ *
+ * Plus Phase 3 M4 (docs/PHASE_3_M4_PLAN.md §A1/§B1):
+ * - startTask persists the configured cwd on the task row (v032)
+ * - resumeSession reuses the ORIGINAL task's stored cwd (explicit
+ *   params.workingDirectory wins and is persisted)
+ * - waiting_permission/waiting_for_user → resuming on resume; → running on
+ *   a successful sendResponse (never overwriting terminal statuses)
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import type { TaskConfig, Task, FileAttachmentInfo } from '@accomplish_ai/agent-core';
+import type {
+  TaskConfig,
+  Task,
+  FileAttachmentInfo,
+  StoredTask,
+  TaskStatus,
+} from '@accomplish_ai/agent-core';
 
 // Track what TaskManager.startTask receives
 let capturedTaskConfigs: Array<{ taskId: string; config: TaskConfig }> = [];
@@ -80,6 +93,7 @@ function createMockStorage() {
     updateTaskStatus: vi.fn(),
     updateTaskSummary: vi.fn(),
     updateTaskSessionId: vi.fn(),
+    updateTaskWorkingDirectory: vi.fn(),
     clearTodosForTask: vi.fn(),
     saveTodosForTask: vi.fn(),
     getTasks: vi.fn(() => []),
@@ -480,6 +494,339 @@ describe('TaskService parity', () => {
       await expect(handlerSimulation(bogusTaskId)).rejects.toThrow(
         /permission.respond: no active task with id=tsk_never_existed/,
       );
+    });
+  });
+
+  // ── Phase 3 M4: resume working-directory preservation + waiting-state
+  // plumbing (docs/PHASE_3_M4_PLAN.md §A1 / §B1) ────────────────────────────
+
+  /**
+   * Mock storage with a real in-memory task map so the
+   * updateTaskWorkingDirectory → getTask round-trip can be asserted the same
+   * way a real StorageService behaves (no better-sqlite3 in this suite —
+   * runtimes are never spawned here).
+   */
+  function createCwdAwareStorage(seed: Array<{ id: string } & Partial<StoredTask>> = []) {
+    const rows = new Map<string, StoredTask>();
+    for (const item of seed) {
+      rows.set(item.id, {
+        id: item.id,
+        prompt: item.prompt ?? item.id,
+        status: item.status ?? 'completed',
+        messages: [],
+        createdAt: '2026-10-23T00:00:00.000Z',
+        ...item,
+      } as StoredTask);
+    }
+    const storage = {
+      saveTask: vi.fn((task: Task, workspaceId?: string | null) => {
+        const existing = rows.get(task.id);
+        rows.set(task.id, {
+          ...existing,
+          id: task.id,
+          prompt: task.prompt,
+          status: task.status,
+          sessionId: task.sessionId,
+          createdAt: task.createdAt,
+          messages: [],
+          workspaceId: workspaceId ?? existing?.workspaceId,
+          // v032 contract: the stored cwd survives a re-save (resume turn).
+          workingDirectory: existing?.workingDirectory ?? task.workingDirectory,
+        } as StoredTask);
+      }),
+      getTask: vi.fn((taskId: string) => rows.get(taskId)),
+      getTasks: vi.fn(() => Array.from(rows.values())),
+      updateTaskStatus: vi.fn((taskId: string, status: TaskStatus, completedAt?: string) => {
+        const existing = rows.get(taskId);
+        if (existing) {
+          rows.set(taskId, { ...existing, status, ...(completedAt ? { completedAt } : {}) });
+        }
+      }),
+      updateTaskWorkingDirectory: vi.fn((taskId: string, workingDirectory: string) => {
+        const existing = rows.get(taskId);
+        if (existing) {
+          rows.set(taskId, { ...existing, workingDirectory });
+        }
+      }),
+      addTaskMessage: vi.fn(),
+      updateTaskSummary: vi.fn(),
+      updateTaskSessionId: vi.fn(),
+      clearTodosForTask: vi.fn(),
+      saveTodosForTask: vi.fn(),
+      getApiKey: vi.fn(() => null),
+      getAllApiKeys: vi.fn(() => Promise.resolve({})),
+      getActiveProviderModel: vi.fn(() => null),
+      getSelectedModel: vi.fn(() => null),
+      getBedrockCredentials: vi.fn(() => null),
+      getEnabledConnectors: vi.fn(() => []),
+      getConnectorTokens: vi.fn(() => null),
+      setConnectorStatus: vi.fn(),
+      storeConnectorTokens: vi.fn(),
+      getCloudBrowserConfig: vi.fn(() => null),
+    } as unknown as Parameters<typeof TaskService>[0];
+    return { storage, rows };
+  }
+
+  function getCapturedTaskManager(service: TaskService) {
+    return (service as unknown as { taskManager: Record<string, ReturnType<typeof vi.fn>> })
+      .taskManager;
+  }
+
+  describe('M4: startTask persists the configured cwd on the task row', () => {
+    it('Firefox-exact params {prompt, taskId} → row stores <userDataPath>/task-workspace', async () => {
+      const { storage } = createCwdAwareStorage();
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      // Exactly what the Firefox UI sends — no workingDirectory, no
+      // workspaceId, no model. The daemon default workspace is the cwd.
+      await service.startTask({
+        prompt: 'Create ~/kujenga-test.txt and confirm its contents.',
+        taskId: 'tsk_fox_row_cwd',
+      });
+
+      const expectedCwd = path.join('/data', 'task-workspace');
+      expect(storage.updateTaskWorkingDirectory).toHaveBeenCalledWith(
+        'tsk_fox_row_cwd',
+        expectedCwd,
+      );
+      const loaded = (storage.getTask as unknown as (id: string) => StoredTask | undefined)(
+        'tsk_fox_row_cwd',
+      );
+      expect(loaded?.workingDirectory).toBe(expectedCwd);
+    });
+
+    it('user-picked folder persists verbatim', async () => {
+      const { storage, rows } = createCwdAwareStorage();
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      await service.startTask({
+        prompt: 'Work in my project',
+        taskId: 'tsk_picked_row_cwd',
+        workingDirectory: '/home/chris/picked-project',
+      });
+
+      expect(storage.updateTaskWorkingDirectory).toHaveBeenCalledWith(
+        'tsk_picked_row_cwd',
+        '/home/chris/picked-project',
+      );
+      expect(rows.get('tsk_picked_row_cwd')?.workingDirectory).toBe('/home/chris/picked-project');
+    });
+  });
+
+  describe('M4: resumeSession working-directory resolution', () => {
+    it('NO explicit workingDirectory (Firefox-exact {sessionId, prompt, existingTaskId}) forwards the ORIGINAL task stored cwd', async () => {
+      const { storage } = createCwdAwareStorage([
+        { id: 'tsk_orig', status: 'failed', workingDirectory: '/home/chris/original-project' },
+      ]);
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      await service.resumeSession({
+        sessionId: 'sess-orig-cwd',
+        prompt: 'continue',
+        existingTaskId: 'tsk_orig',
+      });
+
+      expect(capturedTaskConfigs).toHaveLength(1);
+      expect(capturedTaskConfigs[0].config.workingDirectory).toBe('/home/chris/original-project');
+    });
+
+    it('explicit params.workingDirectory wins over the stored cwd AND updates the stored row', async () => {
+      const { storage, rows } = createCwdAwareStorage([
+        {
+          id: 'tsk_override',
+          status: 'completed',
+          workingDirectory: '/home/chris/original-project',
+        },
+      ]);
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      await service.resumeSession({
+        sessionId: 'sess-override',
+        prompt: 'continue in a new folder',
+        existingTaskId: 'tsk_override',
+        workingDirectory: '/home/chris/picked-next-turn',
+      });
+
+      expect(capturedTaskConfigs).toHaveLength(1);
+      expect(capturedTaskConfigs[0].config.workingDirectory).toBe('/home/chris/picked-next-turn');
+      expect(storage.updateTaskWorkingDirectory).toHaveBeenCalledWith(
+        'tsk_override',
+        '/home/chris/picked-next-turn',
+      );
+      expect(rows.get('tsk_override')?.workingDirectory).toBe('/home/chris/picked-next-turn');
+    });
+
+    it('stored task with NO cwd leaves workingDirectory undefined — TaskManager default fallback (pre-M4 behavior) unchanged', async () => {
+      const { storage } = createCwdAwareStorage([{ id: 'tsk_nocwd', status: 'completed' }]);
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      await service.resumeSession({
+        sessionId: 'sess-nocwd',
+        prompt: 'continue',
+        existingTaskId: 'tsk_nocwd',
+      });
+
+      expect(capturedTaskConfigs).toHaveLength(1);
+      expect(capturedTaskConfigs[0].config.workingDirectory).toBeUndefined();
+    });
+  });
+
+  describe('M4: resuming transition for human-waiting tasks', () => {
+    function createResumingService() {
+      const { storage } = createCwdAwareStorage([
+        {
+          id: 'tsk_wait_resume',
+          status: 'waiting_permission',
+          workingDirectory: '/home/chris/stalled-project',
+        },
+      ]);
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+      return { storage, service, taskManager: getCapturedTaskManager(service) };
+    }
+
+    it('stored waiting_permission → emits + stores resuming, then the completion path persists the final status', async () => {
+      const { storage, service, taskManager } = createResumingService();
+      // Simulate the resumed turn completing (existing completion path
+      // persists `task.status` via updateTaskStatus at the end of resume).
+      taskManager.startTask.mockResolvedValueOnce({
+        id: 'tsk_wait_resume',
+        prompt: 'continue',
+        status: 'completed',
+        messages: [],
+        createdAt: new Date().toISOString(),
+      });
+
+      const statusChanges: Array<{ taskId: string; status: string }> = [];
+      service.on('statusChange', (data) =>
+        statusChanges.push(data as { taskId: string; status: string }),
+      );
+
+      await service.resumeSession({
+        sessionId: 'sess-recover',
+        prompt: 'continue',
+        existingTaskId: 'tsk_wait_resume',
+      });
+
+      expect(statusChanges).toEqual([{ taskId: 'tsk_wait_resume', status: 'resuming' }]);
+      // Call 1: the resuming flip. Call 2: the existing post-turn completion
+      // persistence. Order proves the transition happened BEFORE the turn.
+      expect(
+        (storage.updateTaskStatus as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => [
+          c[0],
+          c[1],
+        ]),
+      ).toEqual([
+        ['tsk_wait_resume', 'resuming'],
+        ['tsk_wait_resume', 'completed'],
+      ]);
+    });
+
+    it('a resumed FAILED task is NOT flipped to resuming (prior outcome stays visible)', async () => {
+      const { storage } = createCwdAwareStorage([{ id: 'tsk_failed_resume', status: 'failed' }]);
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+
+      await service.resumeSession({
+        sessionId: 'sess-retry',
+        prompt: 'retry',
+        existingTaskId: 'tsk_failed_resume',
+      });
+
+      expect(storage.updateTaskStatus).not.toHaveBeenCalledWith('tsk_failed_resume', 'resuming');
+    });
+  });
+
+  describe('M4: sendResponse restores running after a human reply', () => {
+    function createReplyFixture(status: TaskStatus) {
+      const { storage } = createCwdAwareStorage([{ id: 'tsk_reply', status }]);
+      const service = new TaskService(storage as never, {
+        userDataPath: '/data',
+        mcpToolsPath: '/tools',
+      });
+      const statusChanges: Array<{ taskId: string; status: string }> = [];
+      service.on('statusChange', (data) =>
+        statusChanges.push(data as { taskId: string; status: string }),
+      );
+      return { storage, service, taskManager: getCapturedTaskManager(service), statusChanges };
+    }
+
+    it('waiting_permission → restored to running + statusChange emitted', async () => {
+      const { storage, service, taskManager, statusChanges } =
+        createReplyFixture('waiting_permission');
+
+      await service.sendResponse('tsk_reply', {
+        taskId: 'tsk_reply',
+        requestId: 'rq-1',
+        decision: 'allow',
+      });
+
+      expect(taskManager.sendResponse).toHaveBeenCalledWith('tsk_reply', {
+        taskId: 'tsk_reply',
+        requestId: 'rq-1',
+        decision: 'allow',
+      });
+      expect(storage.updateTaskStatus).toHaveBeenCalledWith('tsk_reply', 'running');
+      expect(statusChanges).toEqual([{ taskId: 'tsk_reply', status: 'running' }]);
+    });
+
+    it('waiting_for_user → restored to running + statusChange emitted', async () => {
+      const { storage, service, statusChanges } = createReplyFixture('waiting_for_user');
+
+      await service.sendResponse('tsk_reply', {
+        taskId: 'tsk_reply',
+        requestId: 'rq-2',
+        decision: 'allow',
+      });
+
+      expect(storage.updateTaskStatus).toHaveBeenCalledWith('tsk_reply', 'running');
+      expect(statusChanges).toEqual([{ taskId: 'tsk_reply', status: 'running' }]);
+    });
+
+    it('completed status is NEVER overwritten by the reply path', async () => {
+      const { storage, service, statusChanges } = createReplyFixture('completed');
+
+      await service.sendResponse('tsk_reply', {
+        taskId: 'tsk_reply',
+        requestId: 'rq-3',
+        decision: 'allow',
+      });
+
+      expect(storage.updateTaskStatus).not.toHaveBeenCalled();
+      expect(statusChanges).toEqual([]);
+    });
+
+    it('unknown task id (no stored row) does not crash and does not emit', async () => {
+      const { storage, service, statusChanges } = createReplyFixture('waiting_permission');
+      (storage.getTask as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
+      await service.sendResponse('tsk_unknown_reply', {
+        taskId: 'tsk_unknown_reply',
+        requestId: 'rq-4',
+        decision: 'deny',
+      });
+
+      expect(storage.updateTaskStatus).not.toHaveBeenCalled();
+      expect(statusChanges).toEqual([]);
     });
   });
 });

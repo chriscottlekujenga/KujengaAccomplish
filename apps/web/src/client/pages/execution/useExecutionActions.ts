@@ -139,9 +139,15 @@ export function useExecutionActions(s: CoreState) {
       return;
     }
     if (
-      ['pending', 'queued', 'running', 'waiting_permission', 'waiting'].includes(
-        s.currentTask.status,
-      )
+      [
+        'pending',
+        'queued',
+        'running',
+        'resuming',
+        'waiting_permission',
+        'waiting_for_user',
+        'waiting',
+      ].includes(s.currentTask.status)
     ) {
       return;
     }

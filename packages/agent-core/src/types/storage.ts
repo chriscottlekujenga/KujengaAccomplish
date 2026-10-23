@@ -70,6 +70,12 @@ export interface StoredTask {
    * back to the original task's workspace on resume turns.
    */
   workspaceId?: string;
+  /**
+   * Host cwd the task was started in, persisted in `tasks.working_directory`
+   * (migration v032). Preserved across resume turns so a resumed session can
+   * run against the original task's working directory.
+   */
+  workingDirectory?: string;
 }
 
 /** A favorited (starred) completed task, stored for quick reuse on the home page */
@@ -111,6 +117,8 @@ export interface TaskStorageAPI {
   saveTask(task: Task, workspaceId?: string | null): void;
   /** Update a task's status and optional completion timestamp */
   updateTaskStatus(taskId: string, status: TaskStatus, completedAt?: string): void;
+  /** Update the host working directory a task runs against (preserved across resume turns) */
+  updateTaskWorkingDirectory(taskId: string, workingDirectory: string): void;
   /** Append a message to a task's message history */
   addTaskMessage(taskId: string, message: TaskMessage): void;
   /** Update the CLI session ID for a task */

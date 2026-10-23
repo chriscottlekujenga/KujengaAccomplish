@@ -5,12 +5,14 @@ export const FAVORITABLE_STATUSES: readonly string[] = ['completed', 'interrupte
 
 export const STATUS_COLORS: Record<string, string> = {
   running: 'border-2 border-muted-foreground',
+  resuming: 'border-2 border-muted-foreground',
   completed: 'bg-green-500',
   failed: 'bg-destructive',
   cancelled: 'bg-muted-foreground',
   interrupted: 'bg-yellow-500',
   pending: 'bg-warning',
   waiting_permission: 'bg-warning',
+  waiting_for_user: 'bg-warning',
   queued: 'bg-muted-foreground',
 };
 

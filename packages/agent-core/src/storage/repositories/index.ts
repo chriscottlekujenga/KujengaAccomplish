@@ -49,6 +49,7 @@ export {
   getTask,
   saveTask,
   updateTaskStatus,
+  updateTaskWorkingDirectory,
   addTaskMessage,
   updateTaskSessionId,
   updateTaskSummary,

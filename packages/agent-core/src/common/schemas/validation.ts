@@ -58,6 +58,12 @@ export const resumeSessionSchema = z.object({
   existingTaskId: z.string().optional(),
   chrome: z.boolean().optional(),
   workspaceId: z.string().optional(),
+  /**
+   * Caller-supplied host cwd for the resumed turn (M4). When provided it
+   * wins over — and is persisted as — the task's working directory; when
+   * omitted the daemon falls back to the ORIGINAL task's persisted cwd.
+   */
+  workingDirectory: z.string().optional(),
   attachments: z.array(fileAttachmentSchema).optional(),
 });
 

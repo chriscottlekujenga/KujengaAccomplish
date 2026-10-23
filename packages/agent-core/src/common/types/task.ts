@@ -5,6 +5,8 @@ export type TaskStatus =
   | 'queued'
   | 'running'
   | 'waiting_permission'
+  | 'waiting_for_user'
+  | 'resuming'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -77,6 +79,13 @@ export interface Task {
   completedAt?: string;
   result?: TaskResult;
   workspaceId?: string;
+  /**
+   * Host cwd the task was started in. Persisted in `tasks.working_directory`
+   * (migration v032) so a resumed session can recover the original task's
+   * working directory — it is preserved across resume turns. Tasks written
+   * before v032 have no value (undefined/NULL).
+   */
+  workingDirectory?: string;
 }
 
 export interface TaskAttachment {

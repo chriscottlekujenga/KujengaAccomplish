@@ -117,10 +117,12 @@ function TaskHistoryItem({
     queued: { color: 'bg-warning', labelKey: 'status.queued' },
     completed: { color: 'bg-success', labelKey: 'status.completed' },
     running: { color: 'bg-primary', labelKey: 'status.running' },
+    resuming: { color: 'bg-primary', labelKey: 'status.running' },
     failed: { color: 'bg-danger', labelKey: 'status.failed' },
     cancelled: { color: 'bg-text-muted', labelKey: 'status.cancelled' },
     pending: { color: 'bg-warning', labelKey: 'status.pending' },
     waiting_permission: { color: 'bg-warning', labelKey: 'status.waiting' },
+    waiting_for_user: { color: 'bg-warning', labelKey: 'status.waiting' },
     interrupted: { color: 'bg-text-muted', labelKey: 'status.stopped' },
   };
 

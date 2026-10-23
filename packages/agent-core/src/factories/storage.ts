@@ -9,6 +9,7 @@ import {
   getTask,
   saveTask,
   updateTaskStatus,
+  updateTaskWorkingDirectory,
   addTaskMessage,
   updateTaskSessionId,
   updateTaskSummary,
@@ -132,6 +133,8 @@ export function createStorage(options: StorageOptions = {}): StorageAPI {
     saveTask: (task, workspaceId) => saveTask(task, workspaceId),
     updateTaskStatus: (taskId, status, completedAt) =>
       updateTaskStatus(taskId, status, completedAt),
+    updateTaskWorkingDirectory: (taskId, workingDirectory) =>
+      updateTaskWorkingDirectory(taskId, workingDirectory),
     addTaskMessage: (taskId, message) => addTaskMessage(taskId, message),
     updateTaskSessionId: (taskId, sessionId) => updateTaskSessionId(taskId, sessionId),
     updateTaskSummary: (taskId, summary) => updateTaskSummary(taskId, summary),

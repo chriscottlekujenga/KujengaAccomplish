@@ -14,6 +14,7 @@ import {
 } from '@accomplish_ai/agent-core';
 import { StorageService } from './storage-service.js';
 import { TaskService } from './task-service.js';
+import { recoverStaleTasks } from './crash-recovery.js';
 import { SchedulerService } from './scheduler-service.js';
 import { HealthService, VERSION } from './health.js';
 import { parseArgs } from './cli.js';
@@ -113,13 +114,10 @@ async function main(): Promise<void> {
   const storageService = new StorageService();
   const storage = storageService.initialize(dataDir);
 
-  // 4. Crash recovery: mark stale running tasks as failed
-  for (const task of storage.getTasks()) {
-    if (task.status === 'running') {
-      log.warn(`[Daemon] Crash recovery: marking stale task ${task.id} as failed`);
-      storage.updateTaskStatus(task.id, 'failed', new Date().toISOString());
-    }
-  }
+  // 4. Crash recovery: mark stale running tasks as failed. Waiting tasks
+  //    (waiting_permission / waiting_for_user / resuming) are intentionally
+  //    left untouched — they are resumable via session.resume (M4 A5).
+  recoverStaleTasks(storage);
 
   // 5. Create services
   // Packaged-mode context: CLI args take precedence over env vars (for Windows login-item).

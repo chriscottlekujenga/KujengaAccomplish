@@ -50,8 +50,9 @@ export function saveTask(task: Task, workspaceId?: string | null): void {
   db.transaction(() => {
     db.prepare(
       `INSERT OR REPLACE INTO tasks
-        (id, prompt, summary, status, session_id, created_at, started_at, completed_at, workspace_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, prompt, summary, status, session_id, created_at, started_at, completed_at,
+         workspace_id, working_directory)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       task.id,
       task.prompt,
@@ -62,6 +63,7 @@ export function saveTask(task: Task, workspaceId?: string | null): void {
       task.startedAt || null,
       task.completedAt || null,
       workspaceId || null,
+      task.workingDirectory || null,
     );
 
     db.prepare('DELETE FROM task_messages WHERE task_id = ?').run(task.id);
@@ -216,6 +218,11 @@ export function updateTaskSessionId(taskId: string, sessionId: string): void {
 export function updateTaskSummary(taskId: string, summary: string): void {
   const db = getDatabase();
   db.prepare('UPDATE tasks SET summary = ? WHERE id = ?').run(summary, taskId);
+}
+
+export function updateTaskWorkingDirectory(taskId: string, workingDirectory: string): void {
+  const db = getDatabase();
+  db.prepare('UPDATE tasks SET working_directory = ? WHERE id = ?').run(workingDirectory, taskId);
 }
 
 export function deleteTask(taskId: string): void {
