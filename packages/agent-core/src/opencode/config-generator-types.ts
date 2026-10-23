@@ -32,6 +32,13 @@ export interface ConfigGeneratorOptions {
    * (test-only; production always provides one per Phase 3 M1 §5.3).
    */
   devBrowserToken?: string;
+  /**
+   * Resolved dev-browser relay (sidecar HTTP) port (M5 §3.1). Callers pass
+   * `resolveDevBrowserRelayPort()` so an isolated daemon's dev-browser-mcp
+   * child composes sidecar URLs against the override port instead of the
+   * 9224 default. Omit leaves the child's env resolution untouched.
+   */
+  devBrowserPort?: number;
   userDataPath: string;
   model?: string;
   smallModel?: string;

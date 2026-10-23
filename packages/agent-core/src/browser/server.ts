@@ -17,6 +17,8 @@ export {
   installPlaywrightChromium,
   isDevBrowserServerReady,
   waitForDevBrowserServer,
+  ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV,
+  resolveDevBrowserRelayPort,
 } from './server-utils.js';
 
 import type { BrowserServerConfig } from './server-utils.js';
@@ -49,6 +51,11 @@ export async function startDevBrowserServer(
   // per-process fallback), so buildBrowserSpawnEnvironment only injects the
   // env var the server.mjs reads.
   const spawnEnv = buildBrowserSpawnEnvironment(config.bundledNodeBinPath, config.devBrowserToken);
+  // M5 §3.1 — server.mjs resolves its HTTP bind port from the DEV_BROWSER_PORT
+  // env contract. Pin it to the resolved config port so the sidecar binds the
+  // same port the daemon probes (isDevBrowserServerReady) and force-kills on
+  // shutdown — never the default when an isolated daemon shifted the relay.
+  spawnEnv.DEV_BROWSER_PORT = String(config.devBrowserPort);
   const nodeExe = getNodeExecutable(config.bundledNodeBinPath);
 
   const serverLogs: string[] = [];

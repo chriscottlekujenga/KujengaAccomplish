@@ -173,9 +173,12 @@ describe('Remote CDP Integration', () => {
   it('browser_snapshot: gets accessibility snapshot', async () => {
     const page = await getPage('snap-test');
     await page.goto(TEST_HTML);
-    const snapshot = await page.accessibility.snapshot();
+    // rebrowser-playwright-core 1.64.x removed page.accessibility; production
+    // snapshots are built from ariaSnapshot (snapshot/ manager, renderAriaTree).
+    const snapshot = await page.locator('body').ariaSnapshot();
     expect(snapshot).toBeDefined();
-    expect(snapshot?.children?.length).toBeGreaterThan(0);
+    expect(snapshot.trim().length).toBeGreaterThan(0);
+    expect(snapshot).toContain('heading "Hello World"');
   });
 
   // --- Click ---

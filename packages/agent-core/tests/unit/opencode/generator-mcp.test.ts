@@ -30,6 +30,11 @@ describe('buildMcpServers — linux-desktop', () => {
       fs.mkdirSync(path.dirname(entryPath), { recursive: true });
       fs.writeFileSync(entryPath, `// ${toolName} bundled entry`);
     }
+    // Browser-config scenarios register dev-browser-mcp; materialize its dist
+    // entry up front so those tests don't have to re-create it.
+    const devBrowserEntry = path.join(mcpToolsPath, 'dev-browser-mcp', 'dist', 'index.mjs');
+    fs.mkdirSync(path.dirname(devBrowserEntry), { recursive: true });
+    fs.writeFileSync(devBrowserEntry, '// dev-browser-mcp bundled entry');
   });
 
   afterEach(() => {
@@ -98,5 +103,55 @@ describe('buildMcpServers — linux-desktop', () => {
   it('omits linux-desktop when its dist file does not exist', () => {
     const result = buildMcpServers(makeOptions({ platform: 'linux' }));
     expect(result['linux-desktop']).toBeUndefined();
+  });
+});
+
+describe('buildMcpServers — dev-browser-mcp relay port threading (M5 §3.1)', () => {
+  let testDir: string;
+  let mcpToolsPath: string;
+
+  beforeEach(() => {
+    testDir = path.join(
+      os.tmpdir(),
+      `generator-mcp-port-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mcpToolsPath = path.join(testDir, 'mcp-tools');
+    for (const [toolName, relEntry] of REQUIRED_MCP_DIST_ENTRIES) {
+      const entryPath = path.join(mcpToolsPath, toolName, relEntry);
+      fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+      fs.writeFileSync(entryPath, `// ${toolName} bundled entry`);
+    }
+    const devBrowserEntry = path.join(mcpToolsPath, 'dev-browser-mcp', 'dist', 'index.mjs');
+    fs.mkdirSync(path.dirname(devBrowserEntry), { recursive: true });
+    fs.writeFileSync(devBrowserEntry, '// dev-browser-mcp bundled entry');
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  function browserOptions(overrides: Partial<BuildMcpServersOptions> = {}): BuildMcpServersOptions {
+    return {
+      mcpToolsPath,
+      nodeExe: path.join(testDir, 'node'),
+      browserConfig: { mode: 'builtin' },
+      ...overrides,
+    };
+  }
+
+  it('threads the resolved devBrowserPort into the child env as DEV_BROWSER_PORT', () => {
+    const result = buildMcpServers(
+      browserOptions({ devBrowserToken: 'tok', devBrowserPort: 9324 }),
+    );
+    expect(result['dev-browser-mcp'].environment?.DEV_BROWSER_PORT).toBe('9324');
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_DEV_BROWSER_TOKEN).toBe('tok');
+  });
+
+  it('omits DEV_BROWSER_PORT from the child env when no port is resolved', () => {
+    const result = buildMcpServers(browserOptions({ devBrowserToken: 'tok' }));
+    expect(result['dev-browser-mcp'].environment?.DEV_BROWSER_PORT).toBeUndefined();
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_DEV_BROWSER_TOKEN).toBe('tok');
   });
 });

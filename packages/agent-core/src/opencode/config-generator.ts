@@ -165,6 +165,7 @@ export function generateConfig(options: ConfigGeneratorOptions): GeneratedConfig
     gwsAccountsManifestPath,
     gwsAccountsSummary,
     devBrowserToken,
+    devBrowserPort,
   } = options;
 
   const environmentInstructions = getPlatformEnvironmentInstructions(platform);
@@ -344,6 +345,7 @@ ${options.knowledgeContext}
     browserConfig,
     authToken: options.authToken,
     devBrowserToken,
+    devBrowserPort,
     connectors: options.connectors,
     gwsAccountsManifestPath,
     platform,

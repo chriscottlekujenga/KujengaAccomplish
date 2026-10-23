@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   configureFromEnv,
   configure,
@@ -15,6 +15,7 @@ describe('connection', () => {
     delete process.env.CDP_ENDPOINT;
     delete process.env.CDP_SECRET;
     delete process.env.DEV_BROWSER_PORT;
+    delete process.env.ACCOMPLISH_DEV_BROWSER_RELAY_PORT;
     delete process.env.ACCOMPLISH_TASK_ID;
     delete process.env.ACCOMPLISH_DEV_BROWSER_TOKEN;
   });
@@ -45,6 +46,32 @@ describe('connection', () => {
       process.env.DEV_BROWSER_PORT = '5555';
       const cfg = configureFromEnv();
       expect(cfg.devBrowserUrl).toBe('http://127.0.0.1:5555');
+    });
+
+    it('honors ACCOMPLISH_DEV_BROWSER_RELAY_PORT in builtin mode (M5 §3.1)', () => {
+      process.env.ACCOMPLISH_DEV_BROWSER_RELAY_PORT = '9324';
+      const cfg = configureFromEnv();
+      expect(cfg.devBrowserUrl).toBe('http://127.0.0.1:9324');
+    });
+
+    it('prefers ACCOMPLISH_DEV_BROWSER_RELAY_PORT over DEV_BROWSER_PORT', () => {
+      process.env.DEV_BROWSER_PORT = '5555';
+      process.env.ACCOMPLISH_DEV_BROWSER_RELAY_PORT = '9324';
+      const cfg = configureFromEnv();
+      expect(cfg.devBrowserUrl).toBe('http://127.0.0.1:9324');
+    });
+
+    it('falls back through DEV_BROWSER_PORT (then 9224) with a warning on invalid override', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      process.env.DEV_BROWSER_PORT = '5555';
+      process.env.ACCOMPLISH_DEV_BROWSER_RELAY_PORT = 'not-a-port';
+      expect(configureFromEnv().devBrowserUrl).toBe('http://127.0.0.1:5555');
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('Ignoring invalid'));
+
+      delete process.env.DEV_BROWSER_PORT;
+      process.env.ACCOMPLISH_DEV_BROWSER_RELAY_PORT = '70000';
+      expect(configureFromEnv().devBrowserUrl).toBe('http://127.0.0.1:9224');
+      warnSpy.mockRestore();
     });
 
     it('uses ACCOMPLISH_TASK_ID for task isolation', () => {

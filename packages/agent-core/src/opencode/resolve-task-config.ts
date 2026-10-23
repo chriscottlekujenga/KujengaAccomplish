@@ -52,6 +52,15 @@ export interface ResolveTaskConfigOptions {
   devBrowserToken?: string;
 
   /**
+   * Resolved dev-browser relay (sidecar HTTP) port (M5 §3.1). Callers pass
+   * `resolveDevBrowserRelayPort()` (DEV_BROWSER_PORT default or the
+   * ACCOMPLISH_DEV_BROWSER_RELAY_PORT env override) so the dev-browser-mcp
+   * tool child composes its sidecar URLs against the same port the sidecar
+   * binds. Copied straight into `configOptions`.
+   */
+  devBrowserPort?: number;
+
+  /**
    * Pre-resolved enabled skills.
    * The caller provides these because skill resolution may go through
    * SkillsManager (desktop) or direct DB query (daemon).
@@ -131,6 +140,7 @@ export async function resolveTaskConfig(
     whatsappApiPort,
     authToken,
     devBrowserToken,
+    devBrowserPort,
     skills,
     workspaceId,
     configFileName,
@@ -229,6 +239,7 @@ export async function resolveTaskConfig(
       whatsappApiPort,
       authToken,
       devBrowserToken,
+      devBrowserPort,
       model: modelOverride?.model,
       smallModel: modelOverride?.smallModel,
       connectors: connectors.length > 0 ? connectors : undefined,

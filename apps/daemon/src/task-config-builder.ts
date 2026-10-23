@@ -10,6 +10,7 @@ import {
   isCliAvailable as coreIsCliAvailable,
   generateConfig,
   resolveTaskConfig,
+  resolveDevBrowserRelayPort,
   syncApiKeysToOpenCodeAuth,
   getOpenCodeAuthJsonPath,
   getBundledNodePaths,
@@ -172,6 +173,10 @@ export async function onBeforeStart(
     // generated config; the sidecar process receives the same value through
     // getBrowserServerConfig → ensureDevBrowserServer.
     devBrowserToken: getDevBrowserToken(),
+    // M5 §3.1 — resolved relay port threaded into the dev-browser-mcp child
+    // env (DEV_BROWSER_PORT) so its sidecar URLs match the port this daemon
+    // spawned the sidecar on (getBrowserServerConfig).
+    devBrowserPort: resolveDevBrowserRelayPort(),
     skills,
     workspaceId: ctx.workspaceId,
     configFileName: buildConfigFileName(ctx.taskId),

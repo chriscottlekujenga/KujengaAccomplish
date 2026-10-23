@@ -5,7 +5,7 @@
 import {
   ensureDevBrowserServer,
   generateTaskSummary,
-  DEV_BROWSER_PORT,
+  resolveDevBrowserRelayPort,
   getDevBrowserToken,
   logger,
   type BrowserServerConfig,
@@ -18,7 +18,11 @@ export function getBrowserServerConfig(opts: TaskConfigBuilderOptions): BrowserS
   return {
     mcpToolsPath: opts.mcpToolsPath,
     bundledNodeBinPath: getBundledNodeBinPath(opts),
-    devBrowserPort: DEV_BROWSER_PORT,
+    // M5 §3.1 — resolved relay port (DEV_BROWSER_PORT constant or the
+    // ACCOMPLISH_DEV_BROWSER_RELAY_PORT env override) so an isolated E2E
+    // daemon probes, spawns, and force-kills the sidecar on the same port,
+    // never the production daemon's 9224 relay.
+    devBrowserPort: resolveDevBrowserRelayPort(),
     // Phase 3 M1 §5.3 — per-process bearer token for the dev-browser sidecar.
     // The same value reaches the dev-browser-mcp tool child via the generated
     // OpenCode config env (onBeforeStart in task-config-builder.ts).

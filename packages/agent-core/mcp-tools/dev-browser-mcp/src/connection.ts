@@ -7,6 +7,11 @@ export { isRecoverableConnectionError };
 // spawning side and passed via env; never via RPC, never via the gateway.
 const ACCOMPLISH_DEV_BROWSER_TOKEN_ENV = 'ACCOMPLISH_DEV_BROWSER_TOKEN';
 
+// M5 §3.1 — the spawning side (daemon) resolves its relay port via this env
+// override and threads the resolved value here as DEV_BROWSER_PORT; reading
+// the override directly also covers standalone child launches.
+const ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV = 'ACCOMPLISH_DEV_BROWSER_RELAY_PORT';
+
 export function getDevBrowserSidecarToken(): string | undefined {
   const fromEnv = process.env[ACCOMPLISH_DEV_BROWSER_TOKEN_ENV];
   return fromEnv && fromEnv.trim().length > 0 ? fromEnv.trim() : undefined;
@@ -78,13 +83,38 @@ function buildConfigFromEnv(): ConnectionConfig {
     return { mode: 'remote', cdpEndpoint, cdpHeaders: headers, taskId };
   }
 
-  let port = parseInt(process.env.DEV_BROWSER_PORT || '9224', 10);
-  if (!Number.isFinite(port) || !Number.isInteger(port) || port < 1 || port > 65535) {
-    port = 9224;
-  }
+  const port = resolveBuiltinRelayPort();
   // Use 127.0.0.1 instead of localhost to avoid macOS Local Network permission
   // dialog and ensure IPv4 loopback is used consistently.
   return { mode: 'builtin', devBrowserUrl: `http://127.0.0.1:${port}`, taskId };
+}
+
+// M5 §3.1 — a valid ACCOMPLISH_DEV_BROWSER_RELAY_PORT override wins; an
+// invalid value warns and falls through to the legacy DEV_BROWSER_PORT env
+// (already honored here), then to the 9224 default.
+function resolveBuiltinRelayPort(): number {
+  const overrideRaw = process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV];
+  const override = overrideRaw === undefined ? undefined : overrideRaw.trim();
+  if (override !== undefined && override.length > 0) {
+    const parsed = Number(override);
+    if (/^\d+$/.test(override) && Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535) {
+      return parsed;
+    }
+    console.warn(
+      `Ignoring invalid ${ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV} "${overrideRaw}" — ` +
+        'falling back to DEV_BROWSER_PORT/9224',
+    );
+  }
+  const legacyPort = parseInt(process.env.DEV_BROWSER_PORT || '9224', 10);
+  if (
+    !Number.isFinite(legacyPort) ||
+    !Number.isInteger(legacyPort) ||
+    legacyPort < 1 ||
+    legacyPort > 65535
+  ) {
+    return 9224;
+  }
+  return legacyPort;
 }
 
 // Internal helper: async cleanup that propagates errors

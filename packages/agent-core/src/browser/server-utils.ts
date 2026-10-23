@@ -10,6 +10,7 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { DEV_BROWSER_PORT } from '../common/constants.js';
 import { createConsoleLogger } from '../utils/logging.js';
 import { ACCOMPLISH_DEV_BROWSER_TOKEN_ENV, getDevBrowserToken } from './dev-browser-token.js';
 
@@ -44,6 +45,35 @@ function authHeaders(devBrowserToken?: string): Record<string, string> {
 }
 
 const log = createConsoleLogger({ prefix: 'Browser' });
+
+/**
+ * M5 §3.1 — isolation seam for the dev-browser relay (sidecar HTTP) port.
+ *
+ * The relay port used to be the hard-coded DEV_BROWSER_PORT constant, so an
+ * isolated E2E daemon ran its sidecar — and its boot self-heal, which kills
+ * whatever listener owns the port it is about to bind — against the same
+ * loopback port the production daemon's sidecar occupies. An explicit env
+ * override shifts the whole stack (sidecar bind, daemon probes/shutdown
+ * port-kill, MCP child sidecar URLs) to a different loopback port.
+ */
+export const ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV = 'ACCOMPLISH_DEV_BROWSER_RELAY_PORT';
+
+export function resolveDevBrowserRelayPort(): number {
+  const raw = process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV];
+  const trimmed = raw === undefined || raw === null ? undefined : raw.trim();
+  if (trimmed === undefined || trimmed.length === 0) {
+    return DEV_BROWSER_PORT;
+  }
+  const parsed = Number(trimmed);
+  if (!/^\d+$/.test(trimmed) || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    log.warn(
+      `Ignoring invalid ${ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV} "${raw}" — ` +
+        `using the default relay port ${DEV_BROWSER_PORT}`,
+    );
+    return DEV_BROWSER_PORT;
+  }
+  return parsed;
+}
 
 export function buildNodeEnvironment(bundledNodeBinPath?: string): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = { ...process.env };

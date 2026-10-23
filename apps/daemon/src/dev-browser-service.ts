@@ -15,7 +15,7 @@
  * the old Electron HTTP flow did.
  */
 import {
-  DEV_BROWSER_PORT,
+  resolveDevBrowserRelayPort,
   fetchDevBrowserPageList,
   fetchDevBrowserServerInfo,
   getDevBrowserToken,
@@ -26,7 +26,7 @@ import {
 import { CdpClient } from './cdp-client.js';
 
 export interface DevBrowserServiceConfig {
-  /** Defaults to DEV_BROWSER_PORT; overridable in tests. */
+  /** Defaults to the resolved relay port (see resolveDevBrowserRelayPort); overridable in tests. */
   devBrowserPort?: number;
 }
 
@@ -66,7 +66,7 @@ export class DevBrowserService {
   }
 
   private get port(): number {
-    return this.config.devBrowserPort ?? DEV_BROWSER_PORT;
+    return this.config.devBrowserPort ?? resolveDevBrowserRelayPort();
   }
 
   /**

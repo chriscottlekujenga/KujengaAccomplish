@@ -206,6 +206,7 @@ describe('daemon onBeforeStart — integration against real resolveTaskConfig + 
     }
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('writes opencode-<taskId>.json containing workspace knowledge notes and OpenAI store:false', async () => {
@@ -442,5 +443,42 @@ describe('daemon onBeforeStart — integration against real resolveTaskConfig + 
     );
 
     expect(path.basename(configPath)).toBe('opencode.json');
+  });
+
+  it('threads the resolved dev-browser relay port into the dev-browser-mcp child env (M5 §3.1)', async () => {
+    const storage = makeStorage();
+    const { configPath } = await onBeforeStart(
+      storage as never,
+      {
+        userDataPath: tmpUserData,
+        mcpToolsPath: fakeMcpToolsPath,
+        isPackaged: false,
+        resourcesPath: '',
+        appPath: '',
+      },
+      { taskId: 'tsk_relay_port' },
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const env = written.mcp?.['dev-browser-mcp']?.environment ?? {};
+    // No override set → the DEV_BROWSER_PORT constant (9224) is threaded.
+    expect(env.DEV_BROWSER_PORT).toBe('9224');
+
+    // Isolated-daemon seam: the env override shifts the child's sidecar URLs.
+    vi.stubEnv('ACCOMPLISH_DEV_BROWSER_RELAY_PORT', '9324');
+    const { configPath: overriddenPath } = await onBeforeStart(
+      storage as never,
+      {
+        userDataPath: tmpUserData,
+        mcpToolsPath: fakeMcpToolsPath,
+        isPackaged: false,
+        resourcesPath: '',
+        appPath: '',
+      },
+      { taskId: 'tsk_relay_port_override' },
+    );
+    const overridden = JSON.parse(fs.readFileSync(overriddenPath, 'utf-8'));
+    const overriddenEnv = overridden.mcp?.['dev-browser-mcp']?.environment ?? {};
+    expect(overriddenEnv.DEV_BROWSER_PORT).toBe('9324');
   });
 });

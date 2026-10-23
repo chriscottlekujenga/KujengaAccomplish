@@ -67,6 +67,12 @@ export interface BuildMcpServersOptions {
    * both the sidecar process and the dev-browser-mcp tool child.
    */
   devBrowserToken?: string;
+  /**
+   * Resolved dev-browser relay (sidecar HTTP) port (M5 §3.1). When set, the
+   * dev-browser-mcp tool child receives it via the DEV_BROWSER_PORT env it
+   * already reads, so its sidecar URLs target the override port.
+   */
+  devBrowserPort?: number;
   connectors?: Array<{
     id: string;
     name: string;
@@ -94,6 +100,7 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
     browserConfig,
     authToken,
     devBrowserToken,
+    devBrowserPort,
     connectors,
     gwsAccountsManifestPath,
   } = options;
@@ -151,6 +158,12 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
     // both sides of every connection share one value.
     if (devBrowserToken) {
       browserEnv.ACCOMPLISH_DEV_BROWSER_TOKEN = devBrowserToken;
+    }
+    // M5 §3.1 — thread the resolved relay port so the dev-browser-mcp child
+    // composes sidecar URLs against it (the child reads DEV_BROWSER_PORT env;
+    // mirrors the token's spawn-side hand-off).
+    if (typeof devBrowserPort === 'number') {
+      browserEnv.DEV_BROWSER_PORT = String(devBrowserPort);
     }
     if (browserConfig.mode === 'remote') {
       if (browserConfig.cdpEndpoint) {

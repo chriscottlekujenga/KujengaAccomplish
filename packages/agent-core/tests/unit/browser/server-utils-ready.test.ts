@@ -4,6 +4,8 @@ import {
   isDevBrowserServerReady,
   waitForDevBrowserServer,
   buildBrowserSpawnEnvironment,
+  ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV,
+  resolveDevBrowserRelayPort,
 } from '../../../src/browser/server-utils.js';
 
 function listenZero(handler: http.RequestListener): Promise<http.Server> {
@@ -98,5 +100,42 @@ describe('buildBrowserSpawnEnvironment token injection', () => {
     expect(env.PATH).toContain('/some/node/bin');
     expect(env.NODE_BIN_PATH).toBe('/some/node/bin');
     expect(env.ACCOMPLISH_DEV_BROWSER_TOKEN).toBe('tok');
+  });
+});
+
+describe('resolveDevBrowserRelayPort (M5 §3.1 isolation seam)', () => {
+  const original = process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV];
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV];
+    } else {
+      process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV] = original;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('resolves the DEV_BROWSER_PORT constant (9224) when the override is unset', () => {
+    delete process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV];
+    expect(resolveDevBrowserRelayPort()).toBe(9224);
+  });
+
+  it('honors a valid ACCOMPLISH_DEV_BROWSER_RELAY_PORT override', () => {
+    process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV] = '9324';
+    expect(resolveDevBrowserRelayPort()).toBe(9324);
+    process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV] = ' 9424 ';
+    expect(resolveDevBrowserRelayPort()).toBe(9424);
+  });
+
+  it('falls back to 9224 with a logged warning on invalid override values', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const invalid of ['not-a-port', '0', '70000', '-1', '12.5', '9224abc']) {
+      process.env[ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV] = invalid;
+      expect(resolveDevBrowserRelayPort()).toBe(9224);
+    }
+    expect(console.warn).toHaveBeenCalledTimes(6);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining(`Ignoring invalid ${ACCOMPLISH_DEV_BROWSER_RELAY_PORT_ENV}`),
+    );
   });
 });
