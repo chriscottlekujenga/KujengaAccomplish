@@ -87,52 +87,46 @@ Statuses: **NOT RUN** → PASS (with user confirmation + architect evidence) / F
 - **Observation (UX, recorded):** on first open after the fix, the Ollama model list was not fully visible until the user selected another provider and switched back to Ollama — the model list rendered after that provider re-selection. Harmless recovery path via normal UI navigation; candidate M6 polish (list freshness at dialog open).
 - **End state:** production selection = `ollama/glm-5.3:cloud` (user restored via the real UI); no 429s; settings intact.
 
-### H8 — Folder picker via real Firefox (human-interactive) — status: NOT RUN
+### H8 — Folder picker via real Firefox (human-interactive) — status: **PASS**
 
-- **Who/How (user):** On the Home composer, trigger the folder picker (the "+" menu → folder / "Select folder" style entry). A **zenity GTK folder dialog** (spawned by the host) must appear. Pick a scratch folder (e.g. `~/Desktop` or any harmless one), confirm.
-- **Expected:** the dialog is a native GTK dialog (not an Electron window since Electron is not part of this path); the UI shows/uses the picked absolute path. Cancel the flow afterward (no task needs to run from it) — or optionally leave it if the user wants to run a task from the folder.
-- **Result / evidence:** _pending_
-- **User confirmation:** _pending_
+- **Who/How (user):** Triggered the folder picker from the Home composer ("+" menu → folder-select entry).
+- **Result / evidence:** The **native Ubuntu folder-selection dialog** (zenity/GTK, spawned by the host via the authorized `/pick-folder` POST — no Electron in this path) opened; the user selected a folder and confirmed; **the folder appeared beneath the task input** as its own chip/attachment element in the real UI.
+- **User confirmation:** "H8 manual Firefox verification: PASS. The native Ubuntu folder-selection dialog opened successfully. I selected a folder, and the folder attachment appeared beneath the KujengaAccomplish task input. Please record H8 as PASS."
 
-### H9 — File picker via real Firefox (human-interactive) — status: NOT RUN
+### H9 — File picker via real Firefox (human-interactive) — status: **PASS**
 
-- **Who/How (user):** In the task composer attachments control, trigger the file picker. The **zenity multi-file dialog** appears. Select one small text file (≤ 10 MB).
-- **Expected:** the attachment chip/preview appears in the composer with the correct file name.
-- **Result / evidence:** _pending_
-- **User confirmation:** _pending_
+- **Who/How (user):** Triggered the file-selection dialog from the Accomplish composer and selected a 1.1 MB screenshot.
+- **Result / evidence:** The native file-selection dialog opened (host-spawned zenity, `/pick-files`, authorized); the attachment appeared correctly in the composer; no errors observed.
+- **User confirmation:** "H9 manual Firefox verification: PASS. The file-selection dialog opened successfully. I selected a screenshot (1.1 MB), and the attachment appeared correctly in the KujengaAccomplish task composer. No errors were observed. Please record H9 as PASS."
 
-### H10 — Dev-browser task via real UI (human-interactive; browser interaction) — status: NOT RUN
+### H10 — Dev-browser task via real UI (human-interactive; browser interaction) — status: **PASS (navigation + page reading; after root-causing + fixing a real sidecar bug; retested by the user)**
 
-- **Who/How (user):** Start the task:
-  > Navigate to https://www.iana.org/about and tell me the main heading of the page.
-- **Expected:** the agent uses its dev-browser tools (no permission card for browser actions — by design); the dev-browser sidecar + headless Chromium run background-first (headful visibility NOT required); the answer must reflect the REAL page content ("About IANA" heading), not a memorized answer. The sidecar/Chromium may legitimately persist across tasks (reuse lifecycle); post-task residue checks apply to the daemon-shutdown path, already M4-proven, not asserted here.
-- **Architect evidence:** listeners/processes on the dev-browser relay port while the task runs; final answer text recorded.
-- **Result / evidence:** _pending_
-- **User confirmation:** _pending_
+- **First attempt — FAIL (user-confirmed):** browser automation returned HTTP 500s; the agent fell back to webfetch; the preview stuck on "Connecting…". **Root cause (daemon journald, verbatim):** the dev-browser sidecar launched **headed** Chromium by design (`headless` default false, `HEADLESS` env the only override) while the **production daemon runs display-less** under systemd --user (no `DISPLAY`/`WAYLAND_DISPLAY` in its environ — verified) → Playwright's "headed browser without a XServer" launch ban → `ensurePage → launchBrowserContext` threw → relay 500s. No suite ever exercised headed-without-display (no dev-browser E2E spec; the M5 harness and soak daemons inherited a graphical session, which is why everything passed).
+- **Fix (commit `dda0077`):** the sidecar entry (`scripts/start-server.ts`) now resolves the launch mode via `resolveHeadlessFromEnv()` (`src/headless.ts`): `HEADLESS` true/false stays the explicit override; **the default adapts — headed when a display exists (desktop UX unchanged), headless in display-less environments** (M4 background-first aligned). 7 focused unit tests added; in-package vitest green (25/25 focused incl. existing auth suites; one pre-existing **parallel-run-only flake** in `relay.test.ts` recorded as a watch item — reproduces identically with the fix stashed, passes in isolation on both trees; suite not part of the recorded M5 baselines). Sidecar bundle rebuilt; the stale headed-era sidecar was cleared via the **daemon-owned, allowlisted `devBrowser.shutdown`** (`{"stopped":true}`; production daemon untouched). Pre-existing in-package tsc noise (start-relay/browser-window-controller/devtools-active-port files — not this fix's files) recorded as watch notes.
+- **Retest (user-confirmed):** task Completed; **heading "About IANA" from the live page**; browser navigation PASS; page-content extraction PASS; **no HTTP 500s in the task interface**.
+- **User confirmation:** "H10 manual browser retest completed. Results: … Accomplish status: Completed. Correct heading returned: 'About IANA'. Browser navigation: PASS. Page content extraction: PASS. No HTTP 500 errors visible in the task interface. Browser Preview panel appeared and displayed 'Live'. Browser Preview content appeared blank, so screenshot/frame rendering remains unverified."
+- **Preview investigation (verified, per the user's "do not mark preview PASS without verification" directive — NOT PASS):**
+  1. **Frame generation + delivery VERIFIED:** the fixed bundle launched Chromium headlessly at 20:23:30 (clean startup in the daemon journal, no headed failure in the retest window); an allowlisted `devBrowser.captureFrame` probe against the retest's task returned a real payload (width 1280 × height 720; ~6.1 KB JPEG); the UI's preview poll had **zero** "missed consecutive captures" breadcrumbs → frames reached the UI continuously.
+  2. **Rendered content is BLANK because the preview page is not the agent's page:** `devBrowser.openPreviewPage` creates its **own** `${taskId}-main` tab and captureFrame captures that tab, while the agent's browser tools navigate via the relay/CDP path into **their own** tab — same sidecar, two page surfaces. The blank frame is the preview's fresh tab, not a rendering failure.
+  3. **Disposition: M6 design item** (preview should capture the relay/agent-active page; needs a naming/wiring decision across daemon page-service, relay, and MCP-tool surfaces). Explicitly NOT fixed in T7 (scope discipline; §6 makes the visible browser surface optional/background-first). The sidecar bearer token's isolation design ("only the daemon process knows the token; never the gateway") was respected throughout — direct page-list probing was abandoned rather than extracting the token from the daemon's environ.
 
-### H11 — `accomplish://` deep link probes (human-interactive, low-intrusion) — status: NOT RUN
+### H11 — `accomplish://` deep link probes (human-interactive, low-intrusion) — status: **PASS**
 
-- **Who/How:** Architect runs from a terminal (user watches):
-  1. `xdg-open 'accomplish://callback/mcp/t7-probe'` — scheme handler → host CLI single-instance → forward to `/deep-link` (bearer-authenticated) → host log `Deep link forwarded` + gateway `{"accepted":true}`; UI receives the control event (no crash; no visible reaction asserted).
-  2. `xdg-open 'accomplish://t7-noncallback'` — non-callback host → host CLI logs `Deep link ignored`, exits, and Firefox is NOT asked to open.
-- **User confirmation required:** nothing unexpected appeared / nothing broke.
-- **Result / evidence:** _pending_
-- **User confirmation:** _pending_
+- **Who/How:** Architect executed the exact launcher-Exec chain twice from a terminal (deterministic capture; the transient journald attribution gap applies to shell-spawned hand-offs, so terminal capture was chosen deliberately).
+- **Result / evidence:**
+  1. `accomplish://callback/mcp/t7-probe` → host CLI: **"Deep link forwarded to running instance"** — scheme handler → `.desktop` Exec → single-instance detection → authenticated `POST /deep-link` to the live gateway (port 45467) → accepted → `broadcast` control event to the authenticated UI socket.
+  2. `accomplish://t7-open-noncallback` → host CLI: **"Deep link ignored"** — and no Firefox window opened (non-callback hosts are rejected by design).
+- **User confirmation:** "H11 operator confirmation: No unexpected windows, Firefox tabs, error dialogs, or UI disturbances appeared during the two deep-link probes. Mark H11 PASS and proceed with milestone closeout."
 
-### O1 — OPTIONAL: portal-screenshot consent (the M3 AUTH-HOLD item; requires the operator present) — status: NOT RUN (optional; declining is recorded as SKIPPED with no penalty)
+### O1 — OPTIONAL: portal-screenshot consent (the M3 AUTH-HOLD item; requires the operator present) — status: **SKIPPED (user decision, no penalty)**
 
-- **Who/How (user):** User starts the task:
-  > Take a screenshot of my desktop using the desktop screenshot tool and tell me whether it succeeded.
-  > The UI shows a permission card (`linux-desktop_desktop_screenshot`) → click **Allow** → the **GNOME portal consent dialog** appears — approve it **quickly** (in-task MCP timeout ~60 s precedes the helper's 90 s window; a slow approval fails with a tool timeout, which would be the known Phase-2 caveat, not a product bug — record exactly what is observed either way).
-- **Expected:** card → Allow → portal dialog → consent → agent reports the screenshot attempt outcome in its transcript.
-- **Architect evidence:** sidecar/MCP process observations + user description of the dialogs.
-- **Result / evidence:** _pending_
-- **User confirmation:** _pending_
+- **Who/How:** The user declined to run the optional item for this milestone.
+- **User confirmation:** "Skip optional O1 desktop screenshot testing for this milestone." The M3 AUTH-HOLD state therefore carries over as-is: `desktop_screenshot`'s portal-consent path remains operator-dependent and is explicitly NOT verified in M5 (matches the M3 AUTH-HOLD record; the Phase-2 finding — in-task MCP 60 s timeout vs the helper's 90 s consent window — also remains the known caveat, Phase-5B tuning item).
 
 ---
 
-## 3. Final closeout (after all items)
+## 3. Final closeout (executed 2026-10-23)
 
-1. Fill every status above; anything not performed stays NOT RUN / SKIPPED with the reason — **never claimed passed**.
-2. Record results into `docs/M5_DEBUG_CHECKPOINT.md` (§1.G) and mark T7 DONE in `docs/M5_REMAINING_TASKS.md`; final doc commit `docs(phase3): M5 T7 complete — manual Firefox checklist …`. No push, no merge; stop after this commit.
-3. Optional post-test cleanup (only if the user asks): the two tiny test files in the default task workspace may be removed; task history rows remain (production data).
+1. **Final status table:** H1 PASS · H2 PASS · A1 PASS (auxiliary) · H3 PASS · H4 PASS · H5 PASS · H6 PASS · H7 PASS (after `0f1c647`) · H8 PASS · H9 PASS · H10 PASS (after `dda0077`; preview rendering explicitly NOT verified — M6 item) · H11 PASS · O1 SKIPPED. **Eleven executed items PASS, one optional item SKIPPED; every human item carries the user's verbatim confirmation; nothing unperformed is claimed passed.**
+2. **Commits this checkpoint:** `0f1c647` (getAccomplish identity + browser-safe barrel exports) · `408fd56` (checklist H1–H7 + checkpoint §1.G) · `dda0077` (dev-browser headless-by-default in display-less environments) · the closeout docs commit (this one). Nothing pushed, nothing merged.
+3. **Post-test cleanup:** the two tiny test files remain in the default task workspace (`t7-allow.txt` created by the H3 task; `t7-deny.txt` never created by design) — left in place as part of the user's production history unless the user requests cleanup; the test task rows remain in history (production data preserved).
