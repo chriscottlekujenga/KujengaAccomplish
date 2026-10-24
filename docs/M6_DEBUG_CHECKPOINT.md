@@ -1,0 +1,103 @@
+# Phase 3 M6 Debug Checkpoint
+
+This file accumulates M6 evidence per task. It is written by the executing session of each task and never rewritten retroactively — append later sections, never edit earlier ones (mirrors `M5_DEBUG_CHECKPOINT.md` conventions). No product changes: T0 is investigation-only; any `/tmp` harness stays non-persistent.
+
+## §0 — M6-A T0: browser-preview blank-panel root cause (investigation only, 2026-10-24)
+
+**Objective (from the M6-A plan task brief):** produce a reproducible, evidence-backed diagnosis of why the preview panel renders blank although `devBrowser.captureFrame` delivers real 1280×720 JPEGs (M5 T7 observation: frames flow, zero poll-miss breadcrumbs, wrong page). No fix implementation; T5 executes the fix after the user gate.
+
+### §0.1 Verdict (ranked)
+
+**Root cause — the "agent-active page" identity seam is a TASK-ID threading gap at the MCP-child env, not a registry defect.** The dev-browser-mcp tool child computes its sidecar registry page key as `${ACCOMPLISH_TASK_ID || 'default'}-main` (`connection.ts:68`), but ACCOMPLISH_TASK_ID never reaches the child: the generated opencode config's `mcp.dev-browser-mcp.environment` contains ONLY `{ACCOMPLISH_DEV_BROWSER_TOKEN, DEV_BROWSER_PORT}` (`generator-mcp.ts:154-186`) and opencode local MCP children do NOT inherit the serve child's process env (proven live). The daemon/web-shim preview side resolves a completely different key: `${task.start taskId}-main` (`dev-browser-service.ts:130`). `BrowserPageService.ensurePage` dedupes BY NAME (`browser-page-service.ts:63-97`), so the two keys produce **two distinct tabs**:
+
+- `${taskId}-main` — created by the preview ensure (lazy Chrome launcher; reuses the startup blank tab), **navigated by nobody, stays `about:blank` forever** — this is what `captureFrame` captures → the panel shows a live stream of a blank page.
+- `default-main` — created on the child's first browser tool call; **the agent navigates this one**.
+
+This refines named hypothesis 1 (registry-external agent-active page): the agent's tab IS created through the sidecar registry (POST /pages → ensurePage), not via `getRemotePage`/`context.newPage()` — but under an IDENTITY the preview never asks for. The observed effect (agent-active ≠ preview-captured, two tabs in one sidecar) matches H1 exactly; the mechanism is the env gap, not an untracked-tab creator.
+
+**Live proof (run 1, isolated daemon, `m6t0-run1`, glm-5.3-flash:cloud, headless):**
+
+| Time (UTC)        | Evidence                                                                                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 01:06:41.771      | Sidecar up via the preview-ensure call (lazy Chrome launch). Registry = `["m6t0-run1-main"]` ONLY; single CDP target `DF27735A…` `about:blank`.                                                    |
+| 01:06:42–01:07:27 | `captureFrame` poll: **72/72 successful frames, all 1280×720, all byte-length 8212** — the blank canvas of `about:blank`. Zero misses (matches M5 T7's "real frames, zero poll-miss breadcrumbs"). |
+| 01:07:27.2        | Agent's first browser tool (`dev-browser-mcp_browser_script`, actions `[goto iana.org/help/example-domains]`) starts.                                                                              |
+| 01:07:27.694      | `/json/list` gains a SECOND target `F4758FB7…` title "Example Domains".                                                                                                                            |
+| 01:07:27.780      | Registry gains `default-main` (child's key — no ACCOMPLISH_TASK_ID → `'default'`).                                                                                                                 |
+| 01:07:29.792      | `F4758FB7…` → `https://www.iana.org/about` title "About us" (h1 "About IANA", agent-confirmed).                                                                                                    |
+| post-task         | Final `devBrowser.openPreviewPage {name:"m6t0-run1-main"}` → targetId `DF27735A…` (`about:blank`); registry `["m6t0-run1-main","default-main"]`; `/json/list` = the same two page targets.         |
+
+Frame-content proof: 9/10 sampled JPEG captures are **byte-identical** (md5 `0e0addb6…`, ~6–8 KB blank canvas) across the whole run — including frames captured during and after both agent navigations. Not one frame shows the agent's pages.
+
+**Rejected hypotheses:**
+
+1. **H2 (registry-entry lifecycle staleness / relaunch races) — REJECTED.** Each of the two registry entries is created exactly once (creation timestamps above; no `created:false`→re-create churn), no page close handlers fired (registry never shrank), and `wsEndpoint` is byte-identical across all ~55 preview-poll records — one browser instance throughout, no `deleteStaleEntry`/`attachPageCloseHandler` race signatures.
+2. **H3 (two sidecar instances / mid-task relaunch) — REJECTED.** Single sidecar (one wsEndpoint on one ephemeral Chromium HTTP port, `getPreviewInfo` stable end-to-end), `captureFrame` 72/72 with no failure gap that a relaunch would produce, and the two CDP page targets both belong to the isolated harness sidecar (its Chromium runs under the harness's `DEV_BROWSER_PROFILE` with port override 9324 — the production sidecar on :9224 with its own profile was never touched). `ACCOMPLISH_DEV_BROWSER_RELAY_PORT=9324` kept the two chains disjoint by port and profile.
+
+**One additional confirmed fact needed for the story:** `openPreviewPage-first` ordering in `captureFrame` (`dev-browser-service.ts:132-135`) re-ensures the SAME wrong key every 750 ms — this is why the failure is stable across a whole task (the poll "self-heals" into the blank tab).
+
+### §0.2 Exact mechanism (code chain)
+
+1. Daemon boots opencode serve child with `ACCOMPLISH_TASK_ID` in its env (`environment.ts:125-134`, `buildOpenCodeEnvironment`).
+2. OpenCodeAdapter generates the per-task opencode config. `generator-mcp.ts:153-186` writes `mcp["dev-browser-mcp"].environment` = `{ACCOMPLISH_DEV_BROWSER_TOKEN, DEV_BROWSER_PORT}` (+`CDP_ENDPOINT`/`CDP_SECRET` only in remote mode). **TaskId is not threaded** — `GenerateOptions` has no taskId field (`config-generator-types.ts`; grep-clean).
+3. opencode spawns the local MCP child WITHOUT the serve process env (live-proven step 2 in §0.1: registry key `default-main`).
+4. `connection.ts:66-68`: `taskId = process.env.ACCOMPLISH_TASK_ID || 'default'` → `getFullPageName()` = `default-main`; first tool call `getBuiltinPage` POSTs `/pages {name:"default-main"}` → new registry entry → new tab.
+5. Web shim/daemon `captureFrame` resolve `${taskId}-main` from the REAL task id (`accomplish-http.ts:690`, `dev-browser-service.ts:130`) → ensure the SECOND registry entry (the blank tab).
+6. `ensurePage` name-dedupe keeps both identities happy and both tabs alive forever.
+
+The startup breadcrumb exists but is invisible in headless opencode logs: `dev-browser-mcp/src/index.ts:8-9` prints `[dev-browser-mcp] ACCOMPLISH_TASK_ID: (not set)` at child startup.
+
+### §0.3 Chosen design mechanics for the T5 fix (D7 refinement)
+
+The pre-committed direction (sidecar-owned "agent-active page" identity consumed by preview/capture) remains sound, but the findings sharpen WHERE the fix must land: the registry is fine; the seam is that two writers hand the registry different keys. Recommend a two-layer fix:
+
+1. **Primary — identity repair in the generated config (must-have):** set `browserEnv.ACCOMPLISH_TASK_ID = <taskId>` in `generator-mcp.ts` for `dev-browser-mcp` (and `linux-desktop`-style children only if they read it). At generation time the taskId IS available: `OpenCodeAdapter.currentTaskId` is set before config generation (`OpenCodeAdapter.ts:431-432`), and `onBeforeStartCtx.taskId` already flows to hooks (`OpenCodeAdapter.ts:464`). Effect: `getFullPageName()` in the child produces `${taskId}-main`, `ensurePage` dedupes to ONE page, the agent's navigation becomes the preview's captured tab. Note this simultaneously fixes `index.ts:520` (screencast/relay taskId), which reads the same env.
+2. **Defense-in-depth — fail-loud instead of silent-'default' (recommended):** when `ACCOMPLISH_TASK_ID` is absent AND the child was launched by an opencode daemon context (heuristic: token env present), log a loud startup warning and/or surface child stderr in daemon logs, so a future env regression cannot silently recreate this seam. Optionally relax the child fallback contract: keep `'default'` for standalone dev launches only.
+3. **Optional hardening (same identity seam, other shape):** `devBrowser.captureFrame` could cross-check `getPreviewInfo().pages` for a `${something}-main` entry that the requested key doesn't match and log a breadcrumb — this stays read-only diagnostic and keeps the preview self-healing (T7's zero-miss property must be preserved).
+
+Why alternative mechanics were set aside: making the sidecar DERIVE the agent-active page from observed navigations (e.g. "most recently navigated entry") is flaky in multi-page tasks (legit second tabs) and hides single-writer responsibility; making the preview poll the child's registry name via a new RPC adds a round trip without removing the key mismatch. With layer 1, "sidecar-authoritative identity" is achieved by construction: one key, one registry entry, preview captures what the agent drives.
+
+### §0.4 Repro recipe (recreate-able)
+
+```bash
+# Build from clean HEAD (branch linux-firefox-ai, commit at time of writing: 2b16cf0)
+pnpm --filter @accomplish_ai/agent-core build && pnpm --filter @accomplish/daemon build
+pnpm --filter @accomplish/desktop build:mcp-tools:dev   # refresh dev-browser(+mcp) dist/server.mjs
+
+# Harness (non-persistent; recreate from this spec if /tmp was wiped)
+mkdir -p /tmp/opencode/m6-t0   # harness.mjs lives here (see §0.6 for semantics)
+
+# Production sidecar may be live on :9224 — never restart it; the harness is fully isolated:
+#   ports 9324 (relay override) + DEV_BROWSER_PROFILE under the isolated data dir.
+
+# Run (harness performs): spawn isolated daemon → provider setup (needs live daemon.sock) →
+#   task.start {taskId:"m6t0-run1", prompt, workingDirectory} → auto-approve permission.request →
+#   poll devBrowser.getPreviewInfo (1 s) / captureFrame (750 ms, shim parity incl. the
+#   openPreviewPage ensure) → poll ephemeral CDP /json/list (700 ms, discovered via
+#   DevToolsActivePort file) → post-task registry/targetId classification → needle-scoped sweep.
+node /tmp/opencode/m6-t0/harness.mjs run glm-5.3-flash:cloud run1
+# Classification prints registry pages vs final openPreviewPage targetId vs /json/list —
+# the two-tab split and the 'default-main' key are the signature of the root cause.
+
+node /tmp/opencode/m6-t0/harness.mjs sweep   # standalone needle-scoped cleanup if a run aborted
+```
+
+Harness env contract (T7 production parity): daemon spawned with `XDG_DATA_HOME=<dataDir>`, `ACCOMPLISH_APP_PATH=<repo>/apps/desktop`, `ACCOMPLISH_DEV_BROWSER_RELAY_PORT=9324`, `DEV_BROWSER_PROFILE=<dataDir>/browser-profiles`, **without DISPLAY/WAYLAND_DISPLAY** (display-less → sidecar resolves headless via `resolveHeadlessFromEnv`, exactly the T7 production systemd env). Prompt: navigate two distinct real pages and report their main headings (`iana.org/help/example-domains` → "Example Domains"; `iana.org/about` → "About IANA" — example.com no longer serves an h1, M5 finding).
+
+### §0.5 Environment deltas vs the M5/T7 production observation, and production invariance
+
+- **Display:** replica faithful — harness daemon env deliberately DISPLAY-less; sidecar Chromium is headless (`resolveHeadlessFromEnv`), matching the T7 display-less daemon. The harness host does have a live desktop (`DISPLAY=:0` outside the daemon env) — irrelevant because the daemon/sidecar env strips it.
+- **Model:** `glm-5.3-flash:cloud` (cost-preferred per brief; instruction-following adequate for this tool-heavy task). Delta vs T7 (`glm-5.3:cloud`): the flash model chose `browser_script {goto/evaluate}` instead of `browser_navigate` — IRRELEVANT to the seam: both tool paths resolve pages through the same `getPage()`/`getBuiltinPage()` registry key (`getFullPageName`), so the split does not depend on which browser tool the model picks. (Corroboration: the seam reproduced with zero `browser_navigate`, zero `browser_tabs` switch calls in the transcript.)
+- **Preview-ensure injection:** the harness itself performs the shim's `openPreviewPage` ensure (shim parity) — in T7 production the real UI did this. Same code path either way.
+- **Production invariance (recorded like M5 harnesses):** prod daemon pid 3945 alive pre/post; `ps -o pid=,cmd= -p 3945 | md5sum` = `e01fee9f56f60160e88df7f8192d672e` IDENTICAL before/after the run; its sidecar (pid 234719 → :9224, chrome-headless-shell pid 234871) untouched and still listening at the end. Harness chain fully swept: 0 leftover processes, port 9324 clear, isolated data dir intact only under /tmp/opencode/m6-t0.
+- **Cost:** ONE live task run total (budget was 2–3); the run reproduced the split on the first attempt and artifacts provided the timestamp correlation in lieu of a second run.
+
+### §0.6 Harness recreation notes (non-persistent, /tmp/opencode/m6-t0/)
+
+- `harness.mjs` — instrumented harness (this is test-only, lives in /tmp, NOT committed). Semantics per M5 checkpoint §1.A-4 and §1.C (isolated daemon, newline JSON-RPC 2.0 over `<dataDir>/daemon.sock`, isolated workspace, needle-scoped sweeps, prod-md5 invariance) PLUS the T0 instrumentation: previewInfo/CDP/captureFrame poll loops, transient JPEG dumps, artifact dump `m6t0-run1-artifacts.json` (transcript, timelines, final classification) and saved frames under `frames/`.
+- **Harness deviations from M5 harnesses (all harness-side, recorded for recreation):**
+  1. `setup-dev-provider.mjs` must run AFTER the daemon is up — it pushes the provider via `<dataDir>/daemon.sock` RPC (first attempt died with ENOENT).
+  2. `DEV_BROWSER_PROFILE` is set to the isolated data dir — the sidecar otherwise resolves its Chromium profile under `~/.accomplish/dev-browser/profiles/` (shared with the live production sidecar; the source tree's `process.cwd()/.browser-data` fallback is NOT what the current dist does). This keeps the harness Chromium fully disjoint from production's.
+  3. Known harness bug (harmless): the final needle-matching sweep matches the harness's own `node harness.mjs …` pipeline (cmdline contains `/tmp/opencode/m6-t0`) and SIGKILLs it at the very end — artifacts are already written and flushed when this happens; exclude `process.pid`/own pipeline PIDs when rerunning mid-run sweeps. The sweep never touched any process outside the BASE needle: production pid 3945 and sidecar 234719/234871 verified alive and unchanged.
+  4. `/json/list` discovery follows the brief: read the DevToolsActivePort file under the profile dir (harness-scoped by deviation 2), poll `http://127.0.0.1:<ephemeral>/json/list` — read-only, same-user, loopback-only. No sidecar token read, no production data-dir access.
+- **Artifacts (current session):** `/tmp/opencode/m6-t0/m6t0-run1-artifacts.json` (full evidence), `harness.log`, `frames/*.jpg` (byte-identity proof), `data/opencode/opencode-m6t0-run1.json` (generated config — `mcp.dev-browser-mcp.environment` = token+port only; CDP_ENDPOINT absent → builtin mode confirmed for THIS run).
