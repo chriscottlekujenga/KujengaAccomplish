@@ -75,6 +75,7 @@ import { DisabledSandboxProvider } from '../../sandbox/disabled-provider.js';
 import { serializeError } from '../../utils/error.js';
 import { getOAuthProviderDisplayName, isOAuthProviderId } from '../../common/types/connector.js';
 import { CONNECTOR_AUTH_REQUIRED_MARKER } from '../../common/constants.js';
+import { ASSISTANCE_QUESTION_HEADER } from '../../common/task-assistance.js';
 import { createConsoleLogger } from '../../utils/logging.js';
 import { ACCOMPLISH_AGENT_NAME } from '../../opencode/config-generator.js';
 import { PROVIDER_ID_TO_OPENCODE, type ProviderId } from '../../common/types/providerSettings.js';
@@ -228,6 +229,8 @@ interface PendingRequest {
   /** Native SDK request ID used for the reply API call. */
   sdkRequestId: string;
   sessionId: string;
+  /** M6-A D3: true for a human-assistance question (header === ASSISTANCE_QUESTION_HEADER). */
+  assistance?: boolean;
 }
 
 /**
@@ -688,7 +691,16 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       // server-side so a follow-up prompt via `resumeSession` still
       // keeps conversation memory.
       if (isCancel) {
-        this.markComplete('success');
+        // M6-A D3: a Cancel on an ASSISTANCE question means the human
+        // declined — the verification was NOT completed, so claiming
+        // `success` would be a lie (unattended auto-denies included:
+        // the task ends failed with the explicit reason). Clarification
+        // question cancels keep the existing success mapping.
+        if (pending.assistance === true) {
+          this.markComplete('error', 'Human assistance declined — verification not completed');
+        } else {
+          this.markComplete('success');
+        }
       }
     }
   }
@@ -1331,13 +1343,14 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
   private handleQuestionAsked(sdkReq: OpenCodeSdkQuestionRequest): void {
     const requestId = this.generateRequestId('question');
+    const first = sdkReq.questions?.[0];
     this.pendingRequest = {
       kind: 'question',
       requestId,
       sdkRequestId: sdkReq.id,
       sessionId: sdkReq.sessionID,
+      assistance: first?.header === ASSISTANCE_QUESTION_HEADER,
     };
-    const first = sdkReq.questions?.[0];
     const req: PermissionRequest = {
       id: requestId,
       taskId: this.currentTaskId ?? '',

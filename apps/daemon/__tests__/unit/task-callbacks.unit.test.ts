@@ -6,6 +6,7 @@ import type {
   TaskManagerAPI,
   TaskSource,
 } from '@accomplish_ai/agent-core';
+import { ASSISTANCE_QUESTION_HEADER } from '@accomplish_ai/agent-core';
 import { createTaskCallbacks } from '../../src/task-callbacks.js';
 
 /**
@@ -254,6 +255,109 @@ describe('createTaskCallbacks — waiting_permission parking (M4)', () => {
     f.callbacks.onPermissionRequest?.(fakeRequest);
 
     expect(f.sendPermissionResponse).toHaveBeenCalled();
+    expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
+    expect(f.statusChangeSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * M6-A D2 (Phase 3): a question whose header string-equals the shared
+ * ASSISTANCE_QUESTION_HEADER is a human-verification assistance ask → the
+ * reserved `waiting_for_user` status. Clarifying questions keep the M4
+ * `waiting_permission` semantics byte-identically. Auto-deny branches never
+ * touch the status for EITHER kind — under the no-UI the request is denied
+ * immediately and, for assistance-kind, the ADAPTER's honest-decline mapping
+ * (M6-A D3) records the task as failed with the explicit reason (out of this
+ * file's scope).
+ *
+ * Injection-safety framing: header equality drives ONLY this status label —
+ * no authorization decision, nothing is granted.
+ */
+describe('createTaskCallbacks — M6-A assistance-question routing (waiting_for_user)', () => {
+  function buildQuestionRequest(header: string): PermissionRequest {
+    return {
+      id: 'questionreq_xyz',
+      taskId: 'tsk_abc',
+      type: 'question',
+      question: 'A CAPTCHA is blocking https://example.com/form',
+      header,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const clarificationQuestion = buildQuestionRequest('A quick question');
+  const assistanceQuestion = buildQuestionRequest(ASSISTANCE_QUESTION_HEADER);
+
+  it("assistance-header question + interactive UI → parks in 'waiting_for_user' AND emits the request", () => {
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+    const bridgeListener = vi.fn();
+    f.emitter.on('permission', bridgeListener);
+
+    f.callbacks.onPermissionRequest?.(assistanceQuestion);
+
+    expect(f.rpcForwardListener).toHaveBeenCalledWith(assistanceQuestion);
+    expect(bridgeListener).toHaveBeenCalledWith(assistanceQuestion);
+    expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_for_user');
+    expect(f.statusChangeSpy).toHaveBeenCalledWith({
+      taskId: 'tsk_abc',
+      status: 'waiting_for_user',
+    });
+    expect(f.sendPermissionResponse).not.toHaveBeenCalled();
+  });
+
+  it('clarification question → parks in waiting_permission exactly as before (unchanged)', () => {
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+
+    f.callbacks.onPermissionRequest?.(clarificationQuestion);
+
+    expect(f.rpcForwardListener).toHaveBeenCalledWith(clarificationQuestion);
+    expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_permission');
+    expect(f.statusChangeSpy).toHaveBeenCalledWith({
+      taskId: 'tsk_abc',
+      status: 'waiting_permission',
+    });
+  });
+
+  it('whatsapp + bridge attached: assistance question parks in waiting_for_user too', () => {
+    const f = buildFixture({ source: 'whatsapp', hasInteractiveClients: false });
+    const bridgeListener = vi.fn();
+    f.emitter.on('permission', bridgeListener);
+
+    f.callbacks.onPermissionRequest?.(assistanceQuestion);
+
+    expect(bridgeListener).toHaveBeenCalledWith(assistanceQuestion);
+    expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_for_user');
+    expect(f.statusChangeSpy).toHaveBeenCalledWith({
+      taskId: 'tsk_abc',
+      status: 'waiting_for_user',
+    });
+  });
+
+  it('auto-deny unchanged for assistance questions: deny sent, NO waiting status', () => {
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: false });
+
+    f.callbacks.onPermissionRequest?.(assistanceQuestion);
+
+    expect(f.sendPermissionResponse).toHaveBeenCalledWith('tsk_abc', {
+      taskId: 'tsk_abc',
+      requestId: 'questionreq_xyz',
+      decision: 'deny',
+    });
+    expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
+    expect(f.statusChangeSpy).not.toHaveBeenCalled();
+    expect(f.rpcForwardListener).not.toHaveBeenCalled();
+  });
+
+  it('auto-deny unchanged for clarification questions: deny sent, NO waiting status', () => {
+    const f = buildFixture({ source: 'ui', hasInteractiveClients: false });
+
+    f.callbacks.onPermissionRequest?.(clarificationQuestion);
+
+    expect(f.sendPermissionResponse).toHaveBeenCalledWith('tsk_abc', {
+      taskId: 'tsk_abc',
+      requestId: 'questionreq_xyz',
+      decision: 'deny',
+    });
     expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
     expect(f.statusChangeSpy).not.toHaveBeenCalled();
   });

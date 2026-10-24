@@ -7,6 +7,7 @@
 import type { EventEmitter } from 'node:events';
 import {
   mapResultToStatus,
+  ASSISTANCE_QUESTION_HEADER,
   type TaskCallbacks,
   type TaskMessage,
   type TaskResult,
@@ -92,15 +93,29 @@ export function createTaskCallbacks(
           });
       };
       // M4: a request emitted to a human-facing surface parks the task in
-      // 'waiting_permission' — the turn is blocked on a HUMAN reply, so the
+      // a waiting status — the turn is blocked on a HUMAN reply, so the
       // boot-time crash sweep (recoverStaleTasks — 'running' only) must not
       // record it as a stale orphan: a waiting task keeps its resumable
       // sessionId + cwd and is recovered via resumeSession. The auto-deny
       // branches below deliberately skip this: the deny is immediate, no
       // human ever waits, and the task stays 'running' throughout.
+      //
+      // M6-A D2: a question whose header string-equals the shared
+      // ASSISTANCE_QUESTION_HEADER is a human-verification assistance ask —
+      // the reserved general `waiting_for_user` state finally gets its
+      // trigger. Clarifying questions keep `waiting_permission` unchanged.
+      // Injection-safety: header equality drives ONLY this status label +
+      // routing (no authorization decision, nothing is granted) — page
+      // content can at most cause a spurious assistance pause, which a
+      // human then decides on.
+      const isAssistanceQuestion =
+        request.type === 'question' && request.header === ASSISTANCE_QUESTION_HEADER;
       const markWaitingOnHuman = (): void => {
-        storage.updateTaskStatus(taskId, 'waiting_permission');
-        emitter.emit('statusChange', { taskId, status: 'waiting_permission' });
+        const waitingStatus: TaskStatus = isAssistanceQuestion
+          ? 'waiting_for_user'
+          : 'waiting_permission';
+        storage.updateTaskStatus(taskId, waitingStatus);
+        emitter.emit('statusChange', { taskId, status: waitingStatus });
       };
 
       if (source === 'whatsapp') {

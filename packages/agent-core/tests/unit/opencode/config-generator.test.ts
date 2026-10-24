@@ -10,6 +10,7 @@ import {
   ProviderConfig,
 } from '../../../src/opencode/config-generator.js';
 import type { BrowserConfig } from '../../../src/opencode/generator-mcp.js';
+import { ASSISTANCE_QUESTION_HEADER } from '../../../src/common/task-assistance.js';
 
 describe('ConfigGenerator', () => {
   let testDir: string;
@@ -1100,6 +1101,79 @@ describe('ConfigGenerator', () => {
       });
       expect(result.systemPrompt).toContain('available-skills');
       expect(result.systemPrompt).toContain('test-skill');
+    });
+  });
+
+  /**
+   * M6-A D1 prompt-content guard (Phase 3): the assistance trigger is
+   * instruction-level, so the generated system prompt (and the agent prompt
+   * the config ships) MUST carry the exact shared header constant plus the
+   * gate-pause guidance. Daemon routing string-equals the constant — a
+   * regression here silently breaks `waiting_for_user` classification.
+   */
+  describe('M6-A D1 assistance-question instruction', () => {
+    // Build per-call: mcpToolsPath/userDataPath are assigned in the outer
+    // beforeEach, which runs AFTER describe registration.
+    const basePromptOptions = () => ({
+      platform: 'darwin' as const,
+      mcpToolsPath,
+      userDataPath,
+      isPackaged: false,
+      bundledNodeBinPath: sharedBundledNodeBinPath,
+    });
+
+    it('embeds the exact assistance header and options in the system prompt', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'builtin' } as BrowserConfig,
+      });
+      expect(result.systemPrompt).toContain(ASSISTANCE_QUESTION_HEADER);
+      expect(result.systemPrompt).toContain("I'll complete it — please wait");
+      expect(result.systemPrompt).toContain('Skip this verification');
+      expect(result.systemPrompt).toContain(
+        'HUMAN VERIFICATION GATES - PAUSE AND ASK, NEVER TERMINATE',
+      );
+    });
+
+    it('embeds the browser-assistance gate-pause block when browser mode is enabled', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'builtin' } as BrowserConfig,
+      });
+      expect(result.systemPrompt).toContain('PAUSE FOR HUMAN ASSISTANCE (never terminate)');
+      expect(result.systemPrompt).toContain(ASSISTANCE_QUESTION_HEADER);
+    });
+
+    it('ships the agent prompt byte-identical to the generated systemPrompt', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'builtin' } as BrowserConfig,
+      });
+      const agentPrompt = result.config.agent?.[ACCOMPLISH_AGENT_NAME]?.prompt ?? '';
+      expect(agentPrompt).toBe(result.systemPrompt);
+      expect(agentPrompt).toContain(ASSISTANCE_QUESTION_HEADER);
+    });
+
+    it('still instructs the assistance pause for tasks WITHOUT browser tools (non-browser block only)', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'none' } as BrowserConfig,
+      });
+      expect(result.systemPrompt).not.toContain('PAUSE FOR HUMAN ASSISTANCE (never terminate)');
+      expect(result.systemPrompt).toContain(ASSISTANCE_QUESTION_HEADER);
+      expect(result.systemPrompt).toContain(
+        'HUMAN VERIFICATION GATES - PAUSE AND ASK, NEVER TERMINATE',
+      );
+    });
+
+    it('keeps "blocked" reserved for non-human gates', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'builtin' } as BrowserConfig,
+      });
+      expect(result.systemPrompt).toContain(
+        'Only use for: rate limits, site errors, missing permissions',
+      );
     });
   });
 });

@@ -567,6 +567,9 @@ export {
   LOG_BUFFER_MAX_ENTRIES,
 } from './common/constants.js';
 
+// Human-assistance-question marker (Phase 3 M6-A) — see task-assistance.ts.
+export { ASSISTANCE_QUESTION_HEADER } from './common/task-assistance.js';
+
 export {
   MODEL_DISPLAY_NAMES,
   PROVIDER_PREFIXES,

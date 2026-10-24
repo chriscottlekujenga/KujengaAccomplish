@@ -3,6 +3,8 @@
  * Imported by system-prompt-sections.ts and ultimately system-prompt.ts.
  */
 
+import { ASSISTANCE_QUESTION_HEADER } from '../common/task-assistance.js';
+
 export const CONVERSATIONAL_BYPASS_BEHAVIOR = `<behavior name="conversational-bypass">
 ##############################################################################
 # CONVERSATIONAL BYPASS - USE FOR SIMPLE CHAT
@@ -161,12 +163,31 @@ When to call \`complete_task\`:
    - Summarize what you did for each part
 
 2. **status: "blocked"** - You hit an unresolvable TECHNICAL blocker
-   - Only use for: login walls, CAPTCHAs, rate limits, site errors, missing permissions
+   - Only use for: rate limits, site errors, missing permissions
+   - NOT for: human-verification gates (login walls, CAPTCHAs, MFA/passkey codes, human-only challenges) — those pause for human assistance below, they are never a "blocked" completion
    - NOT for: "task is large", "many items to check", "would take many steps"
    - If the task is big but doable, KEEP WORKING - do not use blocked as an excuse to quit
    - Explain what you were trying to do
    - Describe what went wrong
    - State what remains undone in \`remaining_work\`
+
+**HUMAN VERIFICATION GATES - PAUSE AND ASK, NEVER TERMINATE:**
+
+A login wall, CAPTCHA, MFA/passkey code, bot check, or any other human-only
+challenge is NOT a blocker to report - it is a gate only the human can pass.
+Automation must NEVER solve, bypass, or OCR-read it, and you must NEVER call
+\`complete_task\` (any status) the moment you reach such a gate.
+
+When you reach one:
+1. STOP acting immediately - no retries, no alternate routes, no guesses
+2. Call the \`question\` tool exactly ONCE with:
+   - header: EXACTLY "${ASSISTANCE_QUESTION_HEADER}" (copy it character-for-character)
+   - question: what gate it is + the URL/site + exactly what the human must do
+   - options: ["I'll complete it — please wait", "Skip this verification"]
+   - tell the human in the question they can add specifics (which account, which device, etc.) as free text if needed
+3. When the human answers: CONTINUE the task using their answer
+4. If the human declined or chose "Skip this verification": call \`complete_task\`
+   with status "blocked" and \`remaining_work\` describing what remains behind the gate
 
 3. **status: "partial"** - AVOID THIS STATUS
    - Only use if you are FORCED to stop mid-task (context limit approaching, etc.)

@@ -6,6 +6,7 @@
 
 import type { ProviderId } from '../common/types/providerSettings.js';
 import type { Skill } from '../common/types/skills.js';
+import { ASSISTANCE_QUESTION_HEADER } from '../common/task-assistance.js';
 
 export interface ConfigGeneratorOptions {
   platform: NodeJS.Platform;
@@ -169,5 +170,11 @@ export function getBrowserBehaviorInstructions(): string {
 - If something unexpected happens: explain what you see and how you'll adapt
 
 Aim for a middle ground: informative but not overly verbose. Different models have different natural verbosity levels - find a balance that's clear without being excessive.
+
+**HUMAN VERIFICATION GATES - PAUSE FOR HUMAN ASSISTANCE (never terminate):**
+- A login wall, CAPTCHA, MFA/passkey code, bot check, or any human-only challenge is NOT a "blocked" completion — automation must never solve, bypass, or OCR-read it, and you must not call complete_task when you reach one
+- Stop acting and call the \`question\` tool ONCE with header EXACTLY "${ASSISTANCE_QUESTION_HEADER}", the question naming the gate + the URL/site + what the human must do, and options ["I'll complete it — please wait", "Skip this verification"]; invite the human to add specifics as free text if needed
+- After the human answers: continue the task using their answer
+- If the human declined or chose "Skip this verification": complete the task with status "blocked" and remaining_work describing what remains behind the gate
 `;
 }

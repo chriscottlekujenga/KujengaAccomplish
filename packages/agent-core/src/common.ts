@@ -25,6 +25,9 @@ export { STARTUP_STAGES } from './common/types/task.js';
 // Google Workspace file picker
 export { GOOGLE_FILE_PICKER_MARKER } from './common/google-picker-constants.js';
 
+// Human-assistance-question marker (Phase 3 M6-A) — see task-assistance.ts.
+export { ASSISTANCE_QUESTION_HEADER } from './common/task-assistance.js';
+
 // Permission types
 export type {
   FileOperation,
