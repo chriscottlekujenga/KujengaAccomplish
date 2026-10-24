@@ -53,8 +53,32 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 /** Matches the desktop screencast quality (browserPreview.ts SCREENCAST_QUALITY). */
 const SCREENSHOT_QUALITY = 50;
 
+/**
+ * M6-A T5 defect instrumentation (failed Firefox acceptance, checkpoint §5).
+ * The production daemon was found running pre-T5 code (a live node process
+ * never reloads a rebuilt dist), regenerating the two-tab split invisibly:
+ * frames flowed, the poll had zero misses, and only the TAB was wrong. Journald
+ * had no view of page identity. Two breadcrumbs close that observability gap;
+ * neither ever carries frame data (M2 T4 pattern):
+ *   1. per-tick DEBUG trail — target identity + frame byte-length + duration;
+ *   2. ONE-SHOT-per-task WARN when the sidecar registry also holds a
+ *      `default-*` page next to the captured key — the exact fingerprint of a
+ *      writer running without ACCOMPLISH_TASK_ID (child-identity fallback).
+ */
+const IDENTITY_DIVERGENCE_HINT =
+  'a sidecar registry writer ran without ACCOMPLISH_TASK_ID (M6-A T5 preview seam): ' +
+  'the agent-driven tab likely diverges from the captured one and the preview will ' +
+  'show a blank page. Rebuild agent-core/daemon and RESTART the daemon process ' +
+  '(a rebuilt dist is not loaded by an already-running daemon).';
+
+function shortTargetId(targetId: string): string {
+  return targetId.length > 8 ? targetId.slice(0, 8) : targetId;
+}
+
 export class DevBrowserService {
   private readonly config: DevBrowserServiceConfig;
+  /** TaskIds whose first successful capture already ran the one-shot registry divergence check. */
+  private readonly identityCheckedTaskIds = new Set<string>();
 
   constructor(config: DevBrowserServiceConfig = {}) {
     this.config = config;
@@ -123,6 +147,7 @@ export class DevBrowserService {
     taskId: string;
     pageName?: string;
   }): Promise<DevBrowserFrameResult | null> {
+    const startedAt = Date.now();
     const normalizedPageName =
       typeof params.pageName === 'string' && params.pageName.trim()
         ? params.pageName.trim()
@@ -137,13 +162,59 @@ export class DevBrowserService {
       if (!page?.targetId || !info?.wsEndpoint) {
         return null;
       }
-      return await this.captureCdpFrame(info.wsEndpoint, page.targetId);
+      this.checkRegistryIdentityOnce(params.taskId, fullPageName);
+      const frame = await this.captureCdpFrame(info.wsEndpoint, page.targetId);
+      if (frame) {
+        logger.debug('[DevBrowser] captureFrame delivered', {
+          taskId: params.taskId,
+          pageName: normalizedPageName,
+          fullPageName,
+          targetId: shortTargetId(page.targetId),
+          frameBytes: frame.data.length,
+          durationMs: Date.now() - startedAt,
+        });
+      }
+      return frame;
     } catch (err) {
       logger.warn('[DevBrowser] captureFrame failed', {
         error: err instanceof Error ? err.message : String(err),
       });
       return null;
     }
+  }
+
+  /**
+   * One-shot read-only diagnostic per taskId (checkpoint §5): a single GET
+   * /pages next to the first successful capture. A `default-*` name beside
+   * the captured key is the stale-build fingerprint — the child fell back to
+   * its standalone identity, so two tabs exist and the captured one is blank.
+   * Best-effort: never throws, never blocks the capture, fires at most once
+   * per task per daemon process (no steady-state poll fan-out).
+   */
+  private checkRegistryIdentityOnce(taskId: string, capturedFullPageName: string): void {
+    if (this.identityCheckedTaskIds.has(taskId)) {
+      return;
+    }
+    this.identityCheckedTaskIds.add(taskId);
+    void fetchDevBrowserPageList(this.port, this.token)
+      .then((names) => {
+        if (!names) {
+          return;
+        }
+        const divergent = names.filter(
+          (n) => n !== capturedFullPageName && n.startsWith('default-'),
+        );
+        if (divergent.length === 0) {
+          return;
+        }
+        logger.warn('[DevBrowser] preview-seam identity divergence (blank-page fingerprint)', {
+          taskId,
+          capturedFullPageName,
+          divergentRegistryPages: divergent,
+          hint: IDENTITY_DIVERGENCE_HINT,
+        });
+      })
+      .catch(() => {});
   }
 
   /** CDP connect → attach → layout metrics → JPEG capture. */

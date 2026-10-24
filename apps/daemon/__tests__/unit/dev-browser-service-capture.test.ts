@@ -16,6 +16,7 @@ import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from 'vitest
 import http from 'http';
 import { spawn } from 'child_process';
 import { WebSocketServer } from 'ws';
+import { logger } from '@accomplish_ai/agent-core';
 import { DevBrowserService } from '../../src/dev-browser-service.js';
 
 const TOKEN = 'daemon-sidecar-token';
@@ -424,6 +425,121 @@ describe('preview-seam page identity (M6-A T5 — active-page selection across b
     expect(stub.attachTargetIds).toEqual(['T1', 'T1']);
     expect(registry.pages.size).toBe(2);
     expect(registry.pages.get('tsk_t5-docs')).toEqual({ targetId: 'T2', created: true });
+  });
+});
+
+describe('preview-seam identity diagnostics (M6-A T5 §5 — failed Firefox acceptance)', () => {
+  /**
+   * The production failure signature: the daemon ran pre-T5 code (rebuilt dist
+   * never loaded), the MCP child fell back to `default-main`, and the sidecar
+   * registry held a `default-*` page BESIDE the captured `<taskId>-main` —
+   * the captured tab stayed blank all task long while frames flowed (green
+   * Live indicator, white screen). These tests pin the journald diagnostics:
+   * the one-shot divergence WARN (read-only GET /pages, once per task) and
+   * the per-tick DEBUG identity trail. Neither carries frame data.
+   */
+  let cdp: CdpStubHandle | null = null;
+  let sidecar: http.Server | null = null;
+  let registry: RegistryStubState;
+  const cleanups: Array<() => Promise<void> | void> = [];
+
+  afterEach(async () => {
+    for (const cleanup of cleanups.reverse()) {
+      await cleanup();
+    }
+    cleanups.length = 0;
+    cdp = null;
+    sidecar = null;
+    vi.restoreAllMocks();
+  });
+
+  async function startSeamStack(extraRegistryNames: string[] = []): Promise<DevBrowserService> {
+    registry = { ensuredNames: [], pages: new Map() };
+    // Pre-seed foreign entries: the post-restart leftover shape (older task
+    // pages are fine) vs the divergence fingerprint (a `default-*` entry).
+    for (const name of extraRegistryNames) {
+      registry.pages.set(name, {
+        targetId: `T_PRE_${registry.pages.size}`,
+        created: true,
+      });
+    }
+    cdp = await listenCdpStub();
+    cleanups.push(cdp.close);
+    sidecar = await listenZero(
+      sidecarStub(TOKEN, {
+        wsEndpoint: `ws://127.0.0.1:${cdp.port}/devtools/browser/abc`,
+        registry,
+      }),
+    );
+    cleanups.push(() => closeServer(sidecar as http.Server));
+    return new DevBrowserService({ devBrowserPort: portOf(sidecar as http.Server) });
+  }
+
+  it('logs a loud one-shot divergence WARN when the registry holds a default-* page beside the captured key', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    try {
+      const service = await startSeamStack(['default-main', 'task_older-main']);
+
+      await service.captureFrame({ taskId: 'tsk_diag' });
+      // The one-shot /pages check is fire-and-forget (best-effort, never
+      // blocks the capture) — wait for its WARN before asserting.
+      await vi.waitFor(() => {
+        expect(
+          warnSpy.mock.calls
+            .map((call) => String(call[0]))
+            .filter((m) => m.includes('identity divergence')),
+        ).toHaveLength(1);
+      });
+
+      const divergenceWarns = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((m) => m.includes('identity divergence'));
+      expect(divergenceWarns).toHaveLength(1);
+      expect(divergenceWarns[0]).toContain('blank-page fingerprint');
+      // Context identifies the seam without frame data.
+      const warnCtx = warnSpy.mock.calls.find((call) =>
+        String(call[0]).includes('identity divergence'),
+      )?.[1] as Record<string, unknown>;
+      expect(warnCtx.capturedFullPageName).toBe('tsk_diag-main');
+      expect(warnCtx.divergentRegistryPages).toEqual(['default-main']);
+      expect(JSON.stringify(warnCtx)).not.toContain('http');
+      // Older-task leftovers are context, not a divergence: only default-* listed.
+      expect(warnCtx.divergentRegistryPages).not.toContain('task_older-main');
+
+      // One-shot per task: a second capture repeats neither the check nor the warn.
+      await service.captureFrame({ taskId: 'tsk_diag' });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        warnSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((m) => m.includes('identity divergence')),
+      ).toHaveLength(1);
+
+      // Per-tick DEBUG identity trail carries delivery facts, no frame bytes.
+      const trail = debugSpy.mock.calls.map((call) => String(call[0]));
+      expect(trail.filter((m) => m.includes('captureFrame delivered'))).toHaveLength(2);
+    } finally {
+      warnSpy.mockRestore();
+      debugSpy.mockRestore();
+    }
+  });
+
+  it('stays silent when the registry has no default-* divergence (leftover task pages are normal)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const service = await startSeamStack(['task_older-main', 'tsk_diag-docs']);
+
+      await service.captureFrame({ taskId: 'tsk_diag' });
+
+      expect(
+        warnSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((m) => m.includes('identity divergence')),
+      ).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

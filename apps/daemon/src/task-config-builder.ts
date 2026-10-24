@@ -16,6 +16,7 @@ import {
   getBundledNodePaths,
   getEnabledSkills,
   getDevBrowserToken,
+  logger,
   type StorageAPI,
   type CliResolverConfig,
   type AccomplishRuntime,
@@ -86,6 +87,39 @@ function getPort(envVar: string): number | undefined {
  * path passes an empty `ctx`) so `generateConfig` falls back to its
  * default `opencode.json` filename.
  */
+/**
+ * M6-A T5 defect instrumentation (failed Firefox acceptance, checkpoint §5).
+ * Post-generation identity verification: the ONLY journald-visible proof that
+ * the RUNNING daemon build threads ACCOMPLISH_TASK_ID into the browser child
+ * env. A live node process never reloads a rebuilt dist, so a rebuild without
+ * a restart silently regenerates the pre-T5 two-tab split — this breadcrumb
+ * turns that failure loud on the daemon side (the child's own stderr canary
+ * in dev-browser-mcp/connection.ts is the per-task failure detector).
+ */
+function verifyDevBrowserChildIdentity(
+  taskId: string | undefined,
+  mcpServers: Record<string, { environment?: Record<string, string> }>,
+): void {
+  if (!taskId) {
+    return;
+  }
+  const devBrowserEnv = mcpServers['dev-browser-mcp']?.environment;
+  if (!devBrowserEnv?.ACCOMPLISH_DEV_BROWSER_TOKEN) {
+    return;
+  }
+  if (devBrowserEnv.ACCOMPLISH_TASK_ID === taskId) {
+    logger.info(
+      `[OpenCode Config] dev-browser-mcp child identity threaded: ACCOMPLISH_TASK_ID=${taskId} (M6-A T5 preview seam)`,
+    );
+    return;
+  }
+  logger.warn(
+    `[OpenCode Config] dev-browser-mcp child identity MISSING: ctx.taskId=${taskId} was provided but the generated environment lacks ACCOMPLISH_TASK_ID ` +
+      '(M6-A T5 preview seam) — the agent tab will diverge from the preview and the preview will render a blank page. ' +
+      'Rebuild agent-core and RESTART the daemon (an already-running daemon keeps pre-T5 in-memory code).',
+  );
+}
+
 function buildConfigFileName(taskId: string | undefined): string | undefined {
   if (!taskId) {
     return undefined;
@@ -197,6 +231,8 @@ export async function onBeforeStart(
   });
 
   const result = generateConfig(configOptions);
+
+  verifyDevBrowserChildIdentity(ctx.taskId, result.mcpServers);
 
   // Prepend the bundled Node.js bin dir to the env's PATH so the
   // `apps/desktop/node_modules/.bin/opencode` shell wrapper (and the

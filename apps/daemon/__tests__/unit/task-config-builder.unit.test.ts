@@ -34,12 +34,17 @@ import * as path from 'node:path';
 
 // Tunable via each test.
 // Either-or: `knowledgeInstructionsText` → rendered in the binding
-// <workspace-instructions> block; `knowledgeContextText` → rendered in the
-// soft <workspace-knowledge> block. Tests set one or both per scenario.
+// <workspace-instructions> block; `knowledgeContextText` → rendered in the soft
+// <workspace-knowledge> block. Tests set one or both per scenario.
 let knowledgeInstructionsText: string | undefined = undefined;
 let knowledgeContextText: string | undefined = undefined;
 let activeProviderModel: { provider: string; model: string } | null = null;
 let gwsRows: Record<string, unknown>[] = [];
+
+// M6-A T5 stale-build simulation (checkpoint §5): when true, the mocked
+// generateConfig strips ACCOMPLISH_TASK_ID from the generated mcpServers —
+// the exact artifact a stale (pre-T5) in-memory daemon build produces.
+const taskConfigMocks = vi.hoisted(() => ({ stripTaskIdFromGeneratedConfig: false }));
 
 // `generateConfig` does `fs.existsSync(nodeExe)` before writing the config;
 // create a real placeholder file each test can point at. This is test
@@ -83,12 +88,25 @@ vi.mock('@accomplish_ai/agent-core/storage/repositories/knowledgeNotes', () => (
 
 vi.mock('@accomplish_ai/agent-core', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
+  const realGenerateConfig = actual.generateConfig as typeof actual.generateConfig;
   return {
     ...actual,
-    // Mock out the auth.json sync / bundled-node resolution bits that
-    // hit the filesystem unnecessarily for this test.
     syncApiKeysToOpenCodeAuth: vi.fn(),
     getOpenCodeAuthJsonPath: vi.fn(() => '/tmp/fake-auth.json'),
+    // M6-A T5 stale-build simulation hook: strips the child identity from the
+    // REAL generator's output when the test asks for it.
+    generateConfig: (opts: Parameters<typeof realGenerateConfig>[0]) => {
+      const result = realGenerateConfig(opts);
+      if (taskConfigMocks.stripTaskIdFromGeneratedConfig) {
+        const entry = (
+          result.mcpServers as Record<string, { environment?: Record<string, string> }>
+        )['dev-browser-mcp'];
+        if (entry?.environment) {
+          delete entry.environment.ACCOMPLISH_TASK_ID;
+        }
+      }
+      return result;
+    },
     // generateConfig throws without a bundled node path; point at a real
     // file created in beforeEach. The MCP server entries the test asserts
     // on don't actually spawn — we just need fs.existsSync to pass. The
@@ -140,6 +158,7 @@ vi.mock('@accomplish_ai/agent-core/storage/repositories/index', async () => {
 });
 
 const { onBeforeStart } = await import('../../src/task-config-builder.js');
+const { logger } = await import('@accomplish_ai/agent-core');
 
 function makeStorage(overrides: Record<string, unknown> = {}) {
   return {
@@ -523,5 +542,91 @@ describe('daemon onBeforeStart — integration against real resolveTaskConfig + 
     expect(env.ACCOMPLISH_TASK_ID).toBeUndefined();
     // Same generation pipeline still ran (relay-port threading proof)
     expect(env.DEV_BROWSER_PORT).toBe('9224');
+  });
+
+  it('logs the journald-verified child-identity breadcrumb when ctx.taskId threads (restart confirmation, M6-A T5)', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const storage = makeStorage();
+      await onBeforeStart(
+        storage as never,
+        {
+          userDataPath: tmpUserData,
+          mcpToolsPath: fakeMcpToolsPath,
+          isPackaged: false,
+          resourcesPath: '',
+          appPath: '',
+        },
+        { taskId: 'tsk_identity_live' },
+      );
+      const identityInfo = infoSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((m) => m.includes('dev-browser-mcp child identity threaded'));
+      expect(identityInfo).toHaveLength(1);
+      expect(identityInfo[0]).toContain('ACCOMPLISH_TASK_ID=tsk_identity_live');
+      expect(warnSpy.mock.calls.map((call) => String(call[0]))).toHaveLength(0);
+    } finally {
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('warns loudly when the generated config misses the child identity while ctx.taskId was given (stale-build signature, M6-A T5)', async () => {
+    taskConfigMocks.stripTaskIdFromGeneratedConfig = true;
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    try {
+      const storage = makeStorage();
+      await onBeforeStart(
+        storage as never,
+        {
+          userDataPath: tmpUserData,
+          mcpToolsPath: fakeMcpToolsPath,
+          isPackaged: false,
+          resourcesPath: '',
+          appPath: '',
+        },
+        { taskId: 'tsk_stale_build' },
+      );
+      const identityWarns = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((m) => m.includes('child identity MISSING'));
+      expect(identityWarns).toHaveLength(1);
+      expect(identityWarns[0]).toContain('ctx.taskId=tsk_stale_build');
+      expect(identityWarns[0]).toContain('RESTART the daemon');
+      // No positive breadcrumb when the identity did not thread.
+      expect(infoSpy.mock.calls.map((call) => String(call[0]))).toHaveLength(0);
+    } finally {
+      taskConfigMocks.stripTaskIdFromGeneratedConfig = false;
+      warnSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('emits no identity breadcrumb on the transient OAuth path (empty ctx)', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const storage = makeStorage();
+      await onBeforeStart(
+        storage as never,
+        {
+          userDataPath: tmpUserData,
+          mcpToolsPath: fakeMcpToolsPath,
+          isPackaged: false,
+          resourcesPath: '',
+          appPath: '',
+        },
+        {},
+      );
+      const identityCalls = [...infoSpy.mock.calls, ...warnSpy.mock.calls]
+        .map((call) => String(call[0]))
+        .filter((m) => m.includes('child identity'));
+      expect(identityCalls).toHaveLength(0);
+    } finally {
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });
