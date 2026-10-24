@@ -273,7 +273,7 @@ The T5 fix was verified (isolated harness: fresh daemon from the rebuilt dist �
 
 - agent-core **851 passed / 1 skipped** (67 files; +2 artifact-freshness) · daemon **386 passed** (30 files; +5 breadcrumbs/identity tests +1 daemon-bundle freshness; dist rebuilt so the freshness assertions hold against the current bundle) · dev-browser-mcp in-package **116/116** · dev-browser in-package unchanged (36/37 parallel, relay flake documented) · typecheck 5/5 · eslint 0 errors / 3 pre-existing warnings · prettier clean.
 
-### §5.5 Manual verification procedure (user-run; T5 stays NOT-fully-verified until then)
+### §5.5 Manual verification procedure (user-run; executed 2026-10-23/24 — see §5.6)
 
 1. From the repo root: `pnpm --filter @accomplish_ai/agent-core build && pnpm --filter @accomplish/daemon build && pnpm --filter @accomplish/desktop build:mcp-tools:dev` (idempotent; ensures every artifact the unit loads is current).
 2. `systemctl --user restart accomplish-fox-daemon.service` — the REQUIRED deployment step (pid 3945 was 9 h 18 m old; any restart loads the new bundle).
@@ -282,6 +282,10 @@ The T5 fix was verified (isolated harness: fresh daemon from the rebuilt dist �
 4. Preview panel in Firefox must show the agent's live navigation; negative check: `journalctl … | grep "identity divergence"` must NOT fire; the child canary warning must be absent from new opencode logs (`…/opencode/log/`).
 5. Resident sidecar leftovers (older `about:blank`/task pages) are harmless for new tasks — they share no key; nothing needs restarting on the sidecar.
 
-### §5.6 T5 status
+### §5.6 T5 status — **PASSED: real-Firefox acceptance confirmed by the user (2026-10-23/24, task `task_1792814312690`)**
 
-Code verified end-to-end (harness + suites + artifact checks); **NOT marked user-verified** pending the §5.5 procedure. Remaining watch item: none known on the seam itself; deployment staleness is now loud (canary + journald WARN/INFO + artifact tests).
+The user executed the §5.5 procedure (rebuild → `systemctl --user restart accomplish-fox-daemon.service` at 23:58:14, new daemon pid 439523) and ran a new task navigating to the IANA About page. **User confirmation:** the task completed successfully, the agent reported the main heading "About IANA", and **the Browser Preview displayed the actual IANA webpage rather than a blank tab — matching the agent's navigation** (the M6 plan §7.9 condition re-verified; the M5 §23.5#1 directive is closed).
+
+Live corroboration (read-only journald, same-user): at 23:58:33 the daemon emitted the §5.3-2 positive breadcrumb **twice** (start + resume config generations): `[OpenCode Config] dev-browser-mcp child identity threaded: ACCOMPLISH_TASK_ID=task_1792814312690 (M6-A T5 preview seam)`; the §5.3-1 divergence WARN **never fired**. Both negative checks clean.
+
+**T5 fully verified**: harness + suites + artifact checks + production-configuration user acceptance all green. No known remaining seam limitations (watch items unchanged: relay.test.ts parallel-run flake; rebuild-before-restart discipline now guarded by artifact tests + runtime breadcrumbs).
