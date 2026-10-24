@@ -24,6 +24,8 @@ export function clearScopedTaskState(
     | 'currentTask'
     | 'isLoading'
     | 'permissionRequests'
+    | 'restoredRequestIds'
+    | 'permissionRequestErrors'
     | 'setupProgressTaskId'
     | 'startupStageTaskId'
     | 'todosTaskId'
@@ -43,6 +45,14 @@ export function clearScopedTaskState(
   if (taskId in state.permissionRequests) {
     const { [taskId]: _, ...rest } = state.permissionRequests;
     nextState.permissionRequests = rest;
+  }
+  if (taskId in state.restoredRequestIds) {
+    const { [taskId]: _, ...rest } = state.restoredRequestIds;
+    nextState.restoredRequestIds = rest;
+  }
+  if (taskId in state.permissionRequestErrors) {
+    const { [taskId]: _, ...rest } = state.permissionRequestErrors;
+    nextState.permissionRequestErrors = rest;
   }
 
   if (state.setupProgressTaskId === taskId) {
@@ -80,6 +90,8 @@ export function clearAllTaskScopedState(
     isLoading: false,
     error: null,
     permissionRequests: {},
+    restoredRequestIds: {},
+    permissionRequestErrors: {},
     setupProgress: null,
     setupProgressTaskId: null,
     setupDownloadStep: 1,

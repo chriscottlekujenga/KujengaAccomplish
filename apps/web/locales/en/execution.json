@@ -7,7 +7,9 @@
     "cancelled": "Cancelled",
     "stopped": "Stopped",
     "pending": "Pending",
-    "waiting_permission": "Waiting for permission"
+    "waiting_permission": "Waiting for permission",
+    "waiting_for_user": "Needs your reply",
+    "resuming": "Resuming"
   },
   "waiting": {
     "title": "Waiting for another task",
@@ -67,6 +69,21 @@
       "create": "CREATE",
       "rename": "RENAME",
       "move": "MOVE"
+    },
+    "assistance": {
+      "title": "Human assistance required",
+      "explanation": "The agent paused at a human-verification gate — such as a login wall, CAPTCHA, or two-factor check. Verification is never bypassed or automated: only you can complete this step, and your reply lets the task continue.",
+      "waiting": "Waiting for your reply",
+      "verification": "You are the only one who can act",
+      "restoredHint": "Restored after a reconnect or restart — the task's context is preserved.",
+      "decline": "Decline",
+      "submit": "Submit reply"
+    },
+    "expired": {
+      "title": "This request can no longer be answered",
+      "body": "The request belonged to a previous session (reconnect or restart). For security, pending permission decisions are never replayed. Resume the task to continue — the agent will re-request anything it still needs.",
+      "resume": "Resume task",
+      "dismiss": "Dismiss"
     }
   },
   "browserInstall": {

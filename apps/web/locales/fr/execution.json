@@ -7,7 +7,9 @@
     "cancelled": "Annulé",
     "stopped": "Arrêté",
     "pending": "En attente",
-    "waiting_permission": "En attente de permission"
+    "waiting_permission": "En attente de permission",
+    "waiting_for_user": "Réponse nécessaire",
+    "resuming": "Reprise"
   },
   "waiting": {
     "title": "En attente d'une autre tâche",
@@ -61,6 +63,21 @@
       "create": "CRÉER",
       "rename": "RENOMMER",
       "move": "DÉPLACER"
+    },
+    "assistance": {
+      "title": "Assistance humaine requise",
+      "explanation": "L'agent s'est arrêté devant une barrière de vérification humaine — connexion, CAPTCHA ou authentification à deux facteurs. La vérification n'est jamais contournée ni automatisée : vous seul pouvez effectuer cette étape, et votre réponse permet de continuer.",
+      "waiting": "En attente de votre réponse",
+      "verification": "Vous êtes le seul à pouvoir agir",
+      "restoredHint": "Restaurée après une reconnexion ou un redémarrage — le contexte de la tâche est conservé.",
+      "decline": "Refuser",
+      "submit": "Envoyer la réponse"
+    },
+    "expired": {
+      "title": "Cette demande ne peut plus recevoir de réponse",
+      "body": "Elle appartient à une session précédente (reconnexion ou redémarrage). Par sécurité, les décisions de permission en attente ne sont jamais rejouées. Reprenez la tâche pour continuer — l'agent redemandera ce qui lui manque.",
+      "resume": "Reprendre la tâche",
+      "dismiss": "Fermer"
     }
   },
   "browserInstall": {

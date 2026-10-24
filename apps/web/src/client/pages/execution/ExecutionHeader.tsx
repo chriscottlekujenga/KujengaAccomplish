@@ -2,7 +2,15 @@ import type { TaskStatus } from '@accomplish_ai/agent-core';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
-import { XCircle, ArrowLeft, CheckCircle, Clock, Square, Hourglass } from '@phosphor-icons/react';
+import {
+  XCircle,
+  ArrowLeft,
+  CheckCircle,
+  Clock,
+  Square,
+  Hourglass,
+  CircleNotch,
+} from '@phosphor-icons/react';
 
 function StatusBadge({ status }: { status: TaskStatus }) {
   const { t } = useTranslation('execution');
@@ -63,6 +71,20 @@ function StatusBadge({ status }: { status: TaskStatus }) {
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 shrink-0">
           <Hourglass className="h-3 w-3" />
           {t('status.waiting_permission')}
+        </span>
+      );
+    case 'waiting_for_user':
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary shrink-0">
+          <Hourglass className="h-3 w-3" />
+          <span data-testid="execution-waiting-for-user-label">{t('status.waiting_for_user')}</span>
+        </span>
+      );
+    case 'resuming':
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground shrink-0">
+          <CircleNotch className="h-3 w-3 animate-spin" />
+          {t('status.resuming')}
         </span>
       );
     default:

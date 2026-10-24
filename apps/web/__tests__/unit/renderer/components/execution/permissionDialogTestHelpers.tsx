@@ -5,6 +5,7 @@
  */
 
 import { vi } from 'vitest';
+import { ASSISTANCE_QUESTION_HEADER } from '@accomplish_ai/agent-core/common';
 import type { PermissionRequest } from '@accomplish_ai/agent-core';
 
 // Mock framer-motion for simpler testing
@@ -71,4 +72,35 @@ export function createFilePermission(
     createdAt: new Date().toISOString(),
     ...overrides,
   } as PermissionRequest;
+}
+
+export function createQuestionRequest(
+  overrides: Partial<PermissionRequest> = {},
+): PermissionRequest {
+  return {
+    id: 'questionreq_1',
+    taskId: 'task-123',
+    type: 'question',
+    question: 'Which format do you want?',
+    header: 'Please clarify',
+    options: [{ label: 'CSV' }, { label: 'Markdown' }],
+    multiSelect: false,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  } as PermissionRequest;
+}
+
+export function createAssistanceRequest(
+  overrides: Partial<PermissionRequest> = {},
+): PermissionRequest {
+  return createQuestionRequest({
+    id: 'questionreq_assist',
+    header: ASSISTANCE_QUESTION_HEADER,
+    question: 'A CAPTCHA is blocking login at https://example.com/account — what should I do?',
+    options: [
+      { label: "I'll complete it — please wait", description: 'Solve it manually and reply' },
+      { label: 'Skip this verification', description: 'Continue without completing it' },
+    ],
+    ...overrides,
+  } as PermissionRequest);
 }

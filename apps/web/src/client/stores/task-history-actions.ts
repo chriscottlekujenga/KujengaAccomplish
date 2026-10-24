@@ -53,6 +53,9 @@ export function createTaskHistoryActions(set: SetFn, get: GetFn) {
       if (requestTrackedTask && !hasTrackedTask(latestState, taskId)) {
         return;
       }
+      if (task) {
+        get().restorePendingRequestFromTask(task);
+      }
       set({ currentTask: task, error: task ? null : 'Task not found' });
     },
 

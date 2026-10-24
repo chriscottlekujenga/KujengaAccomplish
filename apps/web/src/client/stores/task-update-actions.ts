@@ -128,15 +128,41 @@ export function createTaskUpdateActions(set: SetFn, _get: GetFn) {
     },
 
     updateTaskStatus: (taskId: string, status: TaskStatus) => {
-      set((state) => ({
-        tasks: state.tasks.map((task) =>
-          task.id === taskId ? { ...task, status, updatedAt: new Date().toISOString() } : task,
-        ),
-        currentTask:
-          state.currentTask?.id === taskId
-            ? { ...state.currentTask, status, updatedAt: new Date().toISOString() }
-            : state.currentTask,
-      }));
+      set((state) => {
+        // M6-A T3: a resumed turn (restored card answered, or the manual
+        // Resume affordance) releases the parked pending request — dismiss
+        // any card/explainer left over from the waiting state. A card is
+        // never legitimately displayed for a running/resuming task: the ask
+        // resolved before the task could continue.
+        const releasePendingCard =
+          (status === 'running' || status === 'resuming') && taskId in state.permissionRequests;
+        if (releasePendingCard) {
+          const { [taskId]: _, ...restRequests } = state.permissionRequests;
+          const { [taskId]: __, ...restRestored } = state.restoredRequestIds ?? {};
+          const { [taskId]: ___, ...restErrors } = state.permissionRequestErrors ?? {};
+          return {
+            tasks: state.tasks.map((task) =>
+              task.id === taskId ? { ...task, status, updatedAt: new Date().toISOString() } : task,
+            ),
+            currentTask:
+              state.currentTask?.id === taskId
+                ? { ...state.currentTask, status, updatedAt: new Date().toISOString() }
+                : state.currentTask,
+            permissionRequests: restRequests,
+            restoredRequestIds: restRestored,
+            permissionRequestErrors: restErrors,
+          };
+        }
+        return {
+          tasks: state.tasks.map((task) =>
+            task.id === taskId ? { ...task, status, updatedAt: new Date().toISOString() } : task,
+          ),
+          currentTask:
+            state.currentTask?.id === taskId
+              ? { ...state.currentTask, status, updatedAt: new Date().toISOString() }
+              : state.currentTask,
+        };
+      });
     },
 
     setTaskSummary: (taskId: string, summary: string) => {

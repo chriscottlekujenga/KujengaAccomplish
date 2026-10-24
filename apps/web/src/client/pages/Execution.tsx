@@ -152,6 +152,10 @@ export default function ExecutionPage() {
               isLoading={s.isLoading}
               permissionRequest={s.permissionRequest}
               onPermissionResponse={s.handlePermissionResponse}
+              pendingRequestStaleError={s.permissionRequestStaleError}
+              isRestoredPendingRequest={s.isRestoredPendingRequest}
+              onResumeTask={() => void s.handleContinue()}
+              onDismissRequestError={s.onDismissRequestError}
               currentTool={s.currentTool}
               currentToolInput={s.currentToolInput}
               startupStage={s.startupStage}

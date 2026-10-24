@@ -1,5 +1,9 @@
-import type { PermissionRequest, PermissionResponse } from '@accomplish_ai/agent-core/common';
+import type { PermissionRequest, PermissionResponse, Task } from '@accomplish_ai/agent-core/common';
 import { getAccomplish } from '../lib/accomplish';
+import {
+  isWaitingForHumanStatus,
+  pendingRequestToPermissionRequest,
+} from '../lib/assistance-requests';
 import type { TaskState } from './taskStore';
 import { hasTaskStateToken } from './task-state-helpers';
 
@@ -10,15 +14,61 @@ type GetFn = () => TaskState;
 export function createTaskPermissionActions(set: SetFn, get: GetFn) {
   return {
     setPermissionRequest: (request: PermissionRequest) => {
-      set((state) => ({
-        permissionRequests: { ...state.permissionRequests, [request.taskId]: request },
-      }));
+      set((state) => {
+        const { [request.taskId]: _, ...restRestored } = state.restoredRequestIds ?? {};
+        return {
+          permissionRequests: { ...state.permissionRequests, [request.taskId]: request },
+          restoredRequestIds: restRestored,
+        };
+      });
     },
 
     clearPermissionRequest: (taskId: string) => {
       set((state) => {
         const { [taskId]: _, ...rest } = state.permissionRequests;
-        return { permissionRequests: rest };
+        const { [taskId]: __, ...restRestored } = state.restoredRequestIds ?? {};
+        const { [taskId]: ___, ...restErrors } = state.permissionRequestErrors ?? {};
+        return {
+          permissionRequests: rest,
+          restoredRequestIds: restRestored,
+          permissionRequestErrors: restErrors,
+        };
+      });
+    },
+
+    /**
+     * M6-A T3: restore an unanswered question card from the persisted
+     * `pendingRequest` record after a page reload, gateway reconnect or
+     * daemon restart. One-shot read per task open — the record rides the
+     * already-allowlisted `task.get` payload, so no new RPC fan-out. A live
+     * `permission.request` notify always wins over the restored card.
+     */
+    restorePendingRequestFromTask: (task: Task) => {
+      const record = task.pendingRequest;
+      if (!record || !isWaitingForHumanStatus(task.status)) {
+        return;
+      }
+      const restored = pendingRequestToPermissionRequest(record, task.id);
+      if (!restored) {
+        return;
+      }
+      set((state) => {
+        if (state.permissionRequests[task.id]) {
+          return state;
+        }
+        const { [task.id]: _, ...restErrors } = state.permissionRequestErrors ?? {};
+        return {
+          permissionRequests: { ...state.permissionRequests, [task.id]: restored },
+          restoredRequestIds: { ...(state.restoredRequestIds ?? {}), [task.id]: true },
+          permissionRequestErrors: restErrors,
+        };
+      });
+    },
+
+    clearPermissionRequestError: (taskId: string) => {
+      set((state) => {
+        const { [taskId]: _, ...restErrors } = state.permissionRequestErrors ?? {};
+        return { permissionRequestErrors: restErrors };
       });
     },
 
@@ -32,7 +82,31 @@ export function createTaskPermissionActions(set: SetFn, get: GetFn) {
         message: 'UI permission response',
         context: { ...response },
       });
-      await accomplish.respondToPermission(response);
+      try {
+        await accomplish.respondToPermission(response);
+      } catch (err) {
+        // M6-A D5: a reply that reached a task with no live pending (daemon
+        // restarted, stale requestId, already resumed) is a daemon-side
+        // guardrail rejection. The card explains it instead of vanishing or
+        // replaying a decision — the record stays parked daemon-side.
+        const message = err instanceof Error ? err.message : String(err);
+        if (!hasTaskStateToken(get(), taskStateToken)) {
+          return;
+        }
+        set((state) => {
+          const existingRequest = state.permissionRequests[response.taskId];
+          if (!existingRequest || existingRequest.id !== requestId) {
+            return state;
+          }
+          return {
+            permissionRequestErrors: {
+              ...(state.permissionRequestErrors ?? {}),
+              [response.taskId]: message,
+            },
+          };
+        });
+        return;
+      }
       if (!hasTaskStateToken(get(), taskStateToken)) {
         return;
       }
@@ -43,7 +117,13 @@ export function createTaskPermissionActions(set: SetFn, get: GetFn) {
           return state;
         }
         const { [response.taskId]: _, ...rest } = state.permissionRequests;
-        return { permissionRequests: rest };
+        const { [response.taskId]: __, ...restRestored } = state.restoredRequestIds ?? {};
+        const { [response.taskId]: ___, ...restErrors } = state.permissionRequestErrors ?? {};
+        return {
+          permissionRequests: rest,
+          restoredRequestIds: restRestored,
+          permissionRequestErrors: restErrors,
+        };
       });
     },
   };

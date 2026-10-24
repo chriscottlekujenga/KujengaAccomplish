@@ -1,15 +1,18 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CaretDown } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
+import { CaretDown } from '@phosphor-icons/react';
 import { springs } from '../../lib/animations';
 import { isWaitingForUser } from '../../lib/waiting-detection';
 import { MessageBubble } from '../../components/execution/MessageList';
 import { ToolProgress } from '../../components/execution/ToolProgress';
 import { BrowserPreview } from '../../components/execution/BrowserPreview';
 import { PermissionDialog } from '../../components/execution/PermissionDialog';
+import { PendingRequestExplainer } from '../../components/execution/PendingRequestExplainer';
+import { Card } from '@/components/ui/card';
 import { TodoSidebar } from '../../components/TodoSidebar';
 import type { Task, PermissionRequest, TodoItem } from '@accomplish_ai/agent-core/common';
+import { isWaitingForHumanStatus } from '../../lib/assistance-requests';
 import type { StartupStageInfo } from './types';
 
 interface ConversationViewProps {
@@ -30,6 +33,10 @@ interface ConversationViewProps {
   isLoading: boolean;
   permissionRequest: PermissionRequest | null;
   onPermissionResponse: (allowed: boolean, selectedOpts?: string[], customText?: string) => void;
+  pendingRequestStaleError: string | null;
+  isRestoredPendingRequest: boolean;
+  onResumeTask: () => void;
+  onDismissRequestError: () => void;
   currentTool: string | null;
   currentToolInput: unknown;
   startupStage: StartupStageInfo | null;
@@ -60,6 +67,10 @@ export function ConversationView(props: ConversationViewProps) {
     isLoading,
     permissionRequest,
     onPermissionResponse,
+    pendingRequestStaleError,
+    isRestoredPendingRequest,
+    onResumeTask,
+    onDismissRequestError,
     currentTool,
     currentToolInput,
     startupStage,
@@ -68,6 +79,15 @@ export function ConversationView(props: ConversationViewProps) {
     todos,
     todosTaskId,
   } = props;
+
+  // M6-A T3: a task parked on a human reply with NO displayable card —
+  // permission-kind rows (their contents are never restored, plan D5/D4)
+  // or pre-M6 rows without a persisted record. The notice explains the
+  // replay-discipline and offers the existing resume affordance.
+  const showPendingRequestNotice =
+    !permissionRequest &&
+    isWaitingForHumanStatus(currentTask.status) &&
+    !!currentTask.pendingRequest;
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -128,10 +148,27 @@ export function ConversationView(props: ConversationViewProps) {
           {taskId && <BrowserPreview taskId={taskId} currentTool={currentTool} />}
 
           <AnimatePresence>
+            {showPendingRequestNotice && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={springs.gentle}
+                data-testid="pending-request-notice"
+              >
+                <Card className="p-4 shadow-xs">
+                  <PendingRequestExplainer onResume={onResumeTask} />
+                </Card>
+              </motion.div>
+            )}
             {permissionRequest && (
               <PermissionDialog
                 permissionRequest={permissionRequest}
                 onRespond={onPermissionResponse}
+                isRestored={isRestoredPendingRequest}
+                pendingRequestError={pendingRequestStaleError}
+                onResume={onResumeTask}
+                onDismissError={onDismissRequestError}
               />
             )}
           </AnimatePresence>

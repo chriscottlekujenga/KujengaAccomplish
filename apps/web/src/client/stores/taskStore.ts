@@ -40,6 +40,8 @@ export interface TaskState {
   addFavorite: (taskId: string) => Promise<void>;
   removeFavorite: (taskId: string) => Promise<void>;
   permissionRequests: Record<string, PermissionRequest>;
+  restoredRequestIds: Record<string, boolean>;
+  permissionRequestErrors: Record<string, string | null>;
   setupProgress: string | null;
   setupProgressTaskId: string | null;
   setupDownloadStep: number;
@@ -71,6 +73,8 @@ export interface TaskState {
   interruptTask: () => Promise<void>;
   setPermissionRequest: (request: PermissionRequest) => void;
   clearPermissionRequest: (taskId: string) => void;
+  restorePendingRequestFromTask: (task: Task) => void;
+  clearPermissionRequestError: (taskId: string) => void;
   respondToPermission: (response: PermissionResponse) => Promise<void>;
   addTaskUpdate: (event: TaskUpdateEvent) => void;
   addTaskUpdateBatch: (event: TaskUpdateBatchEvent) => void;
@@ -96,6 +100,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   favorites: [],
   favoritesLoaded: false,
   permissionRequests: {},
+  restoredRequestIds: {},
+  permissionRequestErrors: {},
   setupProgress: null,
   setupProgressTaskId: null,
   setupDownloadStep: 1,

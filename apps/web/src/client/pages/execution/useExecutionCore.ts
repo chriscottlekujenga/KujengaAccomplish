@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { PROMPT_DEFAULT_MAX_LENGTH } from '@accomplish_ai/agent-core/common';
@@ -44,6 +44,9 @@ export function useExecutionCore() {
     updateTaskStatus,
     setPermissionRequest,
     permissionRequests,
+    restoredRequestIds,
+    permissionRequestErrors,
+    clearPermissionRequestError,
     respondToPermission,
     sendFollowUp,
     interruptTask,
@@ -111,6 +114,13 @@ export function useExecutionCore() {
   }, [currentTask?.id, currentTask?.messages?.length, scroll.scrollToBottom, scroll.isAtBottom]);
 
   const permissionRequest = (id ? permissionRequests[id] : undefined) ?? null;
+  const permissionRequestStaleError = (id ? permissionRequestErrors[id] : undefined) ?? null;
+  const isRestoredPendingRequest = (id ? restoredRequestIds[id] : undefined) ?? false;
+  const onDismissRequestError = useCallback(() => {
+    if (id) {
+      clearPermissionRequestError(id);
+    }
+  }, [id, clearPermissionRequestError]);
   const isComplete = ['completed', 'failed', 'cancelled', 'interrupted'].includes(
     currentTask?.status ?? '',
   );
@@ -196,6 +206,10 @@ export function useExecutionCore() {
     isFollowUpOverLimit,
     // scroll
     ...scroll,
+    // assistance-card restoration state (M6-A T3)
+    permissionRequestStaleError,
+    isRestoredPendingRequest,
+    onDismissRequestError,
     // debug
     ...debug,
   };

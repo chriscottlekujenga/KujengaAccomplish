@@ -7,7 +7,9 @@
     "cancelled": "已取消",
     "stopped": "已停止",
     "pending": "待处理",
-    "waiting_permission": "等待权限"
+    "waiting_permission": "等待权限",
+    "waiting_for_user": "等待你的回复",
+    "resuming": "恢复中"
   },
   "waiting": {
     "title": "等待其他任务完成",
@@ -63,7 +65,22 @@
       "move": "移动"
     },
     "enterDifferentOption": "输入其他选项...",
-    "cannotBeUndone": "此操作无法撤销。"
+    "cannotBeUndone": "此操作无法撤销。",
+    "assistance": {
+      "title": "需要人工协助",
+      "explanation": "任务在需要人工验证的环节暂停——例如登录墙、验证码或双因素认证。验证永远不会被绕过或自动完成：只有你能完成这一步，你的回复将让任务继续执行。",
+      "waiting": "等待你的回复",
+      "verification": "只有你可以进行此操作",
+      "restoredHint": "已在重新连接或重启后恢复——任务上下文已保留。",
+      "decline": "拒绝",
+      "submit": "提交回复"
+    },
+    "expired": {
+      "title": "该请求已无法作答",
+      "body": "该请求属于上一次会话（重新连接或重启）。出于安全考虑，未完成的权限决定永不会重放。请恢复任务以继续——智能体会重新请求仍需要的内容。",
+      "resume": "恢复任务",
+      "dismiss": "关闭"
+    }
   },
   "browserInstall": {
     "title": "Chrome 未安装",
