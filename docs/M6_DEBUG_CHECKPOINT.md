@@ -233,3 +233,55 @@ Harness env contract (T7 production parity): daemon spawned with `XDG_DATA_HOME=
 - The transient OAuth path's opencode child (if it ever invoked a browser tool) would legitimately run under the silent standalone `default` identity; no production path invokes browser tools during OAuth today.
 - Real-Firefox headful preview rendering (the user-visible panel showing live navigation) is the T7 manual item 9 — the harness proves the target identity; pixel-level verification in the real UI remains human-confirmed per M6 plan §7.9.
 - The in-package relay flake (M5 §23.5#3) is unchanged and still out of scope.
+
+## §5 — M6-A T5 defect: failed real-Firefox acceptance — stale production daemon (2026-10-24)
+
+### §5.1 The failure and the pipeline trace
+
+**User report:** a real task ("Navigate to https://www.iana.org/about and tell me the main heading") completed successfully ("About IANA"), but the Firefox Browser Preview showed a **plain white screen the whole task** with the green Live indicator.
+
+**End-to-end trace (every stage verified healthy except writer identity):** agent CDP actions → sidecar registry (name-keyed; unchanged machinery) → daemon `DevBrowserService.captureFrame` (openPreviewPage ensure → GET / → CDP attach + `Page.captureScreenshot`) → host gateway `devBrowser.captureFrame` (allowlisted) → web shim 750 ms poll fan-out (`accomplish-http.ts` `previewCaptureOnce` → `dispatchPreviewFrame`) → component `handleFrame` → `imgRef.src = data:image/jpeg;base64,…` (useBrowserPreview.ts). Delivery and rendering were HEALTHY (green Live, zero 3-miss client-log breadcrumbs): the component painted exactly the frames the daemon sent — **white frames of a blank tab**. Frames were blank at CAPTURE; not lost in transport, not mis-rendered.
+
+### §5.2 Root cause — production daemon kept pre-T5 in-memory code (a live process never reloads a rebuilt dist)
+
+The T5 fix was verified (isolated harness: fresh daemon from the rebuilt dist → single registry page, capture targetId === agent targetId) but **never executed in production**:
+
+| Evidence (read-only, same-user)                                                                                                                     | Finding                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ps -o lstart= -p 3945`                                                                                                                             | production daemon **started Fri Oct 23 14:32:45** — M5-T7 era; ran continuously through the M6 task                                                                                                                                                                               |
+| dist mtimes                                                                                                                                         | T5 artifacts built **23:30:55–57**; commits `2263d6f`/`5ff9ed2` at **23:46** — ~9 h AFTER the daemon booted. Node loaded its modules once at boot; the rebuilt dist never reached the running process                                                                             |
+| Generated config artifact `~/.local/share/Accomplish/opencode/opencode-task_1792813755767.json` (user's task, written 23:49:15 by the stale daemon) | `mcp.dev-browser-mcp.environment` = `{ACCOMPLISH_DEV_BROWSER_TOKEN, DEV_BROWSER_PORT}` — **NO `ACCOMPLISH_TASK_ID`** — the pre-T5 two-writer split regenerated verbatim                                                                                                           |
+| opencode child log `opencode/log/2026-10-24T034916.log:113`                                                                                         | **the T5 fail-loud canary FIRED** in the real run: `[dev-browser-mcp] WARNING: ACCOMPLISH_DEV_BROWSER_TOKEN is set but ACCOMPLISH_TASK_ID is missing…` (+`:117` `ACCOMPLISH_TASK_ID: (not set)`) — the child fell back to `default-main` exactly as designed for defense-in-depth |
+| Production sidecar CDP `/json/list` (token-free, read-only)                                                                                         | residue: **2 × `about:blank` + `'About us'` https://www.iana.org/about** — the blank captured tab(s) and the agent's actual page, still parked                                                                                                                                    |
+| journald `accomplish-fox-daemon.service`                                                                                                            | only `[Browser] Dev-browser server already running (token verified)` — attaching the (unchanged, 20:23-built) sidecar; sidecar code is NOT part of the fix                                                                                                                        |
+
+**Verdict:** T5's code is correct and was proven correct live in the harness; the deployment seam — _rebuild-without-restart_ — is a NEW defect class the harness cannot see by construction (fresh process, fresh dist). The user task at 23:49 ran entirely under pre-T5 identity semantics. Frames blank at capture; transport/render pipeline exonerated.
+
+### §5.3 What landed (instrumentation + regression tests; no behavior change to browser isolation)
+
+1. **Daemon runtime breadcrumbs (`DevBrowserService.captureFrame`) — journald now sees page identity:**
+   - per-tick `logger.debug` trail: taskId, page name, full registry name, targetId (8-char short form), frame **byte length**, duration. No frame data, no URLs (M2 T4 pattern).
+   - **one-shot-per-task WARN** (`checkRegistryIdentityOnce`): at the first successful capture, one best-effort GET /pages; a `default-*` registry name beside the captured key is the stale-build fingerprint → loud divergence WARN with a rebuild+restart hint. At most one GET per task per daemon process — no steady-state fan-out; capture stays self-healing; leftover older-task pages are correctly NOT flagged (legit multi-page/other-task residue).
+2. **Daemon generation-time breadcrumb (`task-config-builder.verifyDevBrowserChildIdentity`)**: after `generateConfig`, with a real ctx taskId and a token-bearing browser env, the threaded identity logs INFO (`…child identity threaded: ACCOMPLISH_TASK_ID=<taskId>…` — the user-visible restart-confirmation line); a token present but identity missing logs a LOUD WARN naming the build/restart remediation. Empty ctx (transient OAuth) emits nothing.
+3. **Regression tests reproducing the failure class:**
+   - `packages/agent-core/tests/unit/opencode/generator-dist-identity.test.ts` (2): compiled `dist/opencode/generator-mcp.js` (the module non-bundled consumers actually resolve — NOT the barrel) carries the ACCOMPLISH_TASK_ID threading; bundled `mcp-tools/dev-browser-mcp/dist/index.mjs` carries the identity reader + canary warning. Skip-with-message when artifacts are absent.
+   - `apps/daemon/__tests__/unit/daemon-dist-identity.test.ts` (1): the daemon bundle the production unit loads (`node apps/daemon/dist/index.js`) contains the threading + both new breadcrumb markers.
+   - `apps/daemon/__tests__/unit/task-config-builder.unit.test.ts` (+3): journald INFO fired with the exact taskId; **stale-build simulation** (hoisted hook strips ACCOMPLISH_TASK_ID from the REAL generator's output → the WARN fires with taskId + "RESTART the daemon" remediation, no INFO); empty ctx emits neither.
+   - `apps/daemon/__tests__/unit/dev-browser-service-capture.test.ts` (+2, registry-seeded stub): the divergence fingerprint (a seeded `default-main` beside `tsk_diag-main`) fires the WARN exactly once (older-task leftovers deliberately ignored) with context only; no divergence → silent.
+
+### §5.4 Suite evidence (this task's HEAD)
+
+- agent-core **851 passed / 1 skipped** (67 files; +2 artifact-freshness) · daemon **386 passed** (30 files; +5 breadcrumbs/identity tests +1 daemon-bundle freshness; dist rebuilt so the freshness assertions hold against the current bundle) · dev-browser-mcp in-package **116/116** · dev-browser in-package unchanged (36/37 parallel, relay flake documented) · typecheck 5/5 · eslint 0 errors / 3 pre-existing warnings · prettier clean.
+
+### §5.5 Manual verification procedure (user-run; T5 stays NOT-fully-verified until then)
+
+1. From the repo root: `pnpm --filter @accomplish_ai/agent-core build && pnpm --filter @accomplish/daemon build && pnpm --filter @accomplish/desktop build:mcp-tools:dev` (idempotent; ensures every artifact the unit loads is current).
+2. `systemctl --user restart accomplish-fox-daemon.service` — the REQUIRED deployment step (pid 3945 was 9 h 18 m old; any restart loads the new bundle).
+3. Confirm the fix is live BEFORE a task (journald positive breadcrumb is emitted at first task start): run one new browser task (e.g. the same iana.org/about prompt) and check
+   `journalctl --user -u accomplish-fox-daemon.service | grep "child identity threaded"` → expect `ACCOMPLISH_TASK_ID=task_<id>`.
+4. Preview panel in Firefox must show the agent's live navigation; negative check: `journalctl … | grep "identity divergence"` must NOT fire; the child canary warning must be absent from new opencode logs (`…/opencode/log/`).
+5. Resident sidecar leftovers (older `about:blank`/task pages) are harmless for new tasks — they share no key; nothing needs restarting on the sidecar.
+
+### §5.6 T5 status
+
+Code verified end-to-end (harness + suites + artifact checks); **NOT marked user-verified** pending the §5.5 procedure. Remaining watch item: none known on the seam itself; deployment staleness is now loud (canary + journald WARN/INFO + artifact tests).
