@@ -395,6 +395,86 @@ describe('gateway universal response scrubbing', () => {
     });
   });
 
+  // Phase 3 M6-A T4 (§5.4(b) scrubber counterpart for the ONE new M6 allowlist
+  // entry): task.getPendingRequest returns the persisted card-context record
+  // — daemon-side it is already redacted + length-capped and drops tool
+  // input/file paths (§6.4). A hypothetical daemon regression packing a
+  // secret-shaped field into the record (or echoing a page-pasted key into
+  // question text) must hit the universal scrubber at the boundary while the
+  // card fields the UI renders survive intact.
+  describe('task.getPendingRequest responses carry no secret material (M6-A T4)', () => {
+    let scrubGateway: GatewayHandle;
+
+    beforeAll(async () => {
+      scrubGateway = await createGateway({
+        port: 0,
+        token: TOKEN,
+        webDist: null,
+        rpc: createFakeRpc({
+          'task.getPendingRequest': {
+            pendingRequest: {
+              kind: 'question',
+              requestId: 'questionreq_1',
+              // Realistic persisted question text: the daemon redacted the
+              // pasted key at PARK time (§6.4 — `redact` replaces matches
+              // with the four-char prefix + [REDACTED]); the browser sees
+              // the marker, never the raw key.
+              question: 'A CAPTCHA blocks the site. The form asked for: sk-a[REDACTED]',
+              header: 'Human assistance required',
+              options: [{ label: "I'll complete it — please wait", apiKey: 'sk-ant-OPTION-LEAK' }],
+              multiSelect: false,
+              createdAt: '2026-10-23T00:00:00.000Z',
+              // Hypothetical daemon-regression fields — secret-shaped.
+              apiKey: 'sk-ant-RECORD-TOP-LEAK',
+              sessionToken: 'sk-session-RECORD-LEAK-FIELD',
+            },
+          },
+        }),
+      });
+    });
+
+    afterAll(async () => {
+      await scrubGateway.close();
+    });
+
+    it('strips secret-shaped fields anywhere inside the record, keeps card context intact', async () => {
+      const { body } = await postRpcOn(scrubGateway, 'task.getPendingRequest', {
+        taskId: 'tsk_1',
+      });
+      const json = JSON.stringify(body);
+      expect(json).not.toContain('sk-ant-RECORD-TOP-LEAK');
+      expect(json).not.toContain('sk-ant-OPTION-LEAK');
+      expect(json).not.toContain('sk-session-RECORD-LEAK-FIELD');
+      expect(json).not.toContain('"apiKey"');
+      expect(json).not.toContain('"sessionToken"');
+      // Card context the UI renders survives the scrub.
+      expect(json).toContain('"kind":"question"');
+      expect(json).toContain('"requestId":"questionreq_1"');
+      expect(json).toContain('"Human assistance required"');
+      expect(json).toContain('"I\'ll complete it');
+      expect(json).toContain('"multiSelect":false');
+      const result = body.result as {
+        pendingRequest: Record<string, unknown>;
+      };
+      expect(result.pendingRequest.createdAt).toBe('2026-10-23T00:00:00.000Z');
+    });
+
+    it('keeps the daemon-side redaction marker in question text — a raw credential never rides the wire', async () => {
+      // Paired redaction contract (§6.4): the daemon redacts credential
+      // shapes BEFORE persist (agent-core task-assistance suite proves the
+      // park write). This is the wire-level counterpart: the record reaches
+      // the browser with the [REDACTED] marker only — no raw sk- key.
+      const { body } = await postRpcOn(scrubGateway, 'task.getPendingRequest', {
+        taskId: 'tsk_1',
+      });
+      const json = JSON.stringify(body);
+      expect(json).toContain('sk-a[REDACTED]');
+      expect(json).toMatch(/\[REDACTED\]/);
+      const result = body.result as { pendingRequest: { question?: string } };
+      expect(result.pendingRequest.question).toContain('[REDACTED]');
+    });
+  });
+
   describe('M2 secret-bearing request params never reach the host log (§5.4(d))', () => {
     let logGateway: GatewayHandle;
     const lines: LogLine[] = [];

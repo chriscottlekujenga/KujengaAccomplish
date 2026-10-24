@@ -473,6 +473,111 @@ describe('gateway security', () => {
         await hostileGateway.close();
       });
     });
+
+    // Phase 3 M6-A T4 (§5.4-paired): task.getPendingRequest — the ONE new
+    // allowlist entry M6-A makes (security §6.2). Read-only pending-request
+    // restore for the assistance card; the wire response is
+    // { pendingRequest: <record|null> } and the scrubber proof for a
+    // hypothetical secret-shaped field lives in gateway-scrub-redaction.
+    // Same §5.4(d) pairing: reachable with a bearer token, hard-401 without.
+    describe('M6-A T4 task.getPendingRequest authorization', () => {
+      let pendingGateway: GatewayHandle;
+      let pendingRpc: ReturnType<typeof createFakeRpc>;
+
+      beforeAll(async () => {
+        pendingRpc = createFakeRpc({
+          'task.getPendingRequest': {
+            pendingRequest: {
+              kind: 'question',
+              requestId: 'questionreq_1',
+              question: 'A CAPTCHA is blocking the site',
+              header: 'Human assistance required',
+              options: [{ label: "I'll complete it — please wait" }],
+              multiSelect: false,
+              createdAt: '2026-10-23T00:00:00.000Z',
+            },
+          },
+        });
+        pendingGateway = await createGateway({
+          port: 0,
+          token: TOKEN,
+          webDist: null,
+          rpc: pendingRpc,
+        });
+      });
+
+      afterAll(async () => {
+        await pendingGateway.close();
+      });
+
+      it('proxies task.getPendingRequest for an authenticated caller', async () => {
+        const { status, body } = await postRpc(
+          rpcBody(1, 'task.getPendingRequest', { taskId: 'tsk_1' }),
+          { Authorization: `Bearer ${TOKEN}` },
+          pendingGateway.port,
+        );
+        expect(status).toBe(200);
+        expect(pendingRpc.calls.at(-1)?.method).toBe('task.getPendingRequest');
+        expect(pendingRpc.calls.at(-1)?.params).toEqual({ taskId: 'tsk_1' });
+        // §5.4(a) response-shape proof: exactly the documented wrapper — the
+        // record fields only, no tool input / file paths / secret material.
+        expect(body.result).toEqual({
+          pendingRequest: {
+            kind: 'question',
+            requestId: 'questionreq_1',
+            question: 'A CAPTCHA is blocking the site',
+            header: 'Human assistance required',
+            options: [{ label: "I'll complete it — please wait" }],
+            multiSelect: false,
+            createdAt: '2026-10-23T00:00:00.000Z',
+          },
+        });
+        expect(JSON.stringify(body)).not.toContain('"apiKey"');
+        expect(JSON.stringify(body)).not.toContain('toolInput');
+      });
+
+      it('requires the bearer token for task.getPendingRequest (401 without auth)', async () => {
+        const { status } = await postRpc(
+          rpcBody(1, 'task.getPendingRequest', { taskId: 'tsk_1' }),
+          {},
+          pendingGateway.port,
+        );
+        expect(status).toBe(401);
+      });
+
+      it('rejects task.getPendingRequest as allowlist-only even for a forged-policy mistake pairing it with secret reads', async () => {
+        const hostileGateway = await createGateway({
+          port: 0,
+          token: TOKEN,
+          webDist: null,
+          rpc: createFakeRpc(),
+          policySets: { allow: new Set([...RPC_METHOD_BLOCKLIST, 'task.getPendingRequest']) },
+        });
+        const { status } = await postRpc(
+          rpcBody(1, 'secrets.getApiKey', { provider: 'anthropic' }),
+          { Authorization: `Bearer ${TOKEN}` },
+          hostileGateway.port,
+        );
+        expect(status).toBe(403);
+        await hostileGateway.close();
+      });
+
+      it('relays the wrapper unchanged for any daemon answer (null record included)', async () => {
+        // The gateway is a neutral proxy for this read: whatever the daemon
+        // returns (record carrier or null carrier) crosses as-is — no
+        // unwrap/merge happens at the boundary.
+        const { status, body } = await postRpc(
+          rpcBody(2, 'task.getPendingRequest', { taskId: 'tsk_never' }),
+          { Authorization: `Bearer ${TOKEN}` },
+          pendingGateway.port,
+        );
+        expect(status).toBe(200);
+        expect(body.id).toBe(2);
+        expect(body.result).toEqual({
+          pendingRequest: expect.any(Object),
+        });
+      });
+    });
   });
 
   describe('Host and Origin validation', () => {

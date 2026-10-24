@@ -666,6 +666,27 @@ export function registerRpcMethods(services: RouteServices): void {
     }),
   );
   rpc.registerMethod(
+    'task.getPendingRequest',
+    // M6-A T4 (§5.4-paired with the allowlist entry): the dedicated
+    // pending-request read for the assistance card restore after a page
+    // reload, gateway reconnect or daemon restart. Read-only — the record is
+    // already redacted + length-capped at persist time (D4, §6.4) and never
+    // carries tool input, file paths or secret material.
+    // RESPONSE SHAPE (§5.4(a)):
+    //   { taskId } → {
+    //     pendingRequest: {
+    //       kind: 'permission' | 'question',
+    //       requestId: string,
+    //       question?, header?, options?, multiSelect?, createdAt
+    //     } | null
+    //   } — null when the task is unknown, terminal, or not parked on a
+    //   human reply (a corrupt stored record also degrades to null).
+    safeHandler((params) => {
+      const validated = validate(taskIdSchema, params);
+      return Promise.resolve({ pendingRequest: storage.getTaskPendingRequest(validated.taskId) });
+    }),
+  );
+  rpc.registerMethod(
     'task.delete',
     safeHandler(async (params) => {
       const validated = validate(taskIdSchema, params);

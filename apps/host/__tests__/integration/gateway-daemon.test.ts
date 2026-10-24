@@ -245,6 +245,18 @@ describe('gateway ↔ real daemon integration', () => {
     expect(after.app.theme).toBe(target);
   });
 
+  it('answers task.getPendingRequest with the null record carrier on a fresh daemon (M6-A T4)', async () => {
+    // Route-level live proof: the ONE new M6-A allowlist entry proxies the
+    // real daemon and answers the documented §5.4(a) shape. Nothing is
+    // parked on a fresh data dir, so the carrier is null — this also proves
+    // the route degrades to null instead of throwing (parity with the
+    // daemon handler's read) and cannot mutate anything (unknown task).
+    const result = (await rpc('task.getPendingRequest', {
+      taskId: 'tsk_never_existed',
+    })) as { pendingRequest: unknown };
+    expect(result).toEqual({ pendingRequest: null });
+  });
+
   it('persists the gateway token file with restrictive permissions', () => {
     const tokenFile = path.join(dataDir, 'gateway-token');
     expect(existsSync(tokenFile)).toBe(true);

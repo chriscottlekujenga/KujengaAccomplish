@@ -1,7 +1,7 @@
 # API Parity Inventory — Firefox migration (Phase 3)
 
 > **Generated file — do not hand-edit.** Regenerate with `node apps/host/scripts/parity-audit.mjs` from the repo root (deterministic; same sources → same bytes).
-> Generated: 2026-10-22 (run date)
+> Generated: 2026-10-23 (run date)
 
 Sources parsed at generation time:
 
@@ -30,25 +30,25 @@ Nestings are flattened: `gws.*` and `analytics.*` per sub-method; the namespace 
 
 | Measure                                                 | Value                                                          |
 | ------------------------------------------------------- | -------------------------------------------------------------- |
-| Declared AccomplishAPI entries                          | **249** (204 top-level methods + 8 gws._ + 37 analytics._)     |
-| Shim functional (implemented)                           | **141**                                                        |
+| Declared AccomplishAPI entries                          | **250** (205 top-level methods + 8 gws._ + 37 analytics._)     |
+| Shim functional (implemented)                           | **142**                                                        |
 | Shim no-op                                              | **45**                                                         |
 | Shim optional-absent                                    | **3**                                                          |
 | Shim unavailable                                        | **60**                                                         |
 | Shim-implemented not declared on AccomplishAPI (extras) | 2                                                              |
-| Gateway allowlist entries                               | **98**                                                         |
+| Gateway allowlist entries                               | **99**                                                         |
 | Gateway blocklist entries                               | 7                                                              |
-| Daemon registered methods                               | **137** (135 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
+| Daemon registered methods                               | **138** (136 daemon-routes.ts + 1 daemon/index.ts + 1 builtin) |
 | Daemon registered not allowlisted                       | 39                                                             |
 
 ### Reconciliation with plan §2.2 (measured vs known facts)
 
 Plan §2.2 (verified 2026-10-21) states: AccomplishAPI = 249 methods · shim implements 129 (7 no-op) · 120 unavailable · allowlist 62 · daemon exposes 125. The checked-in numbers below are THIS run's real measure; each line reconciles the two accountings or flags drift.
 
-- ✓ plan "129 implemented" = 141 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries + 10 T2 skills/connector-CRUD entries + 1 T3 file-attachment-drop entry (processDroppedFiles → host picker) + 4 T4 browser-preview entries (on-demand captureFrame poll ×4) and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
+- ✓ plan "129 implemented" = 142 functional + 45 no-op, where functional = 84 pre-T1b + 42 T1b-shim-wired entries + 10 T2 skills/connector-CRUD entries + 1 T3 file-attachment-drop entry (processDroppedFiles → host picker) + 4 T4 browser-preview entries (on-demand captureFrame poll ×4) + 1 M6-A T4 entry (getPendingRequest — pending-request restore read) and measured no-op 45 = 8 top-level no-ops + 37 analytics.\*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). Arithmetic matches.
 - ✓ plan "120 unavailable" = 60 unavailable + 3 optional-absent (browser-preview onBrowserNavigate/onBrowserStatus 2 + onWorkspaceDeleted), minus the 42 entries T1b promoted to implemented, the 10 entries T2 promoted (skills CRUD + connector CRUD), the 1 entry T3 promoted (processDroppedFiles via the host picker), and the 4 entries T4 promoted (browser-preview poll ×4). Plan's "GWS (8)" = the 8 gws.\* sub-methods (shim-side they throw while the parent namespace is absent). Arithmetic matches.
-- ✓ allowlist 98 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + 9 T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + 3 T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) + 1 T5 entry (task.stop — daemon-native stop, cancel-parity; no shim mapping) = 98 — matches the M2 expansion
-- ✓ daemon registered 137 (135 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) +1 T2 method (skills.addFromGitHub) +2 T4 methods (devBrowser.captureFrame, devBrowser.shutdown) = 137. Arithmetic matches.
+- ✓ allowlist 99 vs plan 62 + 21 M2 T1a entries + 2 T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + 9 T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + 3 T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) + 1 T5 entry (task.stop — daemon-native stop, cancel-parity; no shim mapping) + 1 M6-A T4 entry (task.getPendingRequest — pending-request restore read, §5.4-paired) = 99 — matches the M2+M6-A expansion
+- ✓ daemon registered 138 (136 daemon-routes.ts + 1 daemon/index.ts daemon.shutdown + 1 builtin daemon.ping) vs plan 125 = pre-M1 123 routes + shutdown + ping, +4 M1-internal methods (daemon.setClientType, daemon.setUiPresence, devBrowser.getPreviewInfo, devBrowser.openPreviewPage), +4 M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) +1 T1b method (provider.validateCredentials) +1 T2 method (skills.addFromGitHub) +2 T4 methods (devBrowser.captureFrame, devBrowser.shutdown) +1 M6-A T4 method (task.getPendingRequest) = 138. Arithmetic matches.
 
 ## Summary per domain
 
@@ -57,7 +57,7 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | Domain              | Entries | implemented | no-op | optional-absent | unavailable | allowlisted | registered-blocked | registered-blocklisted | unregistered | no-backing |
 | ------------------- | ------: | ----------: | ----: | --------------: | ----------: | ----------: | -----------------: | ---------------------: | -----------: | ---------: |
 | app-shell           |       9 |           6 |     3 |               0 |           0 |           0 |                  0 |                      0 |            0 |          9 |
-| tasks               |      14 |          14 |     0 |               0 |           0 |           8 |                  0 |                      0 |            0 |          6 |
+| tasks               |      15 |          15 |     0 |               0 |           0 |           9 |                  0 |                      0 |            0 |          6 |
 | session-permissions |       3 |           3 |     0 |               0 |           0 |           2 |                  0 |                      0 |            0 |          1 |
 | settings            |      19 |          19 |     0 |               0 |           0 |          14 |                  0 |                      0 |            0 |          2 |
 | provider-settings   |       9 |           9 |     0 |               0 |           0 |           7 |                  0 |                      0 |            0 |          1 |
@@ -83,7 +83,7 @@ Shim counts are per method entry; RPC counts are per DISTINCT backing RPC named 
 | build-capabilities  |       1 |           0 |     1 |               0 |           0 |           0 |                  0 |                      0 |            0 |          1 |
 | onboarding          |       2 |           2 |     0 |               0 |           0 |           2 |                  0 |                      0 |            0 |          0 |
 | opencode-cli        |       2 |           2 |     0 |               0 |           0 |           0 |                  0 |                      0 |            0 |          2 |
-| **TOTAL**           |     249 |         141 |    45 |               3 |          60 |          90 |                 12 |                      2 |            0 |        116 |
+| **TOTAL**           |     250 |         142 |    45 |               3 |          60 |          91 |                 12 |                      2 |            0 |        116 |
 
 ## Per-domain detail
 
@@ -105,24 +105,25 @@ Entries 9 — implemented 6 · no-op 3 · optional-absent 0 · unavailable 0 ｜
 
 ### tasks
 
-Entries 14 — implemented 14 · no-op 0 · optional-absent 0 · unavailable 0 ｜ RPC: allowlisted 8 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 6
+Entries 15 — implemented 15 · no-op 0 · optional-absent 0 · unavailable 0 ｜ RPC: allowlisted 9 · registered-blocked 0 · blocklisted 0 · unregistered 0 · no-backing 6
 
-| Method                | Shim status | Backing RPC         | RPC policy status | Note                                        |
-| --------------------- | ----------- | ------------------- | ----------------- | ------------------------------------------- |
-| `startTask`           | implemented | `task.start`        | allowlisted       |                                             |
-| `cancelTask`          | implemented | `task.cancel`       | allowlisted       |                                             |
-| `interruptTask`       | implemented | `task.interrupt`    | allowlisted       |                                             |
-| `getTask`             | implemented | `task.get`          | allowlisted       |                                             |
-| `listTasks`           | implemented | `task.list`         | allowlisted       |                                             |
-| `deleteTask`          | implemented | `task.delete`       | allowlisted       |                                             |
-| `clearTaskHistory`    | implemented | `task.clearHistory` | allowlisted       |                                             |
-| `getTodosForTask`     | implemented | `task.getTodos`     | allowlisted       |                                             |
-| `onTaskUpdate`        | implemented | —                   | —                 | WS notifications task.complete + task.error |
-| `onTaskUpdateBatch?`  | implemented | —                   | —                 | WS notification task.message                |
-| `onTaskProgress`      | implemented | —                   | —                 | WS notification task.progress               |
-| `onTaskStatusChange?` | implemented | —                   | —                 | WS notification task.statusChange           |
-| `onTaskSummary?`      | implemented | —                   | —                 | WS notification task.summary                |
-| `onTodoUpdate?`       | implemented | —                   | —                 | WS notification todo.update                 |
+| Method                | Shim status | Backing RPC              | RPC policy status | Note                                                                                                                              |
+| --------------------- | ----------- | ------------------------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `startTask`           | implemented | `task.start`             | allowlisted       |                                                                                                                                   |
+| `cancelTask`          | implemented | `task.cancel`            | allowlisted       |                                                                                                                                   |
+| `interruptTask`       | implemented | `task.interrupt`         | allowlisted       |                                                                                                                                   |
+| `getTask`             | implemented | `task.get`               | allowlisted       |                                                                                                                                   |
+| `listTasks`           | implemented | `task.list`              | allowlisted       |                                                                                                                                   |
+| `deleteTask`          | implemented | `task.delete`            | allowlisted       |                                                                                                                                   |
+| `clearTaskHistory`    | implemented | `task.clearHistory`      | allowlisted       |                                                                                                                                   |
+| `getPendingRequest?`  | implemented | `task.getPendingRequest` | allowlisted       | M6-A T4 pending-request restore read (§5.4-paired); the T3 restore path also rides the pendingRequest field on task.get/task.list |
+| `getTodosForTask`     | implemented | `task.getTodos`          | allowlisted       |                                                                                                                                   |
+| `onTaskUpdate`        | implemented | —                        | —                 | WS notifications task.complete + task.error                                                                                       |
+| `onTaskUpdateBatch?`  | implemented | —                        | —                 | WS notification task.message                                                                                                      |
+| `onTaskProgress`      | implemented | —                        | —                 | WS notification task.progress                                                                                                     |
+| `onTaskStatusChange?` | implemented | —                        | —                 | WS notification task.statusChange                                                                                                 |
+| `onTaskSummary?`      | implemented | —                        | —                 | WS notification task.summary                                                                                                      |
+| `onTodoUpdate?`       | implemented | —                        | —                 | WS notification todo.update                                                                                                       |
 
 ### session-permissions
 
@@ -562,4 +563,4 @@ Control events: `mcp-callback`, `daemon:disconnected`, `daemon:reconnected`, `da
 
 ## Appendix D — shim transport.call coverage (self-check)
 
-All 88 distinct `transport.call` targets are allowlisted — verified at generation time.
+All 89 distinct `transport.call` targets are allowlisted — verified at generation time.

@@ -1773,6 +1773,74 @@ describe('M2 T4 browser-preview poll shim (accomplish-http)', () => {
   });
 });
 
+describe('M6-A T4 pending-request restore shim (accomplish-http)', () => {
+  let calls: { method: string; params?: unknown }[];
+  let responses: Map<string, unknown>;
+  let transport: HttpTransport;
+
+  beforeEach(() => {
+    calls = [];
+    responses = new Map();
+    transport = {
+      call: async (method: string, params?: unknown) => {
+        calls.push({ method, params });
+        return responses.get(method) ?? null;
+      },
+      openExternal: async () => {},
+      pickFolder: async () => null,
+      pickFiles: async () => [],
+      health: async () => ({ ok: true, version: '0.1.0', platform: 'linux' }),
+      clientLog: vi.fn(async () => undefined),
+      cliStatus: async () => ({ installed: true, version: '1', installCommand: '' }),
+      autostartStatus: async () => ({ enabled: false, active: false }),
+    } as unknown as HttpTransport;
+  });
+
+  function makeApi() {
+    return createHttpAccomplishApi({
+      baseUrl: 'http://127.0.0.1:8123',
+      token: TEST_TOKEN,
+      transport,
+      events: new FakeEventStream() as unknown as GatewayEventStream,
+    });
+  }
+
+  it('maps getPendingRequest onto the dedicated route with the taskId param', async () => {
+    const api = makeApi();
+    await api.getPendingRequest?.('tsk_1');
+    expect(calls.at(-1)).toEqual({ method: 'task.getPendingRequest', params: { taskId: 'tsk_1' } });
+  });
+
+  it('unwraps the { pendingRequest } carrier to the record for UI consumers', async () => {
+    const record = {
+      kind: 'question',
+      requestId: 'questionreq_1',
+      question: 'A CAPTCHA is blocking the site',
+      header: 'Human assistance required',
+      options: [{ label: "I'll complete it — please wait" }],
+      multiSelect: false,
+      createdAt: '2026-10-23T00:00:00.000Z',
+    };
+    responses.set('task.getPendingRequest', { pendingRequest: record });
+    const api = makeApi();
+    await expect(api.getPendingRequest?.('tsk_1')).resolves.toEqual(record);
+  });
+
+  it('answers null for the null carrier (nothing parked / cleared / unknown task)', async () => {
+    const api = makeApi();
+    await expect(api.getPendingRequest?.('tsk_terminal')).resolves.toBeNull();
+  });
+
+  it('degrades a missing carrier to null without throwing, so a card restore never fails open', async () => {
+    // A (hypothetical) daemon that answers without the wrapper key — e.g. an
+    // RPC error object — degrades to null; the restorer then shows the
+    // explainer instead of crashing or seeding a bogus card.
+    responses.set('task.getPendingRequest', {});
+    const api = makeApi();
+    await expect(api.getPendingRequest?.('tsk_1')).resolves.toBeNull();
+  });
+});
+
 /** Build a loose matcher for thrown shim error messages. */
 function errMessageRe(fragment: string): RegExp {
   return new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));

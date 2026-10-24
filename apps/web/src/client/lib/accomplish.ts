@@ -44,6 +44,7 @@ import type {
   GoogleAccountStatus,
   OAuthProviderId,
   ConnectorAuthStatus,
+  PendingRequestRecord,
 } from '@accomplish_ai/agent-core/common';
 import { isHttpGatewayAvailable, tryCreateHttpAccomplishApi } from './accomplish-http';
 
@@ -80,6 +81,13 @@ export interface AccomplishAPI {
   listTasks(): Promise<Task[]>;
   deleteTask(taskId: string): Promise<void>;
   clearTaskHistory(): Promise<void>;
+
+  // Pending-assistance request restore (M6-A T4).
+  // Optional: only the Firefox-gateway shim implements it (daemon route
+  // task.getPendingRequest); the Electron preload is byte-frozen, so callers
+  // must guard (the T3 restore path reads the already-authorized task.get
+  // payload instead — this is the §6.9 one-shot read surface).
+  getPendingRequest?(taskId: string): Promise<PendingRequestRecord | null>;
 
   // Permission responses
   respondToPermission(response: PermissionResponse): Promise<void>;

@@ -1,4 +1,10 @@
-import type { PermissionRequest, PermissionResponse, Task } from '@accomplish_ai/agent-core/common';
+import type {
+  PendingRequestRecord,
+  PermissionRequest,
+  PermissionResponse,
+  Task,
+  TaskStatus,
+} from '@accomplish_ai/agent-core/common';
 import { getAccomplish } from '../lib/accomplish';
 import {
   isWaitingForHumanStatus,
@@ -9,6 +15,37 @@ import { hasTaskStateToken } from './task-state-helpers';
 
 type SetFn = (partial: Partial<TaskState> | ((state: TaskState) => Partial<TaskState>)) => void;
 type GetFn = () => TaskState;
+
+/**
+ * Shared card-seeding core (T3 restore + T4 route re-read). Only a
+ * question-kind record with a requestId can seed an answerable card; a live
+ * `permission.request` notify always wins over the persisted/remote record.
+ */
+function seedPendingRequestCard(
+  taskId: string,
+  status: TaskStatus,
+  record: PendingRequestRecord | undefined | null,
+  set: SetFn,
+): void {
+  if (!record || !isWaitingForHumanStatus(status)) {
+    return;
+  }
+  const restored = pendingRequestToPermissionRequest(record, taskId);
+  if (!restored) {
+    return;
+  }
+  set((state) => {
+    if (state.permissionRequests[taskId]) {
+      return state;
+    }
+    const { [taskId]: _, ...restErrors } = state.permissionRequestErrors ?? {};
+    return {
+      permissionRequests: { ...state.permissionRequests, [taskId]: restored },
+      restoredRequestIds: { ...(state.restoredRequestIds ?? {}), [taskId]: true },
+      permissionRequestErrors: restErrors,
+    };
+  });
+}
 
 /** Permission request/response slice of the task store. */
 export function createTaskPermissionActions(set: SetFn, get: GetFn) {
@@ -44,25 +81,46 @@ export function createTaskPermissionActions(set: SetFn, get: GetFn) {
      * `permission.request` notify always wins over the restored card.
      */
     restorePendingRequestFromTask: (task: Task) => {
-      const record = task.pendingRequest;
-      if (!record || !isWaitingForHumanStatus(task.status)) {
+      seedPendingRequestCard(task.id, task.status, task.pendingRequest, set);
+    },
+
+    /**
+     * M6-A T4 (§6.9): the assistance card re-reads on `task.statusChange`
+     * only — the one-shot consumer of the dedicated `task.getPendingRequest`
+     * route. Called from the execution page's statusChange subscription when
+     * the task parks at a waiting status and no card is displayed (a lost
+     * notify, or an ask that raced the task open). The re-read is guarded:
+     * the seed re-checks the CURRENT (post-await) store status so a task
+     * that resolved while the read was in flight never gets a stale card,
+     * a live notify always wins, and the Electron surface (method absent)
+     * gracefully does nothing.
+     */
+    refetchPendingRequest: async (taskId: string) => {
+      const accomplish = getAccomplish();
+      if (typeof accomplish.getPendingRequest !== 'function') {
         return;
       }
-      const restored = pendingRequestToPermissionRequest(record, task.id);
-      if (!restored) {
+      const taskStateToken = get()._taskStateToken;
+      let record: PendingRequestRecord | null = null;
+      try {
+        record = await accomplish.getPendingRequest(taskId);
+      } catch (err) {
+        // A failed restore read must never break the execution page: the
+        // card stays absent, the next statusChange (or task open) retries.
+        void accomplish.logEvent({
+          level: 'warn',
+          message: 'Pending-request refetch failed',
+          context: { taskId, error: String(err) },
+        });
         return;
       }
-      set((state) => {
-        if (state.permissionRequests[task.id]) {
-          return state;
-        }
-        const { [task.id]: _, ...restErrors } = state.permissionRequestErrors ?? {};
-        return {
-          permissionRequests: { ...state.permissionRequests, [task.id]: restored },
-          restoredRequestIds: { ...(state.restoredRequestIds ?? {}), [task.id]: true },
-          permissionRequestErrors: restErrors,
-        };
-      });
+      if (!record || !hasTaskStateToken(get(), taskStateToken)) {
+        return;
+      }
+      const freshStatus =
+        get().tasks.find((t) => t.id === taskId)?.status ??
+        (get().currentTask?.id === taskId ? get().currentTask?.status : undefined);
+      seedPendingRequestCard(taskId, freshStatus as TaskStatus, record, set);
     },
 
     clearPermissionRequestError: (taskId: string) => {

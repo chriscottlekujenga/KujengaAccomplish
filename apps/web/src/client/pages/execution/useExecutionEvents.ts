@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { TaskUpdateEvent } from '@accomplish_ai/agent-core/common';
 import type { DebugLogEntry } from '../../components/execution/DebugPanel';
 import { getAccomplish } from '../../lib/accomplish';
+import { isWaitingForHumanStatus } from '../../lib/assistance-requests';
 import { useTaskStore } from '../../stores/taskStore';
 
 type Accomplish = ReturnType<typeof getAccomplish>;
@@ -19,6 +20,7 @@ interface UseExecutionEventsOptions {
     status: import('@accomplish_ai/agent-core/common').TaskStatus,
   ) => void;
   setPermissionRequest: (req: import('@accomplish_ai/agent-core/common').PermissionRequest) => void;
+  refetchPendingRequest: (taskId: string) => Promise<void>;
   setCurrentTool: (tool: string | null) => void;
   setCurrentToolInput: (input: unknown) => void;
   clearStartupStage: (taskId: string) => void;
@@ -35,6 +37,7 @@ export function useExecutionEvents(opts: UseExecutionEventsOptions) {
     addTaskUpdateBatch,
     updateTaskStatus,
     setPermissionRequest,
+    refetchPendingRequest,
     setCurrentTool,
     setCurrentToolInput,
     clearStartupStage,
@@ -105,6 +108,16 @@ export function useExecutionEvents(opts: UseExecutionEventsOptions) {
     const unsubscribeStatusChange = accomplish.onTaskStatusChange?.((data) => {
       if (data.taskId === id) {
         updateTaskStatus(data.taskId, data.status);
+        // M6-A T4 (§6.9): the assistance card re-reads on task.statusChange
+        // only — when the task parks at a waiting status and no card is
+        // displayed (lost notify, restart mid-wait with a missed reconnect
+        // signal, or a race with the task open), the dedicated
+        // task.getPendingRequest route rebuilds it. Guarded internally:
+        // seeding never overwrites a live card and a live notify always
+        // wins (no fan-out — this fires on waiting transitions only).
+        if (isWaitingForHumanStatus(data.status)) {
+          void refetchPendingRequest(data.taskId);
+        }
       }
     });
 
@@ -145,5 +158,13 @@ export function useExecutionEvents(opts: UseExecutionEventsOptions) {
       unsubscribeDaemonReconnectFailed?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, loadTaskById, addTaskUpdate, addTaskUpdateBatch, updateTaskStatus, setPermissionRequest]);
+  }, [
+    id,
+    loadTaskById,
+    addTaskUpdate,
+    addTaskUpdateBatch,
+    updateTaskStatus,
+    setPermissionRequest,
+    refetchPendingRequest,
+  ]);
 }

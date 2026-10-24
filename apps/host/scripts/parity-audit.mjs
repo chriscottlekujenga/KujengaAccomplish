@@ -22,7 +22,9 @@
  *    `analytics: {…}`) are type-level fields, not methods, and are NOT counted
  *    as entries. The shim's absence of the optional `gws` namespace is tracked
  *    by OPTIONAL_NOT_SUPPORTED (self-checked). This accounting reproduces the
- *    plan §2.2 figures 249/129/120 exactly — see "Reconciliation" below.
+ *    plan §2.2 figures 249/129/120 — see "Reconciliation" below; M6-A T4
+ *    appends the 250th entry (getPendingRequest, M2-style delta in
+ *    Reconciliation, not a contract change).
  *
  * 2. Shim status per entry (exactly one of):
  *      - implemented      : key of the shim `core` object whose value
@@ -107,6 +109,13 @@
  *     task.stop (parity target = MCP-driven flows); it lands in Appendix C.
  *     Allowlist 97 → 98; the response is void (no `result` field) — paired
  *     authorization + shape tests in T5.
+ *   M6-A T4 (docs/PHASE_3_M6_PLAN.md §5 T4): declared surface 249 → 250 —
+ *     AccomplishAPI gains `getPendingRequest?` (tasks domain, optional:
+ *     the Electron preload is byte-frozen), implemented over the new daemon
+ *     route `task.getPendingRequest` (registered 137 → 138) with the
+ *     §5.4-paired policy authorization (allowlist 98 → 99, documented
+ *     response shape `{ pendingRequest: <record|null> }`; scrubber/no-secret,
+ *     401 and forged-policy tests paired in the host suite).
  *
  * ── Self-checks (exit 1 on failure) ────────────────────────────────────────
  *   - parse-unknown: any declared entry without a domain → loud failure.
@@ -258,6 +267,7 @@ const DOMAIN_METHODS = {
     'cancelTask',
     'interruptTask',
     'getTask',
+    'getPendingRequest',
     'listTasks',
     'deleteTask',
     'clearTaskHistory',
@@ -519,6 +529,10 @@ const SHIM_RPC_MAP = {
   cancelTask: { rpc: 'task.cancel' },
   interruptTask: { rpc: 'task.interrupt' },
   getTask: { rpc: 'task.get' },
+  getPendingRequest: {
+    rpc: 'task.getPendingRequest',
+    note: 'M6-A T4 pending-request restore read (§5.4-paired); the T3 restore path also rides the pendingRequest field on task.get/task.list',
+  },
   listTasks: { rpc: 'task.list' },
   deleteTask: { rpc: 'task.delete' },
   clearTaskHistory: { rpc: 'task.clearHistory' },
@@ -1369,6 +1383,16 @@ const EXPECTED = {
   // response is void (no result field). no-shim-wiring delta; no new daemon
   // RPC (registered).
   m2T5AllowlistDelta: 1,
+  // Phase 3 M6-A T4: the ONE new M6 allowlist entry (plan §6.2).
+  // AccomplishAPI gains getPendingRequest (tasks domain, optional — the
+  // Electron preload is byte-frozen); the shim implements it over the new
+  // daemon route task.getPendingRequest (registered) with the §5.4-paired
+  // policy authorization (documented response shape, scrubber/no-secret +
+  // 401 tests). The daemon registered count grows by exactly 1.
+  m6ADeclared: 1,
+  m6AImplemented: 1,
+  m6AAllowlistDelta: 1,
+  m6ARegistered: 1,
 };
 
 const SANITY_CHECKS = [
@@ -1377,6 +1401,14 @@ const SANITY_CHECKS = [
     when: (rows, ctx) => {
       const r = rows.find((x) => x.name === 'startTask');
       return r.shimStatus === 'implemented' && r.backingStatus === 'allowlisted';
+    },
+  },
+  {
+    label:
+      'getPendingRequest implemented over the allowlisted task.getPendingRequest route (M6-A T4)',
+    when: (rows) => {
+      const r = rows.find((x) => x.name === 'getPendingRequest');
+      return r.shimStatus === 'implemented' && r.backing === 'task.getPendingRequest';
     },
   },
   {
@@ -1638,7 +1670,7 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
   push('| Measure | Value |');
   push('| --- | --- |');
   push(
-    `| Declared AccomplishAPI entries | **${declaredTotal}** (204 top-level methods + 8 gws.* + 37 analytics.*) |`,
+    `| Declared AccomplishAPI entries | **${declaredTotal}** (${parsed.topLevel.length} top-level methods + 8 gws.* + 37 analytics.*) |`,
   );
   push(`| Shim functional (implemented) | **${totals.implemented}** |`);
   push(`| Shim no-op | **${totals['no-op']}** |`);
@@ -1671,7 +1703,8 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
       EXPECTED.m2T1bImplemented +
       EXPECTED.m2T2Implemented +
       EXPECTED.m2T3Implemented +
-      EXPECTED.m2T4Implemented;
+      EXPECTED.m2T4Implemented +
+      EXPECTED.m6AImplemented;
   check(
     implInvariant,
     `plan "129 implemented" = ${totals.implemented} functional + ${totals['no-op']} no-op, where ` +
@@ -1679,6 +1712,7 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
       `${EXPECTED.m2T2Implemented} T2 skills/connector-CRUD entries + ` +
       `${EXPECTED.m2T3Implemented} T3 file-attachment-drop entry (processDroppedFiles → host picker) + ` +
       `${EXPECTED.m2T4Implemented} T4 browser-preview entries (on-demand captureFrame poll ×4) ` +
+      `+ ${EXPECTED.m6AImplemented} M6-A T4 entry (getPendingRequest — pending-request restore read) ` +
       `and measured no-op ${totals['no-op']} = ` +
       `8 top-level no-ops + 37 analytics.*. Plan's parenthetical "(7 no-op)" = the deliberate top-level no-op ` +
       'family (treating onHuggingFaceDownloadProgress — also a no-op — under the same family). ' +
@@ -1708,7 +1742,8 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.m2T1bAllowlistDelta +
     EXPECTED.m2T2AllowlistDelta +
     EXPECTED.m2T4AllowlistDelta +
-    EXPECTED.m2T5AllowlistDelta;
+    EXPECTED.m2T5AllowlistDelta +
+    EXPECTED.m6AAllowlistDelta;
   const allowOk = parsed.allowlist.length === m2ExpectedAllowlist;
   check(
     allowOk,
@@ -1716,9 +1751,10 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
       `${EXPECTED.m2T1bAllowlistDelta} T1b entries (provider.validateCredentials + secrets.storeBedrockCredentials) + ` +
       `${EXPECTED.m2T2AllowlistDelta} T2 entries (skills.addFromPath/addFromGitHub/delete + connectors.list/upsert/setEnabled/setStatus/delete/deleteTokens) + ` +
       `${EXPECTED.m2T4AllowlistDelta} T4 entries (devBrowser.openPreviewPage promotes to allowlisted; captureFrame + shutdown new) + ` +
-      `${EXPECTED.m2T5AllowlistDelta} T5 entry (task.stop — daemon-native stop, cancel-parity; no shim mapping) = ` +
+      `${EXPECTED.m2T5AllowlistDelta} T5 entry (task.stop — daemon-native stop, cancel-parity; no shim mapping) + ` +
+      `${EXPECTED.m6AAllowlistDelta} M6-A T4 entry (task.getPendingRequest — pending-request restore read, §5.4-paired) = ` +
       `${m2ExpectedAllowlist} — ` +
-      `${allowOk ? 'matches the M2 expansion' : 'MISMATCH — allowlist changed since the M2 tripwire'}`,
+      `${allowOk ? 'matches the M2+M6-A expansion' : 'MISMATCH — allowlist changed since the M2 tripwire'}`,
   );
   const m2ExpectedRegistered =
     EXPECTED.planDaemonRegistered +
@@ -1726,7 +1762,8 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
     EXPECTED.m2T1aRegistered +
     EXPECTED.m2T1bRegistered +
     EXPECTED.m2T2Registered +
-    EXPECTED.m2T4Registered;
+    EXPECTED.m2T4Registered +
+    EXPECTED.m6ARegistered;
   const planDelta = parsed.registered.size;
   check(
     planDelta === m2ExpectedRegistered,
@@ -1736,7 +1773,8 @@ function renderMarkdown(agg, extras, parsed, classified, asOf) {
       `+${EXPECTED.m2T1aRegistered} M2 T1a methods (provider.testConnection, provider.fetchModels, provider.validateKey, secrets.listApiKeys) ` +
       `+${EXPECTED.m2T1bRegistered} T1b method (provider.validateCredentials) ` +
       `+${EXPECTED.m2T2Registered} T2 method (skills.addFromGitHub) ` +
-      `+${EXPECTED.m2T4Registered} T4 methods (devBrowser.captureFrame, devBrowser.shutdown) = ${m2ExpectedRegistered}. ` +
+      `+${EXPECTED.m2T4Registered} T4 methods (devBrowser.captureFrame, devBrowser.shutdown) ` +
+      `+${EXPECTED.m6ARegistered} M6-A T4 method (task.getPendingRequest) = ${m2ExpectedRegistered}. ` +
       (planDelta === m2ExpectedRegistered ? 'Arithmetic matches.' : 'MISMATCH — drift since plan.'),
   );
   push();
@@ -1955,9 +1993,9 @@ async function main() {
   }
 
   // totals must reconcile with the plan-derived facts (self-checked, loud when drifting)
-  if (declaredTotal !== EXPECTED.planDeclared) {
+  if (declaredTotal !== EXPECTED.planDeclared + EXPECTED.m6ADeclared) {
     console.error(
-      `parity-audit: NOTE: declared surface changed: ${declaredTotal} (plan documented ${EXPECTED.planDeclared})`,
+      `parity-audit: NOTE: declared surface changed: ${declaredTotal} (plan documented ${EXPECTED.planDeclared}; M6-A T4 adds ${EXPECTED.m6ADeclared})`,
     );
   }
 

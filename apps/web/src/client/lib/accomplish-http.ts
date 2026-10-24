@@ -42,7 +42,7 @@ import type {
   BrowserFramePayload,
 } from '@accomplish_ai/agent-core';
 import { sanitizeString, validateHttpUrl } from '@accomplish_ai/agent-core';
-import type { ScheduledTask } from '@accomplish_ai/agent-core/common';
+import type { ScheduledTask, PendingRequestRecord } from '@accomplish_ai/agent-core/common';
 import type { AccomplishAPI } from './accomplish';
 
 const TOKEN_STORAGE_KEY = 'accomplish.gateway-token';
@@ -722,6 +722,15 @@ export function createHttpAccomplishApi(options: CreateHttpAccomplishApiOptions)
     deleteTask: (taskId: string) => call('task.delete', { taskId }),
     clearTaskHistory: () => call('task.clearHistory'),
     getTodosForTask: (taskId: string) => call('task.getTodos', { taskId }) as Promise<TodoItem[]>,
+    // M6-A T4: the dedicated pending-request read (assistance-card restore
+    // after a reload/reconnect/restart). The daemon answers the documented
+    // { pendingRequest: <record|null> } carrier — the shim unwraps it so UI
+    // consumers get the record (or null) directly.
+    getPendingRequest: (taskId: string) =>
+      call('task.getPendingRequest', { taskId }).then((r) => {
+        const carrier = r as { pendingRequest?: PendingRequestRecord | null } | null;
+        return carrier?.pendingRequest ?? null;
+      }) as Promise<PendingRequestRecord | null>,
 
     // ── Session & permissions ──
     resumeSession: (

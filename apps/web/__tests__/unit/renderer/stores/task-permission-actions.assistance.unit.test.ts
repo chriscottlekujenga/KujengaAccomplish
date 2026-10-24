@@ -27,6 +27,7 @@ vi.mock('@/lib/accomplish', () => ({
 const accomplishMock = {
   logEvent: vi.fn().mockResolvedValue(undefined),
   respondToPermission: vi.fn().mockResolvedValue(undefined),
+  getPendingRequest: vi.fn().mockResolvedValue(null),
 };
 
 type MinimalState = Partial<TaskState> & { _taskStateToken: number };
@@ -54,6 +55,9 @@ function buildHarness(initial: MinimalState = {}) {
     permission: createTaskPermissionActions(set as never, get),
     updates: createTaskUpdateActions(set as never, get),
     getState: get,
+    setState: (partial: Partial<TaskState>) => {
+      state = { ...state, ...partial };
+    },
   };
 }
 
@@ -89,6 +93,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   accomplishMock.respondToPermission.mockReset();
   accomplishMock.respondToPermission.mockResolvedValue(undefined);
+  accomplishMock.getPendingRequest.mockReset();
+  accomplishMock.getPendingRequest.mockResolvedValue(null);
 });
 
 describe('restorePendingRequestFromTask', () => {
@@ -311,6 +317,129 @@ describe('updateTaskStatus releases the parked card on resume transitions', () =
     permission.restorePendingRequestFromTask(assistanceRecordTask());
     updates.updateTaskStatus('task-1', 'waiting_for_user');
     updates.updateTaskStatus('task-1', 'waiting_permission');
+
+    expect(getState().permissionRequests?.['task-1']).toBeTruthy();
+  });
+});
+
+describe('refetchPendingRequest — statusChange re-read over the dedicated route (M6-A T4)', () => {
+  const QUESTION_RECORD = {
+    kind: 'question',
+    requestId: 'questionreq_route',
+    question: 'A CAPTCHA blocks https://example.com/login',
+    header: ASSISTANCE_QUESTION_HEADER,
+    options: [{ label: "I'll complete it — please wait" }, { label: 'Skip this verification' }],
+    multiSelect: false,
+    createdAt: new Date().toISOString(),
+  } as const;
+
+  it('seeds the card from the task.getPendingRequest record when the task is parked', async () => {
+    accomplishMock.getPendingRequest.mockResolvedValue(QUESTION_RECORD);
+    const { permission, getState } = buildHarness({
+      tasks: [buildTask({ id: 'task-1', pendingRequest: undefined })],
+      currentTask: buildTask({ id: 'task-1', pendingRequest: undefined }),
+    });
+
+    await permission.refetchPendingRequest('task-1');
+
+    const state = getState();
+    expect(accomplishMock.getPendingRequest).toHaveBeenCalledWith('task-1');
+    expect(state.permissionRequests?.['task-1']?.id).toBe('questionreq_route');
+    expect(state.restoredRequestIds?.['task-1']).toBe(true);
+  });
+
+  it('a live notify always wins: no seed when a card already exists (live request raced the re-read)', async () => {
+    accomplishMock.getPendingRequest.mockResolvedValue(QUESTION_RECORD);
+    const { permission, getState } = buildHarness();
+    permission.setPermissionRequest({
+      id: 'questionreq_LIVE',
+      taskId: 'task-1',
+      type: 'question',
+      question: 'Real live ask',
+      createdAt: new Date().toISOString(),
+    });
+
+    await permission.refetchPendingRequest('task-1');
+
+    expect(getState().permissionRequests?.['task-1']?.id).toBe('questionreq_LIVE');
+    expect(getState().restoredRequestIds?.['task-1']).toBeUndefined();
+  });
+
+  it('never seeds for a task that resolved while the read was in flight (stale status guard)', async () => {
+    accomplishMock.getPendingRequest.mockResolvedValue(QUESTION_RECORD);
+    const { permission, getState } = buildHarness({
+      tasks: [{ ...buildTask({ id: 'task-1', pendingRequest: undefined }), status: 'failed' }],
+    });
+
+    await permission.refetchPendingRequest('task-1');
+
+    expect(getState().permissionRequests ?? {}).toEqual({});
+  });
+
+  it('a null record (cleared/terminal/unknown) seeds nothing', async () => {
+    const { permission, getState } = buildHarness();
+    await permission.refetchPendingRequest('task-1');
+    expect(getState().permissionRequests ?? {}).toEqual({});
+  });
+
+  it('gracefully no-ops on the Electron surface (method absent), never throwing', async () => {
+    const saved = accomplishMock.getPendingRequest;
+    const bare = accomplishMock as unknown as Record<string, unknown>;
+    delete bare.getPendingRequest;
+    try {
+      const { permission } = buildHarness();
+      await expect(permission.refetchPendingRequest('task-1')).resolves.toBeUndefined();
+      expect(accomplishMock.logEvent).not.toHaveBeenCalled();
+    } finally {
+      bare.getPendingRequest = saved;
+    }
+  });
+
+  it('records a failed read but never throws (execution page unaffected)', async () => {
+    accomplishMock.getPendingRequest.mockRejectedValueOnce(new Error('route failed'));
+    const { permission, getState } = buildHarness();
+    await expect(permission.refetchPendingRequest('task-1')).resolves.toBeUndefined();
+    expect(getState().permissionRequests ?? {}).toEqual({});
+    expect(accomplishMock.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ level: 'warn', message: 'Pending-request refetch failed' }),
+    );
+  });
+
+  it('drops a stale rejection error when the route re-seeds the card fresh', async () => {
+    accomplishMock.getPendingRequest.mockResolvedValue(QUESTION_RECORD);
+    const { permission, setState, getState } = buildHarness({
+      tasks: [buildTask({ id: 'task-1', pendingRequest: undefined })],
+    });
+    setState({ permissionRequestErrors: { 'task-1': 'stale' } });
+
+    await permission.refetchPendingRequest('task-1');
+
+    expect(getState().permissionRequestErrors?.['task-1']).toBeUndefined();
+    expect(getState().permissionRequests?.['task-1']?.id).toBe('questionreq_route');
+  });
+
+  it('a permission-kind record is never seeded from the route (same replay discipline as T3)', async () => {
+    accomplishMock.getPendingRequest.mockResolvedValue({
+      kind: 'permission',
+      requestId: 'filereq_dead',
+      createdAt: new Date().toISOString(),
+    });
+    const { permission, getState } = buildHarness({
+      tasks: [buildTask({ id: 'task-1', pendingRequest: undefined, status: 'waiting_permission' })],
+    });
+
+    await permission.refetchPendingRequest('task-1');
+
+    expect(getState().permissionRequests ?? {}).toEqual({});
+  });
+
+  it('uses the fresh statuses of tasks[] first, then currentTask', async () => {
+    accomplishMock.getPendingRequest.mockResolvedValue(QUESTION_RECORD);
+    const { permission, getState } = buildHarness({
+      tasks: [buildTask({ id: 'task-1', pendingRequest: undefined })],
+    });
+
+    await permission.refetchPendingRequest('task-1');
 
     expect(getState().permissionRequests?.['task-1']).toBeTruthy();
   });

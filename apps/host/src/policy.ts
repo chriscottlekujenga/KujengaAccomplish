@@ -40,6 +40,18 @@ export const RPC_METHOD_ALLOWLIST: readonly string[] = [
   'task.list',
   'task.status',
   'task.get',
+  // Pending-request read (Phase 3 M6-A T4 — the only new entry M6-A makes).
+  // §5.4(a) RESPONSE SHAPE:
+  //   { taskId } → { pendingRequest: { kind: 'permission' | 'question',
+  //   requestId, question?, header?, options?, multiSelect?, createdAt } | null }
+  // Restore source for the assistance card after a page reload, gateway
+  // reconnect or daemon restart: the daemon wrote the record redacted +
+  // length-capped at park time (§6.4) and never persists tool input, file
+  // paths or secret material; the universal scrubber still applies here as
+  // defense in depth. (The task.get/task.list payloads also carry the field;
+  // this dedicated route is the §6.9 "one-shot read per task open/reconnect,
+  // card re-read on task.statusChange only" surface.)
+  'task.getPendingRequest',
   'task.delete',
   'task.clearHistory',
   'task.getTodos',

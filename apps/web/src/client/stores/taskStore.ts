@@ -74,6 +74,7 @@ export interface TaskState {
   setPermissionRequest: (request: PermissionRequest) => void;
   clearPermissionRequest: (taskId: string) => void;
   restorePendingRequestFromTask: (task: Task) => void;
+  refetchPendingRequest: (taskId: string) => Promise<void>;
   clearPermissionRequestError: (taskId: string) => void;
   respondToPermission: (response: PermissionResponse) => Promise<void>;
   addTaskUpdate: (event: TaskUpdateEvent) => void;

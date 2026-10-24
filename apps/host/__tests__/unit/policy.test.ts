@@ -192,6 +192,30 @@ describe('checkMethodPolicy', () => {
     expect(RPC_METHOD_ALLOWLIST).toContain('task.interrupt');
   });
 
+  it('authorizes the M6-A T4 pending-request restore read (the single M6-A expansion)', () => {
+    // M6-A security §6.2: the allowlist grows EXACTLY +1 —
+    // task.getPendingRequest returns `{ pendingRequest: {kind, requestId,
+    // question?, header?, options?, multiSelect?, createdAt} | null }`, a
+    // redacted/capped card-context record (never tool input, file paths, or
+    // secret material; §6.4). Read-only — the reply path (permission.respond)
+    // was already allowlisted and its guardrails are untouched.
+    expect(RPC_METHOD_ALLOWLIST).toContain('task.getPendingRequest');
+    // The plaintext secret reads stay unauthorized/default-deny (M6-A adds
+    // NO blocklist edits, no permission-policy edits).
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('secrets.getApiKey');
+    expect(RPC_METHOD_ALLOWLIST).not.toContain('connectors.getTokens');
+    expect(RPC_METHOD_BLOCKLIST).toEqual([
+      'secrets.getApiKey',
+      'secrets.getAllApiKeys',
+      'secrets.getBedrockCredentials',
+      'connectors.getTokens',
+      'connectors.authEntry.read',
+      'gwsAccount.getToken',
+      'gwsAccount.refreshNow',
+    ]);
+    expect(checkMethodPolicy('task.getPendingRequest')).toEqual({ allowed: true });
+  });
+
   it('pins the allowlist count (M2 tripwire — every addition needs §5.4 tests)', () => {
     // 62 M1 baseline + 21 M2 provider/model-management + masked-listing
     // entries (Phase 3 M2 T1a) + 2 T1b bedrock/vertex credential entries
@@ -203,10 +227,15 @@ describe('checkMethodPolicy', () => {
     // from M1's internal set to allowlisted; captureFrame + shutdown new).
     // + 1 T5 entry (task.stop — cancel-parity for MCP-driven flows; response
     // is void, no shim mapping).
+    // + 1 M6-A T4 entry (task.getPendingRequest — pending-request restore
+    // read; response shape documented §5.4(a), scrubber/no-secret + 401
+    // tests paired in gateway.test.ts / gateway-scrub-redaction.test.ts).
+    // M6-A security §6.2: the allowlist grows EXACTLY +1; the blocklist,
+    // ACCOMPLISH_PERMISSION_POLICY and presence-gate stay untouched.
     // This pin is deliberate: growing it further requires the §5.4
     // expansion policy — documented response shape, scrubber/no-secret-field
     // proof, paired authorization + redaction tests.
-    expect(RPC_METHOD_ALLOWLIST).toHaveLength(98);
+    expect(RPC_METHOD_ALLOWLIST).toHaveLength(99);
     expect(RPC_METHOD_BLOCKLIST).toHaveLength(7);
   });
 
