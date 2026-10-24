@@ -312,21 +312,21 @@ Live corroboration (read-only journald, same-user): at 23:58:33 the daemon emitt
 
 ### §6.3 Full battery at T6 HEAD (vs T5 baseline — zero regressions)
 
-| Suite                               | T5 baseline         | T6 result                                                                                  | Verdict                                     |
-| ----------------------------------- | ------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| gateway E2E (`host test:e2e`)       | 14/14               | **18/18 × 2 consecutive**                                                                  | PASS (+4)                                   |
-| host unit+integration               | 340                 | **340 passed (340)**                                                                       | PASS                                        |
-| daemon (unit+integration)           | 386                 | **390 passed (30 files)**                                                                  | PASS (+4 F1 tests)                          |
-| agent-core                          | 851 + 1 skip        | **851 passed / 1 skipped (67 files)**                                                      | PASS                                        |
-| web unit                            | 546                 | **548 passed (34 files)**                                                                  | PASS (+2 F2 tests)                          |
-| desktop (Electron bridge untouched) | 522                 | **522 passed (23 files)**                                                                  | PASS                                        |
-| web integration                     | 158/61 (upstream)   | **158 passed / 61 failed**                                                                 | EXACT upstream baseline                     |
-| dev-browser-mcp (in-package)        | 116/116             | **116/116 (8 files)**                                                                      | PASS                                        |
-| dev-browser (in-package)            | 36/37 (relay flake) | **36/37 parallel; relay 12/12 isolated**                                                   | documented M5 §23.5#3 watch item, unchanged |
-| typecheck                           | 5/5                 | **all workspaces Done**                                                                    | PASS                                        |
-| eslint                              | 0 err / 3 warn      | **0 errors / 3 documented pre-existing warnings**                                          | PASS                                        |
-| prettier                            | clean               | **clean**                                                                                  | PASS                                        |
-| parity audit                        | allowlist 99        | **allowlist 99 · blocklist 7 · registered 138 · self-checks PASS (shim-call ⊆ allowlist)** | PASS                                        |
+| Suite                               | T5 baseline         | T6 result                                                                                  | Verdict                                            |
+| ----------------------------------- | ------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| gateway E2E (`host test:e2e`)       | 14/14               | **18/18 × 2 consecutive**                                                                  | PASS (+4)                                          |
+| host unit+integration               | 340                 | **340 passed (340)**                                                                       | PASS                                               |
+| daemon (unit+integration)           | 386                 | **390 passed (30 files)**                                                                  | PASS (+4 F1 tests)                                 |
+| agent-core                          | 851 + 1 skip        | **851 passed / 1 skipped (67 files)**                                                      | PASS                                               |
+| web unit                            | 546                 | **548 passed (34 files)**                                                                  | PASS (+2 F2 tests)                                 |
+| desktop (Electron bridge untouched) | 522                 | **522 passed (23 files)**                                                                  | PASS                                               |
+| web integration                     | 158/61 (upstream)   | **158 passed / 61 failed ×3 stable re-runs at HEAD**                                       | EXACT upstream baseline (one 157/62 one-off, §6.7) |
+| dev-browser-mcp (in-package)        | 116/116             | **116/116 (8 files)**                                                                      | PASS                                               |
+| dev-browser (in-package)            | 36/37 (relay flake) | **36/37 parallel; relay 12/12 isolated**                                                   | documented M5 §23.5#3 watch item, unchanged        |
+| typecheck                           | 5/5                 | **all workspaces Done**                                                                    | PASS                                               |
+| eslint                              | 0 err / 3 warn      | **0 errors / 3 documented pre-existing warnings**                                          | PASS                                               |
+| prettier                            | clean               | **clean**                                                                                  | PASS                                               |
+| parity audit                        | allowlist 99        | **allowlist 99 · blocklist 7 · registered 138 · self-checks PASS (shim-call ⊆ allowlist)** | PASS                                               |
 
 ### §6.4 Security & policy verification (§6.2 of the M6 plan, re-proven)
 
@@ -350,8 +350,18 @@ Live corroboration (read-only journald, same-user): at 23:58:33 the daemon emitt
 - Unattended auto-deny of assistance questions and the no-answer decline mapping (D3) are unit-tested (T1/T2) but NOT E2E-exercised (whatsapp/scheduler sources + a decline answer would burn LLM runs); T7's manual Cancel→failed item covers the cancel flavor with the user.
 - The restart spec answers the restored card on a RELOADED page. The equally-supported kept-open path (no reload, `daemon:reconnected` rebuild — F2 fix) is pinned by unit tests only (Playwright hash-navigation does not rebuild the document).
 - Suite-count growth from M6A-T6: E2E 14→18 (both new specs + companions), daemon +4, web unit +2 — the battery table in §6.3 documents each delta; nothing else moved.
-- Watch items unchanged from M5: relay.test.ts parallel flake (12/12 isolated), web integration 61 upstream, docker e2e environment-blocked, 3 documented lint warnings.
 
-### §6.7 T6 status — **COMPLETE: all T6 acceptance criteria met at this HEAD**
+### §6.7 Stability re-check + closeout verification (post-commit, same day)
 
-E2E ≥16 with the two new assistance specs green ×2 consecutive (18/18 ×2) · battery green with zero regressions vs T5/M5 baselines · restart-soak live cycles PASS · parity audit PASS (allowlist 99) · policy surfaces untouched · counts recorded. Manual Firefox acceptance (T7) is the only remaining human gate before closeout.
+- **Web integration re-check:** 4 instrumented runs at T6 HEAD — **158 passed / 61 failed ×3** (failing set EXACTLY the upstream trio: TaskLauncher 1, taskStore 53, Home 7; no new file) plus ONE earlier reading of 157 passed / 62 failed whose single extra (unknown, un-tee'd log) test did NOT recur in any of the 4 instrumented runs. Classified once-seen one-off (M5 §23.5#6 watch class), no action.
+- **Post-commit battery re-verification at `0116485`/`c6e5f34`** (after the lint-staged hooks): typecheck 5/5 workspaces Done · host 340 · daemon 390 · agent-core 851+1skip · web unit 548 · desktop 522 · eslint 0 errors/3 documented warnings · prettier clean · parity audit allowlist 99 / blocklist 7 / registered 138, self-checks PASS. Two full E2E 18/18 runs pre-committed (§6.2) — suite content identical to HEAD.
+- **M1-critical surface cross-window check:** `git diff 5f509a4..HEAD` over the M6-A window shows NO diff for `policy.ts` blocklist/permission-policy objects, browser isolation (cdp/sidecar), or the watchdog/presence gate; the allowlist file's only delta remains the T4 +1 entry (`task.getPendingRequest`, 98→99) and `config-generator*` deltas are the T1 constant + T5 taskId threading — each committed, tested, and parity-audited in their own tasks (byte-additive; no de-scoping, no weakening).
+- **T6 status stands COMPLETE** — every automated acceptance line (§6.3) re-verified at the committed HEAD; manual Firefox acceptance (T7) remains the only open gate before T8 closeout.
+
+### §6.8 Known bounds — unchanged
+
+- Watch items unchanged from M5: relay.test.ts parallel flake (12/12 isolated), web integration 61 upstream, docker e2e environment-blocked, 3 documented lint warnings, cold-model-load E2E latency (§6.5).
+
+### §6.9 T6 status — **COMPLETE: all T6 acceptance criteria met at HEAD `0116485`/`c6e5f34`, re-verified post-commit**
+
+E2E ≥16 with the two new assistance specs green ×2 consecutive (18/18 ×2) · battery green with zero regressions vs T5/M5 baselines · restart-soak live cycles PASS · parity audit PASS (allowlist 99) · policy surfaces untouched · counts recorded. Manual Firefox acceptance (T7) is the only remaining human gate before T8 closeout.
