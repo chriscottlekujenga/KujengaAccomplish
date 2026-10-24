@@ -177,6 +177,13 @@ export async function onBeforeStart(
     // env (DEV_BROWSER_PORT) so its sidecar URLs match the port this daemon
     // spawned the sidecar on (getBrowserServerConfig).
     devBrowserPort: resolveDevBrowserRelayPort(),
+    // M6-A T5 (preview seam, debug checkpoint §0.3) — the per-task identity
+    // rides the generated mcp.dev-browser-mcp.environment (ACCOMPLISH_TASK_ID)
+    // so the agent child's registry page key (“<taskId>-main”) matches preview
+    // capture's resolution — one tab, captured live. The transient OAuth flow
+    // passes an empty ctx (taskId undefined) and keeps the child's standalone
+    // 'default' identity.
+    taskId: ctx.taskId,
     skills,
     workspaceId: ctx.workspaceId,
     configFileName: buildConfigFileName(ctx.taskId),

@@ -40,6 +40,15 @@ export interface ConfigGeneratorOptions {
    * 9224 default. Omit leaves the child's env resolution untouched.
    */
   devBrowserPort?: number;
+  /**
+   * Per-task identity threaded into the dev-browser-mcp child env as
+   * ACCOMPLISH_TASK_ID (M6-A T5 preview seam). The child derives its sidecar
+   * registry page key (`<taskId>-main`) from this value and preview capture
+   * resolves the same key, so both writers share ONE tab. The daemon passes
+   * the per-task `ctx.taskId`; the transient OAuth path (no task context)
+   * omits it and the child keeps its standalone 'default' identity.
+   */
+  taskId?: string;
   userDataPath: string;
   model?: string;
   smallModel?: string;

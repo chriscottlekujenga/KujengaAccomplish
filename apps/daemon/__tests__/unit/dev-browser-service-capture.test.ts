@@ -54,6 +54,8 @@ function portOf(server: http.Server): number {
 
 interface CdpStubHandle {
   received: string[];
+  /** Params of every Target.attachToTarget — the capture's target identity. */
+  attachTargetIds: string[];
   port: number;
   close: () => Promise<void>;
 }
@@ -64,6 +66,7 @@ async function listenCdpStub(
 ): Promise<CdpStubHandle> {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   const received: string[] = [];
+  const attachTargetIds: string[] = [];
   wss.on('connection', (ws) => {
     ws.on('message', (raw) => {
       const msg = JSON.parse(String(raw)) as {
@@ -72,6 +75,9 @@ async function listenCdpStub(
         params?: Record<string, unknown>;
       };
       received.push(msg.method);
+      if (msg.method === 'Target.attachToTarget' && typeof msg.params?.targetId === 'string') {
+        attachTargetIds.push(msg.params.targetId);
+      }
       if (msg.method in overrides) {
         const override = overrides[msg.method];
         const isError =
@@ -108,6 +114,7 @@ async function listenCdpStub(
   });
   return {
     received,
+    attachTargetIds,
     port,
     close: () => new Promise<void>((resolve) => wss.close(() => resolve())),
   };
@@ -118,6 +125,22 @@ interface SidecarStubOptions {
   targetId?: string;
   /** 401 every request — a stale foreign-token sidecar. */
   rejectToken?: boolean;
+  /**
+   * M6-A T5: model the sidecar's REAL registry semantics
+   * (BrowserPageService.ensurePage dedupes BY NAME): the first ensure of a
+   * name mints a fresh targetId with `created:true`; repeats of the SAME
+   * name return the SAME targetId with `created:false`. Distinct names mint
+   * distinct targetIds. Mutually exclusive with a fixed options.targetId.
+   */
+  registry?: RegistryStubState;
+}
+
+/** Observable registry stub state (M6-A T5 page-identity tests). */
+interface RegistryStubState {
+  /** Every requested POST /pages name, in request order (with repeats). */
+  ensuredNames: string[];
+  /** name → {targetId, created-first-mint} — one entry per distinct name. */
+  pages: Map<string, { targetId: string; created: boolean }>;
 }
 
 /** Minimal sidecar stub: GET /, GET /pages, POST /pages, POST /shutdown. */
@@ -138,7 +161,9 @@ function sidecarStub(expectedToken: string, options: SidecarStubOptions): http.R
     }
     if (url === '/pages' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ pages: [] }));
+      res.end(
+        JSON.stringify({ pages: options.registry ? [...options.registry.pages.keys()] : [] }),
+      );
       return;
     }
     if (url === '/pages' && req.method === 'POST') {
@@ -148,14 +173,31 @@ function sidecarStub(expectedToken: string, options: SidecarStubOptions): http.R
       });
       req.on('end', () => {
         const body = JSON.parse(raw || '{}') as { name: string; viewport?: unknown };
+        let targetId: string;
+        let created: boolean;
+        if (options.registry) {
+          options.registry.ensuredNames.push(body.name);
+          const existing = options.registry.pages.get(body.name);
+          if (existing) {
+            targetId = existing.targetId;
+            created = false;
+          } else {
+            targetId = `T${options.registry.pages.size + 1}`;
+            created = true;
+            options.registry.pages.set(body.name, { targetId, created });
+          }
+        } else {
+          targetId = options.targetId ?? 'T1';
+          created = true;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
             wsEndpoint: options.wsEndpoint,
             name: body.name,
             viewport: body.viewport,
-            targetId: options.targetId ?? 'T1',
-            created: true,
+            targetId,
+            created,
           }),
         );
       });
@@ -193,6 +235,7 @@ describe('DevBrowserService.captureFrame (stub sidecar + stub CDP WS server)', (
         wsEndpoint: sidecarOptions.wsEndpoint ?? `ws://127.0.0.1:${cdp.port}/devtools/browser/abc`,
         targetId: sidecarOptions.targetId,
         rejectToken: sidecarOptions.rejectToken,
+        registry: sidecarOptions.registry,
       }),
     );
     cleanups.push(() => closeServer(sidecar as http.Server));
@@ -272,6 +315,115 @@ describe('DevBrowserService.captureFrame (stub sidecar + stub CDP WS server)', (
     const result = (await service.captureFrame({ taskId: 'task-1' })) as Record<string, unknown>;
     expect(Object.keys(result).sort()).toEqual(['data', 'height', 'width']);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+});
+
+describe('preview-seam page identity (M6-A T5 — active-page selection across both registry writers)', () => {
+  /**
+   * The T0 root cause: the dev-browser-mcp tool child and the preview both
+   * write the sidecar page registry, and pre-fix they handed it DIFFERENT
+   * keys (`default-main` vs `<taskId>-main`) — two tabs, preview capturing
+   * the blank one. The fix threads ACCOMPLISH_TASK_ID into the generated
+   * mcp.dev-browser-mcp.environment (agent-core generator tests + the
+   * task-config-builder chain test pin that), so after the fix BOTH writers
+   * compose the SAME key `<taskId>-main`. These tests pin the invariant on
+   * the daemon side against a registry-faithful stub (name-keyed dedupe,
+   * exactly BrowserPageService.ensurePage semantics).
+   */
+  let cdp: CdpStubHandle | null = null;
+  let sidecar: http.Server | null = null;
+  const cleanups: Array<() => Promise<void> | void> = [];
+
+  afterEach(async () => {
+    for (const cleanup of cleanups.reverse()) {
+      await cleanup();
+    }
+    cleanups.length = 0;
+    cdp = null;
+    sidecar = null;
+    vi.restoreAllMocks();
+  });
+
+  async function startRegistryStack(): Promise<{
+    service: DevBrowserService;
+    registry: RegistryStubState;
+  }> {
+    const registry: RegistryStubState = { ensuredNames: [], pages: new Map() };
+    cdp = await listenCdpStub();
+    cleanups.push(cdp.close);
+    sidecar = await listenZero(
+      sidecarStub(TOKEN, {
+        wsEndpoint: `ws://127.0.0.1:${cdp.port}/devtools/browser/abc`,
+        registry,
+      }),
+    );
+    cleanups.push(() => closeServer(sidecar as http.Server));
+    return {
+      service: new DevBrowserService({ devBrowserPort: portOf(sidecar as http.Server) }),
+      registry,
+    };
+  }
+
+  it('captures the frame from the ONE page both writers share under `<taskId>-main`', async () => {
+    const { service, registry } = await startRegistryStack();
+    const stub = cdp as CdpStubHandle;
+
+    // Writer 1 — the preview poll (shim parity): ensure + capture.
+    await expect(service.captureFrame({ taskId: 'tsk_t5' })).resolves.toEqual({
+      data: FAKE_JPEG_B64,
+      width: 800,
+      height: 600,
+    });
+
+    // Writer 2 — the agent child, post-fix: ACCOMPLISH_TASK_ID is threaded
+    // via the generated mcp environment, so its getFullPageName() composes
+    // the SAME key the preview just ensured, and ensurePage DEDUPES it.
+    await service.openPreviewPage({ name: 'tsk_t5-main' });
+
+    // One registry entry, one identity, zero second tabs.
+    expect(registry.ensuredNames).toEqual(['tsk_t5-main', 'tsk_t5-main']);
+    expect(registry.pages.size).toBe(1);
+    expect(registry.pages.get('tsk_t5-main')).toEqual({ targetId: 'T1', created: true });
+
+    // Screenshot delivery follows the shared identity: every CDP attach
+    // in both captures targeted the registry's own targetId — the capture
+    // shows exactly the page the agent drives (incl. after navigation).
+    await service.captureFrame({ taskId: 'tsk_t5' });
+    expect(stub.attachTargetIds).toEqual(['T1', 'T1']);
+    // The third ensure (the second poll's openPreviewPage) still deduped.
+    expect(registry.ensuredNames).toEqual(['tsk_t5-main', 'tsk_t5-main', 'tsk_t5-main']);
+    expect(registry.pages.size).toBe(1);
+  });
+
+  it('a DIFFERENT registry key still mints its own tab (stub fidelity for the pre-fix split)', async () => {
+    // Negative control: the stub must model name-keyed minting faithfully.
+    // Pre-fix, the child wrote `default-main` while the preview wrote
+    // `tsk_t5-main` — the split below is the exact two-tab signature the
+    // identity-threading fix removes.
+    const { service, registry } = await startRegistryStack();
+
+    await service.openPreviewPage({ name: 'tsk_t5-main' });
+    await service.openPreviewPage({ name: 'default-main' });
+
+    expect(registry.pages.size).toBe(2);
+    expect(registry.pages.get('tsk_t5-main')?.targetId).toBe('T1');
+    expect(registry.pages.get('default-main')?.targetId).toBe('T2');
+  });
+
+  it('a legit secondary page stays isolated from the main capture (multi-page tasks)', async () => {
+    const { service, registry } = await startRegistryStack();
+    const stub = cdp as CdpStubHandle;
+
+    await service.captureFrame({ taskId: 'tsk_t5' });
+    // The agent legitimately opens a second page mid-task — untouched.
+    await service.openPreviewPage({ name: 'tsk_t5-docs' });
+    const second = await service.captureFrame({ taskId: 'tsk_t5' });
+
+    expect(second).toEqual({ data: FAKE_JPEG_B64, width: 800, height: 600 });
+    // Both main captures attached ONLY ever the main page's targetId.
+    expect(stub.attachTargetIds).toEqual(['T1', 'T1']);
+    expect(registry.pages.size).toBe(2);
+    expect(registry.pages.get('tsk_t5-docs')).toEqual({ targetId: 'T2', created: true });
   });
 });
 

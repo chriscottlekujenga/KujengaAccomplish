@@ -977,6 +977,20 @@ describe('ConfigGenerator', () => {
 
       expect(result.systemPrompt).toContain('browser automation assistant');
     });
+
+    it('should thread taskId into the dev-browser-mcp env as ACCOMPLISH_TASK_ID (M6-A T5)', () => {
+      const result = generateConfig(makeOptions({ taskId: 'tsk_generate_me' }));
+
+      const mcpConfig = result.mcpServers['dev-browser-mcp'];
+      expect(mcpConfig).toBeDefined();
+      expect(mcpConfig.environment?.ACCOMPLISH_TASK_ID).toBe('tsk_generate_me');
+    });
+
+    it('should omit ACCOMPLISH_TASK_ID from the dev-browser-mcp env when taskId is omitted', () => {
+      const result = generateConfig(makeOptions());
+
+      expect(result.mcpServers['dev-browser-mcp'].environment?.ACCOMPLISH_TASK_ID).toBeUndefined();
+    });
   });
 
   describe('needs_planning decision framework', () => {

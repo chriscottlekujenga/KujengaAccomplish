@@ -61,6 +61,15 @@ export interface ResolveTaskConfigOptions {
   devBrowserPort?: number;
 
   /**
+   * Per-task identity for the dev-browser-mcp child (M6-A T5 preview seam).
+   * The daemon passes the per-task `ctx.taskId` from `onBeforeStart`; copied
+   * straight into `configOptions` so `generateConfig` threads it into the
+   * generated `mcp.dev-browser-mcp.environment` as ACCOMPLISH_TASK_ID.
+   * Omitted by the transient OAuth path (empty ctx — no task identity).
+   */
+  taskId?: string;
+
+  /**
    * Pre-resolved enabled skills.
    * The caller provides these because skill resolution may go through
    * SkillsManager (desktop) or direct DB query (daemon).
@@ -141,6 +150,7 @@ export async function resolveTaskConfig(
     authToken,
     devBrowserToken,
     devBrowserPort,
+    taskId,
     skills,
     workspaceId,
     configFileName,
@@ -240,6 +250,7 @@ export async function resolveTaskConfig(
       authToken,
       devBrowserToken,
       devBrowserPort,
+      taskId,
       model: modelOverride?.model,
       smallModel: modelOverride?.smallModel,
       connectors: connectors.length > 0 ? connectors : undefined,

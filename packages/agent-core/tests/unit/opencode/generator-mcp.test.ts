@@ -155,3 +155,72 @@ describe('buildMcpServers — dev-browser-mcp relay port threading (M5 §3.1)', 
     expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_DEV_BROWSER_TOKEN).toBe('tok');
   });
 });
+
+describe('buildMcpServers — dev-browser-mcp task-identity threading (M6-A T5 preview seam)', () => {
+  let testDir: string;
+  let mcpToolsPath: string;
+
+  beforeEach(() => {
+    testDir = path.join(
+      os.tmpdir(),
+      `generator-mcp-taskid-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mcpToolsPath = path.join(testDir, 'mcp-tools');
+    for (const [toolName, relEntry] of REQUIRED_MCP_DIST_ENTRIES) {
+      const entryPath = path.join(mcpToolsPath, toolName, relEntry);
+      fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+      fs.writeFileSync(entryPath, `// ${toolName} bundled entry`);
+    }
+    const devBrowserEntry = path.join(mcpToolsPath, 'dev-browser-mcp', 'dist', 'index.mjs');
+    fs.mkdirSync(path.dirname(devBrowserEntry), { recursive: true });
+    fs.writeFileSync(devBrowserEntry, '// dev-browser-mcp bundled entry');
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  function browserOptions(overrides: Partial<BuildMcpServersOptions> = {}): BuildMcpServersOptions {
+    return {
+      mcpToolsPath,
+      nodeExe: path.join(testDir, 'node'),
+      browserConfig: { mode: 'builtin' },
+      ...overrides,
+    };
+  }
+
+  it('threads the per-task taskId into the child env as ACCOMPLISH_TASK_ID', () => {
+    const result = buildMcpServers(
+      browserOptions({ devBrowserToken: 'tok', devBrowserPort: 9324, taskId: 'tsk_t5' }),
+    );
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_TASK_ID).toBe('tsk_t5');
+    // The other M1/M5 threadings survive alongside the identity env.
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_DEV_BROWSER_TOKEN).toBe('tok');
+    expect(result['dev-browser-mcp'].environment?.DEV_BROWSER_PORT).toBe('9324');
+  });
+
+  it('threads the identity env in remote (cloud browser) mode too', () => {
+    const result = buildMcpServers(
+      browserOptions({
+        taskId: 'tsk_cloud',
+        browserConfig: {
+          mode: 'remote',
+          cdpEndpoint: 'https://cloud-browser.example.com/cdp',
+          cdpHeaders: { 'X-CDP-Secret': 'secret' },
+        },
+      }),
+    );
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_TASK_ID).toBe('tsk_cloud');
+    expect(result['dev-browser-mcp'].environment?.CDP_ENDPOINT).toBe(
+      'https://cloud-browser.example.com/cdp',
+    );
+  });
+
+  it('omits ACCOMPLISH_TASK_ID when no taskId is provided (transient OAuth path)', () => {
+    const result = buildMcpServers(browserOptions({ devBrowserToken: 'tok' }));
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_TASK_ID).toBeUndefined();
+    expect(result['dev-browser-mcp'].environment?.ACCOMPLISH_DEV_BROWSER_TOKEN).toBe('tok');
+  });
+});

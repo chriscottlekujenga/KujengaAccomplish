@@ -85,6 +85,79 @@ describe('connection', () => {
       expect(cfg.taskId).toBe('default');
     });
 
+    it('keeps the "default" fallback byte-identical (blank string env also falls back)', () => {
+      process.env.ACCOMPLISH_TASK_ID = '';
+      expect(configureFromEnv().taskId).toBe('default');
+    });
+
+    it('warns loudly once when the sidecar token is present but ACCOMPLISH_TASK_ID is missing (daemon context, M6-A T5)', () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'sidecar-token';
+        configureFromEnv();
+        const warnings = errSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((msg) => msg.includes('preview seam'));
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain(
+          'ACCOMPLISH_DEV_BROWSER_TOKEN is set but ACCOMPLISH_TASK_ID is missing',
+        );
+        expect(warnings[0]).toContain('default-main');
+        // Once-per-process: a reconfigure must NOT repeat the warning.
+        configureFromEnv();
+        expect(
+          errSpy.mock.calls
+            .map((call) => String(call[0]))
+            .filter((m) => m.includes('preview seam')),
+        ).toHaveLength(1);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it('stays silent for standalone launches (no sidecar token, no taskId)', () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        configureFromEnv();
+        expect(errSpy.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain(
+          'preview seam',
+        );
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it('warns in remote mode too when the token rides a loopback relay without a taskId', () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'sidecar-token';
+        process.env.CDP_ENDPOINT = 'ws://127.0.0.1:9224/cdp';
+        configureFromEnv();
+        expect(
+          errSpy.mock.calls.map((call) => String(call[0])).some((m) => m.includes('preview seam')),
+        ).toBe(true);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it('resetConnection clears the once-warning guard (test re-triggerability)', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        process.env.ACCOMPLISH_DEV_BROWSER_TOKEN = 'sidecar-token';
+        configureFromEnv();
+        await resetConnection();
+        configureFromEnv();
+        expect(
+          errSpy.mock.calls
+            .map((call) => String(call[0]))
+            .filter((m) => m.includes('preview seam')),
+        ).toHaveLength(2);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
     it('does not include cdpHeaders when CDP_SECRET is not set', () => {
       process.env.CDP_ENDPOINT = 'http://remote:9222';
       const cfg = configureFromEnv();

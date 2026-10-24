@@ -73,6 +73,18 @@ export interface BuildMcpServersOptions {
    * already reads, so its sidecar URLs target the override port.
    */
   devBrowserPort?: number;
+  /**
+   * Per-task identity for the dev-browser-mcp child (M6-A T5 preview seam).
+   * Threaded into the child env as ACCOMPLISH_TASK_ID so the child's sidecar
+   * registry page key (`getFullPageName()` → `<taskId>-main`) matches the key
+   * preview capture resolves (`<taskId>-main` in DevBrowserService). opencode
+   * local MCP children do NOT inherit the serve process env, so the value
+   * MUST ride the generated config environment; a missing value makes the
+   * child write pages under `<default>-main` — a second tab the preview
+   * never captures. The transient OAuth path (no task context) omits this
+   * and keeps the child's standalone 'default' identity.
+   */
+  taskId?: string;
   connectors?: Array<{
     id: string;
     name: string;
@@ -101,6 +113,7 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
     authToken,
     devBrowserToken,
     devBrowserPort,
+    taskId,
     connectors,
     gwsAccountsManifestPath,
   } = options;
@@ -164,6 +177,15 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
     // mirrors the token's spawn-side hand-off).
     if (typeof devBrowserPort === 'number') {
       browserEnv.DEV_BROWSER_PORT = String(devBrowserPort);
+    }
+    // M6-A T5 (preview seam, debug checkpoint §0.3) — thread the per-task
+    // identity so the child's registry page key matches the preview's
+    // `<taskId>-main` resolution: one registry entry, one tab, and
+    // captureFrame captures the page the agent actually drives. This env
+    // ALSO feeds the child's screencast taskId (index.ts reads the same
+    // variable), fixing the browser-frame event identity in one stroke.
+    if (taskId) {
+      browserEnv.ACCOMPLISH_TASK_ID = taskId;
     }
     if (browserConfig.mode === 'remote') {
       if (browserConfig.cdpEndpoint) {

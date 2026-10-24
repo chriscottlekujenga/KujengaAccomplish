@@ -7,6 +7,12 @@ export { isRecoverableConnectionError };
 // spawning side and passed via env; never via RPC, never via the gateway.
 const ACCOMPLISH_DEV_BROWSER_TOKEN_ENV = 'ACCOMPLISH_DEV_BROWSER_TOKEN';
 
+// M6-A T5 (preview seam, debug checkpoint §0.3) — the child derives its
+// sidecar registry page key from ACCOMPLISH_TASK_ID. Daemon-spawned task
+// children must receive it via the generated mcp.dev-browser-mcp.environment;
+// opencode local MCP children do NOT inherit the serve process env.
+const ACCOMPLISH_TASK_ID_ENV = 'ACCOMPLISH_TASK_ID';
+
 // M5 §3.1 — the spawning side (daemon) resolves its relay port via this env
 // override and threads the resolved value here as DEV_BROWSER_PORT; reading
 // the override directly also covers standalone child launches.
@@ -53,6 +59,17 @@ export type ConnectionConfig = BuiltinConnectionConfig | RemoteConnectionConfig;
 
 // ─── Singleton state ────────────────────────────────────────────────────────
 
+// M6-A T5 defense-in-depth — a silent 'default' fallback is exactly what let
+// the blank-preview seam survive a whole task (checkpoint §0.1/§0.2). When an
+// authenticated daemon context spawns this child (sidecar token present = the
+// daemon generated this config) but omitted ACCOMPLISH_TASK_ID, the child's
+// registry key diverges from preview capture's `<taskId>-main` — warn once,
+// loudly, on stderr (opencode surfaces MCP child stderr in its logs).
+// Standalone dev launches (no token) stay silent; 'default' remains their
+// documented fallback identity. Declared BEFORE the singleton init below:
+// that init runs buildConfigFromEnv() at module load, which may warn.
+let warnedMissingTaskIdentity = false;
+
 // Use buildConfigFromEnv (hoisted function declaration) to avoid TDZ issue
 let _config: ConnectionConfig = buildConfigFromEnv();
 const _manager = new BrowserManager();
@@ -62,10 +79,30 @@ const _cdpSessionCache = new WeakMap<Page, Promise<CDPSession>>();
 
 // ─── Configuration helpers ──────────────────────────────────────────────────
 
+function warnOnceOnMissingTaskIdentity(): void {
+  const taskIdEnv = process.env[ACCOMPLISH_TASK_ID_ENV];
+  if (taskIdEnv || warnedMissingTaskIdentity) {
+    return;
+  }
+  if (!getDevBrowserSidecarToken()) {
+    return;
+  }
+  warnedMissingTaskIdentity = true;
+  console.error(
+    '[dev-browser-mcp] WARNING: ACCOMPLISH_DEV_BROWSER_TOKEN is set but ACCOMPLISH_TASK_ID is missing. ' +
+      'This child was launched by an authenticated daemon context, so the missing task identity means its ' +
+      `sidecar registry page key will be "default-main" instead of "<taskId>-main" — preview capture ` +
+      'resolves the latter, so the agent would navigate a tab the preview never shows ' +
+      '(M6-A T5 preview seam). Daemon config generation must thread ACCOMPLISH_TASK_ID into ' +
+      'mcp.dev-browser-mcp.environment. Standalone (non-daemon) launches may ignore this warning.',
+  );
+}
+
 // Pure function: builds config from environment, no side effects
 function buildConfigFromEnv(): ConnectionConfig {
+  warnOnceOnMissingTaskIdentity();
   const cdpEndpoint = process.env.CDP_ENDPOINT;
-  const taskId = process.env.ACCOMPLISH_TASK_ID || 'default';
+  const taskId = process.env[ACCOMPLISH_TASK_ID_ENV] || 'default';
 
   if (cdpEndpoint) {
     const headers: Record<string, string> = {};
@@ -156,9 +193,12 @@ export function configure(config: ConnectionConfig): void {
   _config = config;
 }
 
-// Reset singleton state (for testing)
+// Reset singleton state (for testing). The identity-warning guard resets
+// AFTER the build below: resetConnection runs buildConfigFromEnv with the
+// live env, and a token-bearing env must not double-warn during the reset.
 export async function resetConnection(): Promise<void> {
   _config = buildConfigFromEnv();
+  warnedMissingTaskIdentity = false;
   await _manager.resetConnection();
 }
 

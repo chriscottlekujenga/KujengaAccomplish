@@ -481,4 +481,47 @@ describe('daemon onBeforeStart — integration against real resolveTaskConfig + 
     const overriddenEnv = overridden.mcp?.['dev-browser-mcp']?.environment ?? {};
     expect(overriddenEnv.DEV_BROWSER_PORT).toBe('9324');
   });
+
+  it('threads ctx.taskId into the dev-browser-mcp env as ACCOMPLISH_TASK_ID (M6-A T5 preview seam)', async () => {
+    const storage = makeStorage();
+    const { configPath } = await onBeforeStart(
+      storage as never,
+      {
+        userDataPath: tmpUserData,
+        mcpToolsPath: fakeMcpToolsPath,
+        isPackaged: false,
+        resourcesPath: '',
+        appPath: '',
+      },
+      { taskId: 'tsk_preview_seam' },
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const env = written.mcp?.['dev-browser-mcp']?.environment ?? {};
+    // The child's registry page key derives from this exact value
+    // (getFullPageName → '<taskId>-main'); preview capture resolves the same
+    // key (DevBrowserService.captureFrame), so both writers share ONE tab.
+    expect(env.ACCOMPLISH_TASK_ID).toBe('tsk_preview_seam');
+  });
+
+  it('omits ACCOMPLISH_TASK_ID on the transient OAuth path (empty ctx keeps the standalone child identity)', async () => {
+    const storage = makeStorage();
+    const { configPath } = await onBeforeStart(
+      storage as never,
+      {
+        userDataPath: tmpUserData,
+        mcpToolsPath: fakeMcpToolsPath,
+        isPackaged: false,
+        resourcesPath: '',
+        appPath: '',
+      },
+      {},
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const env = written.mcp?.['dev-browser-mcp']?.environment ?? {};
+    expect(env.ACCOMPLISH_TASK_ID).toBeUndefined();
+    // Same generation pipeline still ran (relay-port threading proof)
+    expect(env.DEV_BROWSER_PORT).toBe('9224');
+  });
 });
