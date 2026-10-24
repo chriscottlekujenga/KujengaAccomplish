@@ -289,3 +289,69 @@ The user executed the §5.5 procedure (rebuild → `systemctl --user restart acc
 Live corroboration (read-only journald, same-user): at 23:58:33 the daemon emitted the §5.3-2 positive breadcrumb **twice** (start + resume config generations): `[OpenCode Config] dev-browser-mcp child identity threaded: ACCOMPLISH_TASK_ID=task_1792814312690 (M6-A T5 preview seam)`; the §5.3-1 divergence WARN **never fired**. Both negative checks clean.
 
 **T5 fully verified**: harness + suites + artifact checks + production-configuration user acceptance all green. No known remaining seam limitations (watch items unchanged: relay.test.ts parallel-run flake; rebuild-before-restart discipline now guarded by artifact tests + runtime breadcrumbs).
+
+## §6 — M6-A T6: E2E assistance coverage, restart soak, full battery (2026-10-24)
+
+### §6.1 What landed
+
+1. **`apps/host/e2e/specs/35-assistance-question.spec.ts` (2 tests)** — the LIVE same-session flow on the real ollama gateway (`glm-5.3:cloud`, serial chain fixture): a scripted `M6_ASSISTANCE` task that names a (simulated) login-wall/MFA gate → the agent calls `question` ONCE with the exact ASSISTANCE_QUESTION_HEADER → `execution-waiting-for-user-label` badge ("Needs your reply") + assistance card (`assistance-context`/`assistance-explainer`/`assistance-waiting-label`) → `task.status` = `waiting_for_user` and the allowlisted `task.getPendingRequest` returns the question-kind record (header equality, requestId, 2 options) → option click + Submit reply → card clears → (bash approval via the standard permission card) → terminal `completed` → the file contains `M6_ASSIST_CONTINUED_OK`, transcript carries the marker, **exactly one** matching task (no duplicate), `task.getPendingRequest` → `null` after the live reply. Companion test reopens the persisted task from history with the transcript and no card.
+2. **`apps/host/e2e/specs/36-assistance-restart.spec.ts` (2 tests)** — the daemon-restart soak: assistance ask parked `waiting_for_user` (with sessionId persisted — see finding F1) → **SIGTERM to the pid-file daemon mid-wait** → graceful drain (parked row is NOT active-completed; adapter children die with the process) → the host's connector re-spawns the daemon (real launcher contract) → boot-time crash recovery leaves the waiting row **byte-identical** (status, sessionId, workingDirectory, pendingRequest.requestId all asserted equal via RPC after respawn) → fresh document load → assistance card restored **with the `assistance-restored-hint`** → answer (option + submit) → daemon routes `permission.respond` to the DEAD-pending guardrails → single-flight claim → `resuming`/`running` transition observed → `session.resume` on the **ORIGINAL sessionId** (asserted equal before/after) → post-resume bash approval → `completed`; **no duplicate execution**: the auto-resume continuation user message ("The human replied to your assistance request.") appears EXACTLY once, `task.getPendingRequest` → `null`, exactly one task in history, file created once. Companion history test reopens the task.
+3. **T6-found defect F1 (daemon) — parked rows had no resumable session.** `session_id` only reached SQLite at `onComplete` (`task-callbacks.ts:159`), so a REAL restart while parked left the row unable to satisfy `respondToPersistedPendingRequest`'s "no persisted session — refusing to claim" guardrail; the T2 matrix seeded the row and never caught it. **Fix:** `markWaitingOnHuman` in `task-callbacks.ts` persists `taskManager.getSessionId(taskId)` at park time (both waiting kinds; auto-deny branches still write nothing; onComplete still overwrites with the final turn's session). 4 new tests in `task-callbacks.unit.test.ts` (`createTaskCallbacks — live session persisted on park (M6-A T6)`): assistance park ✓, waiting_permission park ✓, no-session null-safe ✓, auto-deny never writes ✓. Presence-gate fixture completed (its `{} as TaskManagerAPI` lacked `getSessionId`).
+4. **T6-found defect F2 (web store) — restored hint lost for a page that survives the restart.** The daemon restart never reloads the SPA document; `daemon:reconnected` → `loadTaskById` → `seedPendingRequestCard` hit the "live notify always wins" guard and NO-OPed because the pre-restart LIVE card was still in `permissionRequests` — same requestId, but unre-marked, so T3's `assistance-restored-hint` never rendered (proven by a temporary per-document WS-frame recorder: zero notifications after reconnect; only the stale card). **Fix:** the shared seed core now replaces a live card whose id EQUALS the persisted record's requestId (the pre-restart ask — the record is the authoritative rebuild once the adapter is dead) and marks it restored; a DIFFERENT id (a genuinely newer live ask) still wins unchanged, byte-preserving T3/T4 replay discipline. 2 new tests in `task-permission-actions.assistance.unit.test.ts` (restart-analog same-id rebuild for `restorePendingRequestFromTask` AND `refetchPendingRequest`; all existing live-wins tests use disjoint ids and stay green untouched).
+5. **Browser isolation unchanged** — T6 touched no dev-browser/sidecar/CDP file; spec 35/36 run browserless real-ollama tasks.
+
+### §6.2 E2E evidence (real ollama gateway, isolated chain, serial)
+
+- **Two consecutive full-suite green runs at this HEAD:**
+  - Run 1 (17:18–17:25 UTC): **18/18 passed, 6.3 m** (14 baseline + 4 new).
+  - Run 2 (17:25–17:32 UTC): **18/18 passed, 6.9 m** (back-to-back, same worker-per-file chain each).
+- Live assistance records captured by the runs (redacted/capped D4 payloads on the wire):
+  - 35 run 1: `questionreq_4fac5340…` header "Human assistance required", 2 options with descriptions, question text names the gate + what only the human can do; answer → completion, request consumed (`null` after).
+  - 36 run 2: park sessionId `ses_e911…` == post-resume sessionId (SAME session reused byte-exactly); transitions `resuming/running → completed`; continuation message exactly once; file `M6_ASSIST_RESTART_OK` present.
+- **Restart soak count:** 4 successful live restart-mid-wait → restored → auto-resume → completed cycles this session (2 standalone green runs of spec 36 + 2 in the consecutive suite runs), plus the 13-test REAL-SQLite restart matrix (T2) and the watchdog non-stall regression (T1) all green in the battery. "Soak: waiting rows survive + resume" is carried by live spec 36 + the unit matrix; no separate harness was written (plan T6 "IF fixture-stable" branch — the fixture WAS stable).
+
+### §6.3 Full battery at T6 HEAD (vs T5 baseline — zero regressions)
+
+| Suite                               | T5 baseline         | T6 result                                                                                  | Verdict                                     |
+| ----------------------------------- | ------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| gateway E2E (`host test:e2e`)       | 14/14               | **18/18 × 2 consecutive**                                                                  | PASS (+4)                                   |
+| host unit+integration               | 340                 | **340 passed (340)**                                                                       | PASS                                        |
+| daemon (unit+integration)           | 386                 | **390 passed (30 files)**                                                                  | PASS (+4 F1 tests)                          |
+| agent-core                          | 851 + 1 skip        | **851 passed / 1 skipped (67 files)**                                                      | PASS                                        |
+| web unit                            | 546                 | **548 passed (34 files)**                                                                  | PASS (+2 F2 tests)                          |
+| desktop (Electron bridge untouched) | 522                 | **522 passed (23 files)**                                                                  | PASS                                        |
+| web integration                     | 158/61 (upstream)   | **158 passed / 61 failed**                                                                 | EXACT upstream baseline                     |
+| dev-browser-mcp (in-package)        | 116/116             | **116/116 (8 files)**                                                                      | PASS                                        |
+| dev-browser (in-package)            | 36/37 (relay flake) | **36/37 parallel; relay 12/12 isolated**                                                   | documented M5 §23.5#3 watch item, unchanged |
+| typecheck                           | 5/5                 | **all workspaces Done**                                                                    | PASS                                        |
+| eslint                              | 0 err / 3 warn      | **0 errors / 3 documented pre-existing warnings**                                          | PASS                                        |
+| prettier                            | clean               | **clean**                                                                                  | PASS                                        |
+| parity audit                        | allowlist 99        | **allowlist 99 · blocklist 7 · registered 138 · self-checks PASS (shim-call ⊆ allowlist)** | PASS                                        |
+
+### §6.4 Security & policy verification (§6.2 of the M6 plan, re-proven)
+
+- `apps/host/src/policy.ts` has a ZERO diff in T6 — allowlist stays EXACTLY 99 (the T4 addition is still the only M6 entry), blocklist byte-identical 7; no `ACCOMPLISH_PERMISSION_POLICY`/presence-gate/scrubber edits (`git diff` proof).
+- 30-unauthenticated 401/403/WS-auth E2E and 90-secrets-redaction green in both suite runs; 99-presence-autodeny green — no-UI auto-deny semantics unchanged (and F1's fix writes nothing on the auto-deny branches — pinned by the new unit test).
+- The persisted/reshaped pending data remains card-context only (D4 redaction-before-cap); the F2 rebuild delivers the SAME already-redacted record — no new secret surface.
+- Production invariance: prod daemon (systemd pid 3612, booted 12:16:55 with the T5 bundle) cmdline md5 `25605d3b…` **identical pre/post every suite run**; `/home/chris/Accomplish` untouched; E2E chains isolated under `/tmp/opencode/m5-e2e` (mkdtemp, auto-swept; two forensics dirs from F1 debugging left for reference only).
+
+### §6.5 Plan deviations / decisions made during T6
+
+1. **Fixture was stable → both specs are committed specs** (not harness-only): both assistance E2Es run on the standard M5 serial gateway fixture unchanged.
+2. **`task.get` sessionId visibility:** the restart spec asserts sessionId byte-equality through the gateway `task.get` payload (`sessionId` is not a secret-shaped field name; the scrubber's 10 names do not collide) — the same field the daemon's own recovery reads.
+3. **The spec's post-restart phase interleaves** the resumption-transition poll with the approval loop: the resumed turn parks AGAIN on a bash permission (M1 policy — a resumed turn re-prompts), so status-only polling would dead-wait. This is the designed M4/M6 interplay, now exercised live.
+4. **F1/F2 are T6 defect fixes, not plan changes** — D4 kept its shape (record written at park already), D5's guardrails are unchanged; F1 makes the persisted row carry what D5's claim contract already required. Both fixes are additive with paired unit tests; no migration, no API, no policy change (allowlist tripwire 99 untouched; `git diff` proves policy.ts byte-identical).
+5. **Companion tests** in both specs mirror the M5 40/50 convention (history persistence without a second LLM run).
+
+### §6.6 Known bounds carried to T7–T8
+
+- The assistance instruction adherence is prompt-shaped here: the task prompt NAME the gate ("scripted rehearsal") on top of the T1 system-prompt instruction. glm-5.3:cloud produced the exact header and the single-question behavior in EVERY live run observed this session (5/5); a model that drops the header still parks at `waiting_permission` with graceful degradation (D1). The T7 manual checklist should include ONE unscripted real gate attempt (real page, no scripted gate text) as the honest adherence sample.
+- Cold-model-load latency: the first-turn park wait is generous (240 s) per the M5 watch-item convention; the observed worst case this session was ~2 min of streaming before the ask.
+- Unattended auto-deny of assistance questions and the no-answer decline mapping (D3) are unit-tested (T1/T2) but NOT E2E-exercised (whatsapp/scheduler sources + a decline answer would burn LLM runs); T7's manual Cancel→failed item covers the cancel flavor with the user.
+- The restart spec answers the restored card on a RELOADED page. The equally-supported kept-open path (no reload, `daemon:reconnected` rebuild — F2 fix) is pinned by unit tests only (Playwright hash-navigation does not rebuild the document).
+- Suite-count growth from M6A-T6: E2E 14→18 (both new specs + companions), daemon +4, web unit +2 — the battery table in §6.3 documents each delta; nothing else moved.
+- Watch items unchanged from M5: relay.test.ts parallel flake (12/12 isolated), web integration 61 upstream, docker e2e environment-blocked, 3 documented lint warnings.
+
+### §6.7 T6 status — **COMPLETE: all T6 acceptance criteria met at this HEAD**
+
+E2E ≥16 with the two new assistance specs green ×2 consecutive (18/18 ×2) · battery green with zero regressions vs T5/M5 baselines · restart-soak live cycles PASS · parity audit PASS (allowlist 99) · policy surfaces untouched · counts recorded. Manual Firefox acceptance (T7) is the only remaining human gate before closeout.
