@@ -1,6 +1,11 @@
-import type { Task, TaskMessage, TaskStatus } from '../../common/types/task.js';
+import type {
+  PendingRequestRecord,
+  Task,
+  TaskMessage,
+  TaskStatus,
+} from '../../common/types/task.js';
 import { getDatabase } from '../database.js';
-import { rowToTask, getMessagesForTask } from './task-row-mapper.js';
+import { rowToTask, getMessagesForTask, parsePendingRequestRecord } from './task-row-mapper.js';
 import type { TaskRow, StoredTask } from './task-row-mapper.js';
 
 export type { StoredTask } from './task-row-mapper.js';
@@ -47,12 +52,31 @@ export function getTask(taskId: string): StoredTask | undefined {
 export function saveTask(task: Task, workspaceId?: string | null): void {
   const db = getDatabase();
 
+  // M6-A D4: the pending-request lifecycle is owned by the dedicated
+  // `updateTaskPendingRequest` / claim functions, NOT by saveTask. A generic
+  // save that doesn't carry the field (fresh daemon startTask, desktop
+  // `storage.saveTask` M2 route on an older client) must preserve the stored
+  // record — wiping it would silently break restart recovery for a parked
+  // task. Callers DO write it explicitly by populating `task.pendingRequest`
+  // (null clears, value sets) — that is the only saveTask path that mutates it.
+  const existingPending = (
+    db.prepare('SELECT pending_request FROM tasks WHERE id = ?').get(task.id) as
+      | { pending_request: string | null }
+      | undefined
+  )?.pending_request;
+  const pendingJson =
+    task.pendingRequest === undefined
+      ? (existingPending ?? null)
+      : task.pendingRequest === null
+        ? null
+        : JSON.stringify(task.pendingRequest);
+
   db.transaction(() => {
     db.prepare(
       `INSERT OR REPLACE INTO tasks
         (id, prompt, summary, status, session_id, created_at, started_at, completed_at,
-         workspace_id, working_directory)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         workspace_id, working_directory, pending_request)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       task.id,
       task.prompt,
@@ -64,6 +88,7 @@ export function saveTask(task: Task, workspaceId?: string | null): void {
       task.completedAt || null,
       workspaceId || null,
       task.workingDirectory || null,
+      pendingJson,
     );
 
     db.prepare('DELETE FROM task_messages WHERE task_id = ?').run(task.id);
@@ -223,6 +248,74 @@ export function updateTaskSummary(taskId: string, summary: string): void {
 export function updateTaskWorkingDirectory(taskId: string, workingDirectory: string): void {
   const db = getDatabase();
   db.prepare('UPDATE tasks SET working_directory = ? WHERE id = ?').run(workingDirectory, taskId);
+}
+
+/**
+ * M6-A D4 — read the persisted pending request for a task. Returns `null`
+ * when the row is unknown or carries no (or corrupt) pending record.
+ */
+export function getTaskPendingRequest(taskId: string): PendingRequestRecord | null {
+  const db = getDatabase();
+  const row = db.prepare('SELECT pending_request FROM tasks WHERE id = ?').get(taskId) as
+    | { pending_request: string | null }
+    | undefined;
+  return parsePendingRequestRecord(row?.pending_request ?? null);
+}
+
+/**
+ * M6-A D4 — write or clear the persisted pending request. `null` clears.
+ * Update-on-park/clear-on-resolve lifecycle owner; no-op for unknown rows.
+ */
+export function updateTaskPendingRequest(
+  taskId: string,
+  request: PendingRequestRecord | null,
+): void {
+  const db = getDatabase();
+  db.prepare('UPDATE tasks SET pending_request = ? WHERE id = ?').run(
+    request ? JSON.stringify(request) : null,
+    taskId,
+  );
+}
+
+/**
+ * M6-A D5 — atomically claim a parked ASSISTANCE question for the
+ * reply-after-restart auto-resume. Single-flight by construction: the
+ * stored row's status IS the lock.
+ *
+ * Precondition (all enforced): row exists · status `waiting_for_user` ·
+ * pending record present · record.kind `question` ·
+ * `record.requestId === expectedRequestId`. The winner flips the row to
+ * `resuming` and clears the pending column in ONE statement whose success
+ * is proven by SQLite's `changes` counter — a concurrent duplicate reply
+ * (already flipped to `resuming`) or a terminal race finds 0 changes and
+ * gets `null` instead of a second resumption.
+ *
+ * Returns the claimed record (for the continuation prompt) or `null` when
+ * any precondition failed; callers map the null to a specific loudly-thrown
+ * error after classifying the stored state themselves.
+ */
+export function claimPendingRequestForResume(
+  taskId: string,
+  expectedRequestId: string,
+): PendingRequestRecord | null {
+  const db = getDatabase();
+  const row = db.prepare('SELECT status, pending_request FROM tasks WHERE id = ?').get(taskId) as
+    | Pick<TaskRow, 'status' | 'pending_request'>
+    | undefined;
+  if (!row || row.status !== 'waiting_for_user' || !row.pending_request) {
+    return null;
+  }
+  const record = parsePendingRequestRecord(row.pending_request);
+  if (!record || record.kind !== 'question' || record.requestId !== expectedRequestId) {
+    return null;
+  }
+  const result = db
+    .prepare(
+      `UPDATE tasks SET status = 'resuming', pending_request = NULL
+       WHERE id = ? AND status = 'waiting_for_user'`,
+    )
+    .run(taskId);
+  return result.changes === 1 ? record : null;
 }
 
 export function deleteTask(taskId: string): void {

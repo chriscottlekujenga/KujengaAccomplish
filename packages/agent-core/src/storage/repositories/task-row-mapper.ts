@@ -1,4 +1,9 @@
-import type { TaskMessage, TaskStatus, TaskAttachment } from '../../common/types/task.js';
+import type {
+  PendingRequestRecord,
+  TaskMessage,
+  TaskStatus,
+  TaskAttachment,
+} from '../../common/types/task.js';
 import { getDatabase } from '../database.js';
 
 export interface StoredTask {
@@ -14,6 +19,8 @@ export interface StoredTask {
   workspaceId?: string;
   /** Preserved across resume turns — see `Task.workingDirectory`. */
   workingDirectory?: string;
+  /** M6-A D4: persisted pending permission/question request (see `PendingRequestRecord`). */
+  pendingRequest?: PendingRequestRecord;
 }
 
 export interface TaskRow {
@@ -27,6 +34,33 @@ export interface TaskRow {
   completed_at: string | null;
   workspace_id: string | null;
   working_directory: string | null;
+  pending_request: string | null;
+}
+
+/**
+ * Defensive parse of the v033 `pending_request` JSON column (M6-A D4).
+ * A corrupted record (truncated write, foreign schema) degrades to NULL —
+ * the card simply doesn't restore — instead of failing every task read.
+ */
+export function parsePendingRequestRecord(json: string | null): PendingRequestRecord | null {
+  if (!json) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(json) as Partial<PendingRequestRecord>;
+    const isKind = (value: unknown): value is PendingRequestRecord['kind'] =>
+      value === 'permission' || value === 'question';
+    if (
+      isKind(parsed.kind) &&
+      typeof parsed.requestId === 'string' &&
+      parsed.requestId.length > 0
+    ) {
+      return parsed as PendingRequestRecord;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export interface MessageRow {
@@ -132,6 +166,9 @@ export function rowToTask(row: TaskRow): StoredTask {
     completedAt: row.completed_at || undefined,
     workspaceId: row.workspace_id || undefined,
     workingDirectory: row.working_directory || undefined,
+    // Omitted entirely when the column is empty/unparseable so byte-identical
+    // `JSON.stringify(row)` restart assertions stay possible.
+    pendingRequest: parsePendingRequestRecord(row.pending_request) ?? undefined,
     messages: getMessagesForTask(row.id),
   };
 }

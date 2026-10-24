@@ -53,6 +53,7 @@ import { migration as v029 } from './v029-opencode-sdk-message-fields.js';
 import { migration as v030 } from './v030-workspace-meta-consolidation.js';
 import { migration as v031 } from './v031-drop-desktop-blocklist-column.js';
 import { migration as v032 } from './v032-task-working-directory.js';
+import { migration as v033 } from './v033-task-pending-request.js';
 
 const migrations: Migration[] = [
   v001,
@@ -87,13 +88,14 @@ const migrations: Migration[] = [
   v030,
   v031,
   v032,
+  v033,
 ];
 export function registerMigration(migration: Migration): void {
   migrations.push(migration);
   migrations.sort((a, b) => a.version - b.version);
 }
 
-export const CURRENT_VERSION = 32;
+export const CURRENT_VERSION = 33;
 export function getStoredVersion(db: Database): number {
   try {
     const tableExists = db

@@ -8,6 +8,7 @@ import type { EventEmitter } from 'node:events';
 import {
   mapResultToStatus,
   ASSISTANCE_QUESTION_HEADER,
+  createPendingRequestRecord,
   type TaskCallbacks,
   type TaskMessage,
   type TaskResult,
@@ -116,6 +117,11 @@ export function createTaskCallbacks(
           : 'waiting_permission';
         storage.updateTaskStatus(taskId, waitingStatus);
         emitter.emit('statusChange', { taskId, status: waitingStatus });
+        // M6-A T2 (D4): persist the parked request so a daemon restart can
+        // restore the question card and (for assistance questions) auto-resume
+        // the session on a later reply. Never persisted on the auto-deny
+        // branches — those resolve immediately with no human waiting.
+        storage.updateTaskPendingRequest(taskId, createPendingRequestRecord(request));
       };
 
       if (source === 'whatsapp') {

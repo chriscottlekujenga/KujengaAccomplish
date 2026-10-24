@@ -44,6 +44,7 @@ function buildFixture(options: { source: TaskSource; hasInteractiveClients: bool
     updateTaskStatus: vi.fn(),
     updateTaskSummary: vi.fn(),
     updateTaskSessionId: vi.fn(),
+    updateTaskPendingRequest: vi.fn(),
     clearTodosForTask: vi.fn(),
     saveTodosForTask: vi.fn(),
     getTasks: vi.fn(() => []),
@@ -360,5 +361,89 @@ describe('createTaskCallbacks — M6-A assistance-question routing (waiting_for_
     });
     expect(f.storage.updateTaskStatus).not.toHaveBeenCalled();
     expect(f.statusChangeSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * M6-A T2 (D4): whenever a task actually parks on a human, the pending
+   * request is ALSO persisted (`tasks.pending_request`, migration v033) so a
+   * daemon restart can restore the card and auto-resume assistance questions.
+   * Auto-deny branches resolve immediately — they persist NOTHING.
+   */
+  describe('createTaskCallbacks — pending-request persistence on park (M6-A T2)', () => {
+    function buildQuestionRequest(header: string): PermissionRequest {
+      return {
+        id: 'questionreq_persist',
+        taskId: 'tsk_abc',
+        type: 'question',
+        question: 'A CAPTCHA is blocking https://example.com/form',
+        header,
+        options: [{ label: "I'll complete it — please wait" }, { label: 'Skip this verification' }],
+        multiSelect: false,
+        createdAt: '2026-10-23T00:00:00.000Z',
+      };
+    }
+
+    const assistanceQuestion = buildQuestionRequest(ASSISTANCE_QUESTION_HEADER);
+    const clarificationQuestion = buildQuestionRequest('A quick question');
+    const fileRequest: PermissionRequest = {
+      id: 'filereq_persist',
+      taskId: 'tsk_abc',
+      type: 'file',
+      fileOperation: 'create',
+      filePath: '/tmp/any.txt',
+      createdAt: '2026-10-23T00:00:00.000Z',
+    };
+
+    it('assistance question parked in waiting_for_user → persisted as question-kind record', () => {
+      const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+
+      f.callbacks.onPermissionRequest?.(assistanceQuestion);
+
+      expect(f.storage.updateTaskPendingRequest).toHaveBeenCalledTimes(1);
+      const [taskId, record] = (f.storage.updateTaskPendingRequest as ReturnType<typeof vi.fn>).mock
+        .calls[0];
+      expect(taskId).toBe('tsk_abc');
+      expect(record).toMatchObject({
+        kind: 'question',
+        requestId: 'questionreq_persist',
+        header: ASSISTANCE_QUESTION_HEADER,
+        question: 'A CAPTCHA is blocking https://example.com/form',
+        createdAt: '2026-10-23T00:00:00.000Z',
+      });
+    });
+
+    it('clarification question parked in waiting_permission → persisted too (card restore, never auto-resumed)', () => {
+      const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+
+      f.callbacks.onPermissionRequest?.(clarificationQuestion);
+
+      const record = (f.storage.updateTaskPendingRequest as ReturnType<typeof vi.fn>).mock
+        .calls[0][1];
+      expect(record).toMatchObject({ kind: 'question', requestId: 'questionreq_persist' });
+    });
+
+    it('tool/file permission parked in waiting_permission → persisted as permission-kind record', () => {
+      const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+
+      f.callbacks.onPermissionRequest?.(fileRequest);
+
+      const record = (f.storage.updateTaskPendingRequest as ReturnType<typeof vi.fn>).mock
+        .calls[0][1];
+      expect(record).toMatchObject({ kind: 'permission', requestId: 'filereq_persist' });
+    });
+
+    it('auto-deny branches NEVER persist a pending request (assistance or permission)', () => {
+      const f = buildFixture({ source: 'ui', hasInteractiveClients: false });
+      f.callbacks.onPermissionRequest?.(assistanceQuestion);
+      expect(f.storage.updateTaskPendingRequest).not.toHaveBeenCalled();
+
+      const f2 = buildFixture({ source: 'whatsapp', hasInteractiveClients: false });
+      f2.callbacks.onPermissionRequest?.(fileRequest);
+      expect(f2.storage.updateTaskPendingRequest).not.toHaveBeenCalled();
+
+      const f3 = buildFixture({ source: 'scheduler', hasInteractiveClients: false });
+      f3.callbacks.onPermissionRequest?.(assistanceQuestion);
+      expect(f3.storage.updateTaskPendingRequest).not.toHaveBeenCalled();
+    });
   });
 });

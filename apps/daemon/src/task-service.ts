@@ -8,10 +8,14 @@ import {
   createMessageId,
   validateTaskConfig,
   getModelDisplayName,
+  ASSISTANCE_DECLINE_REASON,
+  buildAssistanceContinuationPrompt,
+  formatAssistanceAnswer,
   type TaskManagerAPI,
   type TaskCallbacks,
   type TaskConfig,
   type Task,
+  type TaskResult,
   type TaskMessage,
   type TaskStatus,
   type StorageAPI,
@@ -94,13 +98,18 @@ export class TaskService extends EventEmitter {
     // Drop the per-task source entry when the task finishes, whether via
     // success, error, or cancel. Listening to our own emitter (task-callbacks
     // emits into `this`) keeps the bookkeeping local without exposing the map.
+    // M6-A T2 (D4): the same terminal listeners clear the persisted pending
+    // request — a terminal outcome (or a cancel) must never leave a parked
+    // question row on disk, so no later reply can resurrect a resolved ask.
     this.on('complete', (data: { taskId: string }) => {
       this.taskSources.delete(data.taskId);
       this.serverManager.scheduleTaskRuntimeCleanup(data.taskId);
+      this.storage.updateTaskPendingRequest(data.taskId, null);
     });
     this.on('error', (data: { taskId: string }) => {
       this.taskSources.delete(data.taskId);
       this.serverManager.scheduleTaskRuntimeCleanup(data.taskId);
+      this.storage.updateTaskPendingRequest(data.taskId, null);
     });
     // The cancel path originally had no terminal callback — `TaskManager.
     // cancelTask()` just aborts the adapter without emitting `complete` or
@@ -113,6 +122,7 @@ export class TaskService extends EventEmitter {
       if (data.status === 'cancelled') {
         this.taskSources.delete(data.taskId);
         this.serverManager.scheduleTaskRuntimeCleanup(data.taskId);
+        this.storage.updateTaskPendingRequest(data.taskId, null);
       }
     });
 
@@ -456,11 +466,128 @@ export class TaskService extends EventEmitter {
     // was parked at a waiting_* status goes back to 'running'. A terminal
     // status may have raced in while the reply was in flight — the guard
     // only flips waiting_* statuses, never completion/failure/cancellation.
+    // M6-A T2 (D4): a live reply also resolved the persisted pending request,
+    // if any — clear it so no later (dead-pending) reply can double-resume.
+    this.storage.updateTaskPendingRequest(taskId, null);
     const storedStatus = this.storage.getTask(taskId)?.status;
     if (storedStatus === 'waiting_permission' || storedStatus === 'waiting_for_user') {
       this.storage.updateTaskStatus(taskId, 'running');
       this.emit('statusChange', { taskId, status: 'running' });
     }
+  }
+
+  /**
+   * Reply-after-restart auto-resume (M6-A T2 / D5).
+   *
+   * Handles `permission.respond` for a task with NO live adapter (daemon
+   * restarted while the human was deciding). Every precondition is checked
+   * before anything is mutated; the stored status itself is the single-flight
+   * lock (`claimPendingRequestForResume` flips waiting_for_user → resuming
+   * atomically, so a duplicate/second reply loudly fails instead of
+   * double-resuming):
+   *
+   *   - only `waiting_for_user` rows (assistance questions) auto-resume —
+   *     permission-kind and clarification asks are NEVER replayed (no fake
+   *     allow/deny; the stale reply is rejected, D5),
+   *   - a stale requestId is rejected, even on a live-looking row,
+   *   - a reply with no actual answer is honest D3 decline: the task is
+   *     marked `failed` with the explicit reason, never "success",
+   *   - a valid answer resumes the SAME persisted sessionId + cwd with a
+   *     capped continuation prompt; row cleared at spawn.
+   *
+   * Errors are thrown with stable messages; the RPC layer surfaces them and
+   * T3's restored card maps them onto "expired / already-resuming" copy.
+   */
+  async respondToPersistedPendingRequest(
+    taskId: string,
+    response: PermissionResponse,
+  ): Promise<void> {
+    // Live tasks are owned by the live path — a caller routing here must
+    // have checked `hasActiveTask` first (mirrors the pre-T2 route guard).
+    if (this.taskManager.hasActiveTask(taskId) || this.taskManager.isTaskQueued(taskId)) {
+      throw new Error(
+        `permission.respond: no active task with id=${taskId}. The task may have completed, been cancelled, or never existed.`,
+      );
+    }
+    const storedTask = this.storage.getTask(taskId);
+    if (!storedTask) {
+      // Exact pre-T2 parity message — pinned by daemon parity tests.
+      throw new Error(
+        `permission.respond: no active task with id=${taskId}. The task may have completed, been cancelled, or never existed.`,
+      );
+    }
+    if (storedTask.status === 'resuming') {
+      throw new Error(
+        `permission.respond: task ${taskId} already had its pending request resumed — single-flight precondition (a second reply may not restart the resumption).`,
+      );
+    }
+    if (storedTask.status !== 'waiting_for_user') {
+      // D5: permission-kind (and clarification) rows are never replayed —
+      // surface the expiry and offer the existing manual Resume affordance.
+      throw new Error(
+        `permission.respond: the pending request for task ${taskId} expired with its previous session (status ${storedTask.status}) and is never replayed. Use the existing Resume affordance to continue the task.`,
+      );
+    }
+    const pending = this.storage.getTaskPendingRequest(taskId);
+    if (!pending) {
+      throw new Error(
+        `permission.respond: task ${taskId} is waiting_for_user but carries no persisted pending request (pre-M6 request) — the card cannot be re-resumed safely.`,
+      );
+    }
+    if (pending.kind !== 'question') {
+      // Belt-and-braces: waiting_for_user rows are assistance questions by
+      // construction (T1 routing); reject anything else without replaying.
+      throw new Error(
+        `permission.respond: pending request ${pending.requestId} for task ${taskId} is not a question — expired requests of this kind are never replayed.`,
+      );
+    }
+    if (pending.requestId !== response.requestId) {
+      throw new Error(
+        `permission.respond: stale requestId ${response.requestId} for task ${taskId} (persisted pending request is ${pending.requestId}) — rejected.`,
+      );
+    }
+    if (!storedTask.sessionId) {
+      throw new Error(
+        `permission.respond: task ${taskId} has no persisted session to resume — refusing to claim the pending request (it stays parked).`,
+      );
+    }
+
+    const answer = formatAssistanceAnswer(response);
+    if (answer === null) {
+      // D3 honesty, restart flavor: a decline (deny/allow with no answer) on
+      // an assistance question must NOT resume the turn with an empty reply.
+      // Same explicit-failure mapping as the live cancel path.
+      const completedAt = new Date().toISOString();
+      this.storage.updateTaskPendingRequest(taskId, null);
+      this.storage.updateTaskStatus(taskId, 'failed', completedAt);
+      this.emit('statusChange', { taskId, status: 'failed', completedAt });
+      const declineResult: TaskResult = { status: 'error', error: ASSISTANCE_DECLINE_REASON };
+      this.emit('complete', { taskId, result: declineResult });
+      log.info(
+        `[TaskService] Assistance request ${pending.requestId} declined after restart; task ${taskId} marked failed`,
+      );
+      return;
+    }
+
+    // Atomic single-flight claim: flips the row to 'resuming' and clears the
+    // persisted request in one statement. A losing (concurrent) reply finds
+    // zero changes and throws instead of resuming twice.
+    const claimed = this.storage.claimPendingRequestForResume(taskId, response.requestId);
+    if (!claimed) {
+      throw new Error(
+        `permission.respond: task ${taskId}'s pending request could not be claimed for resume (already resumed, expired, or a stale requestId) — duplicate or concurrent replies are rejected.`,
+      );
+    }
+    log.info(
+      `[TaskService] Claimed persisted assistance request ${claimed.requestId} on task ${taskId} — resuming session ${storedTask.sessionId}`,
+    );
+    this.emit('statusChange', { taskId, status: 'resuming' });
+
+    const prompt = buildAssistanceContinuationPrompt({
+      question: claimed.question,
+      answer,
+    });
+    await this.resumeSession({ sessionId: storedTask.sessionId, prompt, existingTaskId: taskId });
   }
 
   /**

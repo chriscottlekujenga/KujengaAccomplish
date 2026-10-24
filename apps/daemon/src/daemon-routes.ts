@@ -711,23 +711,31 @@ export function registerRpcMethods(services: RouteServices): void {
     safeHandler(async (params) => {
       const validated = validate(permissionResponseSchema, params);
       const { taskId, requestId, decision, selectedOptions, customText } = validated;
-      // Defensive taskId check. Without it, a bogus taskId (stale UI,
-      // double-click, replay of a cancelled task) cascades an error from
-      // deep inside `OpenCodeAdapter.sendResponse` (`pending` is null, or
-      // the adapter doesn't exist), producing a confusing stack trace
-      // rather than a clean "unknown task" RPC error.
-      if (!taskService.hasActiveTask(taskId)) {
-        throw new Error(
-          `permission.respond: no active task with id=${taskId}. The task may have completed, been cancelled, or never existed.`,
-        );
-      }
-      await taskService.sendResponse(taskId, {
+      const response = {
         requestId,
         taskId,
         decision,
         ...(selectedOptions ? { selectedOptions } : {}),
         ...(customText ? { customText } : {}),
-      });
+      };
+      // Defensive taskId check. Without it, a bogus taskId (stale UI,
+      // double-click, replay of a cancelled task) cascades an error from
+      // deep inside `OpenCodeAdapter.sendResponse` (`pending` is null, or
+      // the adapter doesn't exist), producing a confusing stack trace
+      // rather than a clean "unknown task" RPC error.
+      //
+      // M6-A T2 (D5): a LIVE task goes through the unchanged sendResponse
+      // path. A task with no live adapter (daemon restarted while a human
+      // was deciding) is routed to the persisted-pending-reply guardrails:
+      // only assistance questions auto-resume; permission-kind and
+      // clarification rows are never replayed; duplicate/stale replies fail
+      // loudly. `respondToPersistedPendingRequest` re-checks activeness and
+      // re-uses the exact precondition errors for unknown tasks.
+      if (taskService.hasActiveTask(taskId)) {
+        await taskService.sendResponse(taskId, response);
+        return;
+      }
+      await taskService.respondToPersistedPendingRequest(taskId, response);
     }),
   );
   rpc.registerMethod(

@@ -18,6 +18,9 @@ import {
   getTodosForTask,
   saveTodosForTask,
   clearTodosForTask,
+  getTaskPendingRequest,
+  updateTaskPendingRequest,
+  claimPendingRequestForResume,
 } from '../storage/repositories/taskHistory.js';
 import {
   addFavorite,
@@ -135,6 +138,10 @@ export function createStorage(options: StorageOptions = {}): StorageAPI {
       updateTaskStatus(taskId, status, completedAt),
     updateTaskWorkingDirectory: (taskId, workingDirectory) =>
       updateTaskWorkingDirectory(taskId, workingDirectory),
+    getTaskPendingRequest: (taskId) => getTaskPendingRequest(taskId),
+    updateTaskPendingRequest: (taskId, request) => updateTaskPendingRequest(taskId, request),
+    claimPendingRequestForResume: (taskId, expectedRequestId) =>
+      claimPendingRequestForResume(taskId, expectedRequestId),
     addTaskMessage: (taskId, message) => addTaskMessage(taskId, message),
     updateTaskSessionId: (taskId, sessionId) => updateTaskSessionId(taskId, sessionId),
     updateTaskSummary: (taskId, summary) => updateTaskSummary(taskId, summary),

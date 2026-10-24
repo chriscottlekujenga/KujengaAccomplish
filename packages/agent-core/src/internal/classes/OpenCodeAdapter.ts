@@ -75,7 +75,10 @@ import { DisabledSandboxProvider } from '../../sandbox/disabled-provider.js';
 import { serializeError } from '../../utils/error.js';
 import { getOAuthProviderDisplayName, isOAuthProviderId } from '../../common/types/connector.js';
 import { CONNECTOR_AUTH_REQUIRED_MARKER } from '../../common/constants.js';
-import { ASSISTANCE_QUESTION_HEADER } from '../../common/task-assistance.js';
+import {
+  ASSISTANCE_QUESTION_HEADER,
+  ASSISTANCE_DECLINE_REASON,
+} from '../../common/task-assistance.js';
 import { createConsoleLogger } from '../../utils/logging.js';
 import { ACCOMPLISH_AGENT_NAME } from '../../opencode/config-generator.js';
 import { PROVIDER_ID_TO_OPENCODE, type ProviderId } from '../../common/types/providerSettings.js';
@@ -697,7 +700,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         // the task ends failed with the explicit reason). Clarification
         // question cancels keep the existing success mapping.
         if (pending.assistance === true) {
-          this.markComplete('error', 'Human assistance declined — verification not completed');
+          this.markComplete('error', ASSISTANCE_DECLINE_REASON);
         } else {
           this.markComplete('success');
         }

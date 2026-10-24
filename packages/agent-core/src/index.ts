@@ -569,6 +569,17 @@ export {
 
 // Human-assistance-question marker (Phase 3 M6-A) — see task-assistance.ts.
 export { ASSISTANCE_QUESTION_HEADER } from './common/task-assistance.js';
+export {
+  ASSISTANCE_DECLINE_REASON,
+  createPendingRequestRecord,
+  formatAssistanceAnswer,
+  buildAssistanceContinuationPrompt,
+  PENDING_REQUEST_QUESTION_CAP,
+  PENDING_REQUEST_FIELD_CAP,
+  PENDING_REQUEST_HEADER_CAP,
+  ASSISTANCE_CONTINUATION_ANSWER_CAP,
+} from './common/task-assistance.js';
+export type { PendingRequestRecord } from './common/types/task.js';
 
 export {
   MODEL_DISPLAY_NAMES,

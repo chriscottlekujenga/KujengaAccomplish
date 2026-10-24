@@ -1,4 +1,29 @@
+import type { PermissionOption } from './permission.js';
 import type { OAuthProviderId } from './connector.js';
+
+/**
+ * Persisted pending permission/question request (Phase 3 M6-A D4).
+ *
+ * Stored as JSON in `tasks.pending_request` (migration v033) whenever a task
+ * parks on a HUMAN reply (`waiting_permission` / `waiting_for_user`), so a
+ * daemon restart can restore the card (T3) and — for assistance questions —
+ * auto-resume the session on a later reply (D5). Cleared on sendResponse,
+ * cancel, any terminal status, and crash-to-failed recovery.
+ *
+ * Secret-hygiene: question/header/option text is redacted (agent-core
+ * `redact`) and length-capped at write time; never store tool input, file
+ * previews, or credential-shaped content in this record.
+ */
+export interface PendingRequestRecord {
+  /** `permission` = tool/file permission ask (`waiting_permission`); `question` = ask-user question. */
+  kind: 'permission' | 'question';
+  requestId: string;
+  question?: string;
+  header?: string;
+  options?: PermissionOption[];
+  multiSelect?: boolean;
+  createdAt: string;
+}
 
 export type TaskStatus =
   | 'pending'
@@ -86,6 +111,13 @@ export interface Task {
    * before v032 have no value (undefined/NULL).
    */
   workingDirectory?: string;
+  /**
+   * Pending human-assistance / permission request parked on this task, read
+   * back from `tasks.pending_request` (migration v033) so the UI can restore
+   * the question card after a daemon restart (M6-A T2). Present only while
+   * the task sits in a waiting\_\* status.
+   */
+  pendingRequest?: PendingRequestRecord;
 }
 
 export interface TaskAttachment {

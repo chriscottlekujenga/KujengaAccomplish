@@ -153,4 +153,37 @@ describe('recoverStaleTasks — boot crash sweep marks ONLY stale running tasks 
     expect(survivor?.workingDirectory).toBe('/home/chris/project');
     expect(survivor?.completedAt).toBeUndefined();
   });
+
+  // M6-A T2 (D4): a crash-to-failed flip is terminal — the stale running
+  // task's persisted pending request is cleared with it, so no later reply
+  // can resurrect a dead ask. Waiting rows KEEP their pending record (those
+  // hold resumable assistance questions).
+  it('clears the persisted pending request on the running→failed flip; waiting rows keep theirs', () => {
+    if (!sqliteAvailable) {
+      console.warn('Skipping: better-sqlite3 native module not available');
+      return;
+    }
+    const store = initializeStorage();
+    const pendingRecord = {
+      kind: 'question',
+      requestId: 'questionreq_crash',
+      question: 'gate question',
+      createdAt: FIXED_CREATED_AT,
+    } as const;
+
+    seedTask(store, 'tsk_crash_run', 'running', { sessionId: 'sess_run' });
+    seedTask(store, 'tsk_crash_waiting', 'waiting_for_user', {
+      sessionId: 'sess_wait',
+      workingDirectory: '/home/chris/project',
+    });
+    store.updateTaskPendingRequest('tsk_crash_run', pendingRecord);
+    store.updateTaskPendingRequest('tsk_crash_waiting', pendingRecord);
+
+    recoverStaleTasks(store);
+
+    expect(store.getTask('tsk_crash_run')?.status).toBe('failed');
+    expect(store.getTaskPendingRequest('tsk_crash_run')).toBeNull();
+    expect(store.getTask('tsk_crash_waiting')?.status).toBe('waiting_for_user');
+    expect(store.getTaskPendingRequest('tsk_crash_waiting')).toEqual(pendingRecord);
+  });
 });

@@ -98,6 +98,7 @@ function createMockStorage() {
     saveTodosForTask: vi.fn(),
     getTasks: vi.fn(() => []),
     getTask: vi.fn(() => null),
+    updateTaskPendingRequest: vi.fn(),
     getApiKey: vi.fn(() => null),
     getAllApiKeys: vi.fn(() => Promise.resolve({})),
     getActiveProviderModel: vi.fn(() => null),
@@ -548,6 +549,24 @@ describe('TaskService parity', () => {
           rows.set(taskId, { ...existing, workingDirectory });
         }
       }),
+      // M6-A T2 (D4): pending-request record map with the same write/clear
+      // semantics the real storage repo has (null clears).
+      getTaskPendingRequest: vi.fn((taskId: string) => rows.get(taskId)?.pendingRequest ?? null),
+      updateTaskPendingRequest: vi.fn(
+        (
+          taskId: string,
+          request: import('@accomplish_ai/agent-core').PendingRequestRecord | null,
+        ) => {
+          const existing = rows.get(taskId);
+          if (existing) {
+            rows.set(taskId, {
+              ...existing,
+              ...(request ? { pendingRequest: request } : { pendingRequest: undefined }),
+            });
+          }
+        },
+      ),
+      claimPendingRequestForResume: vi.fn(),
       addTaskMessage: vi.fn(),
       updateTaskSummary: vi.fn(),
       updateTaskSessionId: vi.fn(),

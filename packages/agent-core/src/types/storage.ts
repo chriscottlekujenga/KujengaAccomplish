@@ -1,4 +1,4 @@
-import type { Task, TaskStatus, TaskMessage } from '../common/types/task.js';
+import type { Task, TaskStatus, TaskMessage, PendingRequestRecord } from '../common/types/task.js';
 import type { TodoItem } from '../common/types/todo.js';
 import type { CreditUsage } from '../common/types/gateway.js';
 import type {
@@ -76,6 +76,13 @@ export interface StoredTask {
    * run against the original task's working directory.
    */
   workingDirectory?: string;
+  /**
+   * Pending human-assistance / permission request parked on this task,
+   * persisted in `tasks.pending_request` (migration v033 — M6-A D4) so the
+   * daemon can restore the card and auto-resume assistance questions after
+   * a restart. Present only while the task sits in a waiting\_\* status.
+   */
+  pendingRequest?: PendingRequestRecord;
 }
 
 /** A favorited (starred) completed task, stored for quick reuse on the home page */
@@ -119,6 +126,20 @@ export interface TaskStorageAPI {
   updateTaskStatus(taskId: string, status: TaskStatus, completedAt?: string): void;
   /** Update the host working directory a task runs against (preserved across resume turns) */
   updateTaskWorkingDirectory(taskId: string, workingDirectory: string): void;
+  /** Read the persisted pending permission/question request for a task (M6-A D4); null when none */
+  getTaskPendingRequest(taskId: string): PendingRequestRecord | null;
+  /** Write (or clear with null) the persisted pending permission/question request (M6-A D4) */
+  updateTaskPendingRequest(taskId: string, request: PendingRequestRecord | null): void;
+  /**
+   * Atomically claim a parked assistance question for the reply-after-restart
+   * auto-resume (M6-A D5 single-flight). Returns the claimed record, or null
+   * when any precondition (waiting_for_user row, matching requestId)
+   * failed — see `claimPendingRequestForResume`.
+   */
+  claimPendingRequestForResume(
+    taskId: string,
+    expectedRequestId: string,
+  ): PendingRequestRecord | null;
   /** Append a message to a task's message history */
   addTaskMessage(taskId: string, message: TaskMessage): void;
   /** Update the CLI session ID for a task */

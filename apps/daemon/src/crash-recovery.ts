@@ -21,6 +21,11 @@ export function recoverStaleTasks(storage: TaskStorageAPI): void {
     if (task.status === 'running') {
       log.warn(`[Daemon] Crash recovery: marking stale task ${task.id} as failed`);
       storage.updateTaskStatus(task.id, 'failed', new Date().toISOString());
+      // M6-A T2 (D4): the flip is terminal — clear any persisted pending
+      // request with it. Waiting rows are deliberately untouched (they keep
+      // both their status AND their pending record so the restart restore
+      // stays byte-identical), and only those are ever resumed.
+      storage.updateTaskPendingRequest(task.id, null);
     }
   }
 }

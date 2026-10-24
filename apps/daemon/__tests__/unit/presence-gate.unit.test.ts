@@ -113,9 +113,14 @@ function buildTaskFixture(
   emitter.on('permission', permissionListener);
   // M4: the emitted-branch parks the task in 'waiting_permission' via
   // storage.updateTaskStatus, so the stub must carry that method (auto-deny
-  // branches never touch it).
+  // branches never touch it). M6-A T2: the parked branch also persists the
+  // pending request via updateTaskPendingRequest — stub it so a parked
+  // question can't crash this harness.
   const updateTaskStatus = vi.fn();
-  const storage = { updateTaskStatus } as unknown as StorageAPI;
+  const storage = {
+    updateTaskStatus,
+    updateTaskPendingRequest: vi.fn(),
+  } as unknown as StorageAPI;
   const callbacks = createTaskCallbacks('tsk_gate', emitter, storage, {} as TaskManagerAPI, {
     presence: { hasInteractiveClients: () => server.hasInteractiveClients() },
     getTaskSource: () => source,
