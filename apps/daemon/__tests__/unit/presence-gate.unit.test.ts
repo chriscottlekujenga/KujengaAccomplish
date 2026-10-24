@@ -119,13 +119,20 @@ function buildTaskFixture(
   const updateTaskStatus = vi.fn();
   const storage = {
     updateTaskStatus,
+    updateTaskSessionId: vi.fn(),
     updateTaskPendingRequest: vi.fn(),
   } as unknown as StorageAPI;
-  const callbacks = createTaskCallbacks('tsk_gate', emitter, storage, {} as TaskManagerAPI, {
-    presence: { hasInteractiveClients: () => server.hasInteractiveClients() },
-    getTaskSource: () => source,
-    sendPermissionResponse: deny,
-  });
+  const callbacks = createTaskCallbacks(
+    'tsk_gate',
+    emitter,
+    storage,
+    { getSessionId: () => null } as TaskManagerAPI,
+    {
+      presence: { hasInteractiveClients: () => server.hasInteractiveClients() },
+      getTaskSource: () => source,
+      sendPermissionResponse: deny,
+    },
+  );
   return { callbacks, permissionListener, deny, updateTaskStatus };
 }
 

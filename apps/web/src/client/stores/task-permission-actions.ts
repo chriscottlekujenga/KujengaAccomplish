@@ -35,7 +35,14 @@ function seedPendingRequestCard(
     return;
   }
   set((state) => {
-    if (state.permissionRequests[taskId]) {
+    // M6-A T6: a live card with the SAME requestId is the pre-restart ask —
+    // the adapter died with the daemon, so the persisted record rebuild is
+    // the authoritative card and it must carry the restored marker (the
+    // daemon:reconnected restore path hits exactly this on a page that kept
+    // the card open across the restart). A DIFFERENT id is a genuinely newer
+    // live ask — it wins unchanged (T3 replay discipline preserved).
+    const existing = state.permissionRequests[taskId];
+    if (existing && existing.id !== restored.id) {
       return state;
     }
     const { [taskId]: _, ...restErrors } = state.permissionRequestErrors ?? {};

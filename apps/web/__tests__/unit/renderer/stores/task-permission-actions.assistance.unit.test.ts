@@ -196,6 +196,57 @@ describe('restorePendingRequestFromTask', () => {
     expect(getState().permissionRequests?.['task-1']?.id).toBe('questionreq_LIVE');
   });
 
+  /**
+   * M6-A T6: a daemon restart while the page kept the card open leaves the
+   * pre-restart LIVE card in the store — same requestId the record carries.
+   * The persisted record is the authoritative rebuild (the adapter is dead),
+   * so the same-id restore replaces the stale card AND marks it restored
+   * (the hint is what tells the user the context survived the restart).
+   */
+  it('daemon-restart analog: same-requestId stale live card is replaced by the restored record', () => {
+    const { permission, getState } = buildHarness();
+    const preRestart: PermissionRequest = {
+      id: 'questionreq_assist',
+      taskId: 'task-1',
+      type: 'question',
+      question: 'A CAPTCHA blocks https://example.com/login',
+      header: ASSISTANCE_QUESTION_HEADER,
+      createdAt: new Date().toISOString(),
+    };
+    permission.setPermissionRequest(preRestart);
+    permission.restorePendingRequestFromTask(assistanceRecordTask());
+
+    const state = getState();
+    expect(state.permissionRequests?.['task-1']?.id).toBe('questionreq_assist');
+    expect(state.restoredRequestIds?.['task-1']).toBe(true);
+  });
+
+  it('route re-read same-requestId: a stale pre-restart live card is replaced with the restored marker', async () => {
+    const routeRecord = {
+      kind: 'question' as const,
+      requestId: 'questionreq_sameid',
+      question: 'A CAPTCHA blocks https://example.com/login',
+      createdAt: new Date().toISOString(),
+    };
+    accomplishMock.getPendingRequest.mockResolvedValue(routeRecord);
+    const { permission, getState } = buildHarness({
+      tasks: [buildTask({ id: 'task-1', pendingRequest: undefined })],
+      currentTask: buildTask({ id: 'task-1', pendingRequest: undefined }),
+    });
+    permission.setPermissionRequest({
+      id: routeRecord.requestId,
+      taskId: 'task-1',
+      type: 'question',
+      question: 'A CAPTCHA blocks https://example.com/login',
+      createdAt: new Date().toISOString(),
+    });
+
+    await permission.refetchPendingRequest('task-1');
+
+    expect(getState().permissionRequests?.['task-1']?.id).toBe(routeRecord.requestId);
+    expect(getState().restoredRequestIds?.['task-1']).toBe(true);
+  });
+
   it('clears a stale rejection error when the card is restored fresh (page-reload analog)', async () => {
     const { permission, getState } = buildHarness();
     permission.restorePendingRequestFromTask(assistanceRecordTask());

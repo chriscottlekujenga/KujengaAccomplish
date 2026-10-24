@@ -116,6 +116,17 @@ export function createTaskCallbacks(
           ? 'waiting_for_user'
           : 'waiting_permission';
         storage.updateTaskStatus(taskId, waitingStatus);
+        // M6-A T6 (D5 enablement): persist the LIVE session id at park time.
+        // Until now session_id reached the DB only at onComplete, so a real
+        // daemon restart while parked left the row without a resumable
+        // session and `respondToPersistedPendingRequest` refused to claim
+        // (the T2 matrix seeded the row; this E2E gap surfaced live). The
+        // adapter's session id is authoritative here — onComplete overwrites
+        // it with the final turn's session, unchanged.
+        const liveSessionId = taskManager.getSessionId(taskId);
+        if (liveSessionId) {
+          storage.updateTaskSessionId(taskId, liveSessionId);
+        }
         emitter.emit('statusChange', { taskId, status: waitingStatus });
         // M6-A T2 (D4): persist the parked request so a daemon restart can
         // restore the question card and (for assistance questions) auto-resume

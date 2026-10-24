@@ -27,7 +27,11 @@ import { createTaskCallbacks } from '../../src/task-callbacks.js';
  *   4. `!'whatsapp'` AND interactive UI attached → emit.
  */
 
-function buildFixture(options: { source: TaskSource; hasInteractiveClients: boolean }) {
+function buildFixture(options: {
+  source: TaskSource;
+  hasInteractiveClients: boolean;
+  liveSessionId?: string | null;
+}) {
   const emitter = new EventEmitter();
   // Mirror the daemon's real wiring: task-event-forwarding attaches ONE
   // listener on 'permission' to forward to RPC. That baseline listener is
@@ -52,7 +56,7 @@ function buildFixture(options: { source: TaskSource; hasInteractiveClients: bool
   } as unknown as StorageAPI;
 
   const taskManager = {
-    getSessionId: vi.fn(() => null),
+    getSessionId: vi.fn(() => options.liveSessionId ?? null),
   } as unknown as TaskManagerAPI;
 
   const callbacks = createTaskCallbacks('tsk_abc', emitter, storage, taskManager, {
@@ -444,6 +448,78 @@ describe('createTaskCallbacks — M6-A assistance-question routing (waiting_for_
       const f3 = buildFixture({ source: 'scheduler', hasInteractiveClients: false });
       f3.callbacks.onPermissionRequest?.(assistanceQuestion);
       expect(f3.storage.updateTaskPendingRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * M6-A T6 (D5 enablement): the parked row must carry the LIVE adapter
+   * session id — a reply after a daemon restart claims the row and resumes
+   * the ORIGINAL persisted session. Until T6 the session id reached the DB
+   * only at onComplete, so a real restart while parked left the row without
+   * a resumable session (live gap surfaced by the 36-assistance-restart E2E).
+   */
+  describe('createTaskCallbacks — live session persisted on park (M6-A T6)', () => {
+    const assistanceQuestion: PermissionRequest = {
+      id: 'questionreq_park_session',
+      taskId: 'tsk_abc',
+      type: 'question',
+      question: 'A CAPTCHA is blocking https://example.com/form',
+      header: ASSISTANCE_QUESTION_HEADER,
+      createdAt: '2026-10-24T00:00:00.000Z',
+    };
+    const fileRequest: PermissionRequest = {
+      id: 'filereq_park_session',
+      taskId: 'tsk_abc',
+      type: 'file',
+      fileOperation: 'create',
+      filePath: '/tmp/any.txt',
+      createdAt: '2026-10-24T00:00:00.000Z',
+    };
+
+    it('assistance park persists the live adapter session id (restart-resumable row)', () => {
+      const f = buildFixture({
+        source: 'ui',
+        hasInteractiveClients: true,
+        liveSessionId: 'sess_live_123',
+      });
+
+      f.callbacks.onPermissionRequest?.(assistanceQuestion);
+
+      expect(f.storage.updateTaskSessionId).toHaveBeenCalledTimes(1);
+      expect(f.storage.updateTaskSessionId).toHaveBeenCalledWith('tsk_abc', 'sess_live_123');
+    });
+
+    it('waiting_permission park persists the live session id too (M4 waiting rows)', () => {
+      const f = buildFixture({
+        source: 'ui',
+        hasInteractiveClients: true,
+        liveSessionId: 'sess_live_123',
+      });
+
+      f.callbacks.onPermissionRequest?.(fileRequest);
+
+      expect(f.storage.updateTaskSessionId).toHaveBeenCalledWith('tsk_abc', 'sess_live_123');
+      expect(f.storage.updateTaskStatus).toHaveBeenCalledWith('tsk_abc', 'waiting_permission');
+    });
+
+    it('no live session yet → no session write (pre-session park stays null-safe)', () => {
+      const f = buildFixture({ source: 'ui', hasInteractiveClients: true });
+
+      f.callbacks.onPermissionRequest?.(fileRequest);
+
+      expect(f.storage.updateTaskSessionId).not.toHaveBeenCalled();
+    });
+
+    it('auto-deny never touches the session id (no human waits, task stays running)', () => {
+      const f = buildFixture({
+        source: 'ui',
+        hasInteractiveClients: false,
+        liveSessionId: 'sess_live_123',
+      });
+
+      f.callbacks.onPermissionRequest?.(assistanceQuestion);
+
+      expect(f.storage.updateTaskSessionId).not.toHaveBeenCalled();
     });
   });
 });
