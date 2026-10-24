@@ -98,11 +98,12 @@
 - **Explicitly NOT verified (user directive) — M6 items:** browser-preview panel rendering (frames generated + delivered server-side, but contain the preview's own blank tab — preview-page-vs-agent-page seam needs a design decision); relay.test.ts parallel-run flake (pre-existing, in-package suite only); token-in-journal hardening (user-directed record).
 - **Battery at closeout:** web unit 491/491 · agent-core 807+1skip · dev-browser in-package 25/25 focused · web integration 158/61 = exact upstream baseline · typecheck 5/5 · lint 0 errors (3 pre-existing warnings) · prettier clean · daemon pid 3945 never restarted · production config restored. **STOP after T7 — M5 closes with T8 (separate small-session task).**
 
-### T8 — Checkpoint + recommendations + final docs commit
+### T8 — Checkpoint + recommendations + final docs commit — **DONE (2026-10-23, docs in this commit)**
 
 - **Objective:** close M5 documentation.
 - **Files:** `docs/DEVELOPMENT_CHECKPOINT.md` (§23: results, commit hashes, suite counts, harness evidence, limitations, manual-checklist results), `docs/PHASE_3_IMPLEMENTATION_PLAN.md` (M5 status line), NEW short `docs/PHASE_3_M5_DEFERRED_DESIGNS_RECOMMENDATIONS.md` (CAPTCHA/MFA assistance trigger — plan §C1 options A/B; browser-session handoff — §C2 constraints; remote assistance via Android; resume-after-human-verification — recommend prioritization for M6+ without implementing), optionally fold the manual checklist outcome in.
 - **Acceptance:** docs committed in one `docs(phase3):` commit; recommendations contain a concrete next-milestone proposal; STOP after M5 (no M6).
+- **Outcome:** DONE — checkpoint §23 (delivery table, final suite counts, harness evidence, unresolved-limitations register incl. the still-unresolved browser preview seam, security posture, M5 commit table), Phase 3 plan status line + §4/§8 marked complete, NEW `docs/PHASE_3_M5_DEFERRED_DESIGNS_RECOMMENDATIONS.md` with a concrete M6-A (human-assistance loop v1: Option-B question trigger + auto-resume + preview-seam fix) / M6-B (remaining parity) sequencing proposal. Stale handoff lines refreshed (`M5_DEBUG_CHECKPOINT.md` §5). **M5 closed; M6 requires separate approval; nothing pushed/merged.**
 - **Complexity:** S–M.
 
 ## 4. Dependency graph
