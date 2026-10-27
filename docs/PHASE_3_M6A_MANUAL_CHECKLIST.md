@@ -80,10 +80,11 @@ Statuses: **NOT RUN** → PASS (with user confirmation + architect evidence) / F
 
   When a tool/file permission card appears, click **Deny**. Let the task reach its terminal state.
 
+- **Attempt 1 pair (2026-10-26 21:37–21:38 EDT) — INVALID for the deny test (user clicked Allow, not Deny; user-directive: marked INVALID, NOT passed):** TWO deny-genre tasks exist — `task_1793065059980` (21:37:39–21:37:59) and `task_1793065105868` (21:38:25–21:38:30), same prompt, both `completed`. Child logs prove the M1 gate ASKED on BOTH writes (write→`edit` evaluate → action `ask` → `asking` → `permission.asked`, `…/log/2026-10-27T013740.log:359-362` + `…/T013826.log:190-193`) and the user's ALLOW replies came 7.0 s (21:37:53) and 2.2 s (21:38:30) later — two cards, two accidental Allows (the user remembers only one click; the second task's "Tool write error" in its transcript is the WRITE TOOL REFUSING THE ALREADY-EXISTING FILE that the first Allow had created — no policy bypass; task rows remain in history per M5 convention). ARTIFACT removed: `…/task-workspace/m6-deny.txt` — content-verified byte-exact `M6_DENY_SPOT_OK` (15 bytes, od-verified, no trailing newline) BEFORE deletion, deleted under an exact-content guard, sweep clean afterwards (workspace + home + repo root: 0 matches).
 - **Expected (M5 H4 parity):** deny is enforced (no `m6-deny.txt` anywhere); the task reaches a terminal state without hanging; deny semantics byte-identical to M5 (whatever terminal state M5 showed: completed-via-adaptation, with no file).
 - **Auto-deny-on-disconnect (part 3):** automated E2E coverage (99-presence-autodeny suite + §6.4) stands in; manual probe offered as optional O2 below.
-- **Architect evidence:** `m6-deny.txt` ABSENT in task workspace + home; policy surfaces byte-untouched (§1 table).
-- **User confirmation:** _pending_
+- **Architect evidence:** `m6-deny.txt` ABSENT in task workspace + home at rerun start (clean slate); policy surfaces byte-untouched (§1 table).
+- **User confirmation:** _pending (rerun)_
 
 ### A7 — UNSCRIPTED real-gate adherence sample (checkpoint §6.6 directive; honest sample of model behavior) — status: **OBSERVED (pending)**
 
