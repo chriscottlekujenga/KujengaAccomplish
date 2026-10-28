@@ -304,6 +304,36 @@ describe('respondToPermission — success path (existing behavior preserved)', (
   });
 });
 
+describe('respondToPermission — SEC-1 log hygiene', () => {
+  it('logs the reply decision WITHOUT the answer text (options/customText never reach logs)', async () => {
+    const { permission } = buildHarness();
+    accomplishMock.logEvent.mockClear();
+    await permission.respondToPermission({
+      requestId: 'questionreq_sec1',
+      taskId: 'task-1',
+      decision: 'allow',
+      selectedOptions: ['Share your GitHub username and password via the custom answer box'],
+      customText: 'password: hunter2secret',
+    });
+
+    expect(accomplishMock.logEvent).toHaveBeenCalledTimes(1);
+    const payload = accomplishMock.logEvent.mock.calls[0][0] as {
+      message: string;
+      context: Record<string, unknown>;
+    };
+    expect(payload.message).toBe('UI permission response');
+    expect(payload.context).toEqual({
+      requestId: 'questionreq_sec1',
+      taskId: 'task-1',
+      decision: 'allow',
+      selectedOptionCount: 1,
+      customTextLength: 'password: hunter2secret'.length,
+    });
+    expect(JSON.stringify(payload)).not.toContain('hunter2secret');
+    expect(JSON.stringify(payload)).not.toContain('Share your GitHub username');
+  });
+});
+
 describe('respondToPermission — daemon guardrail rejections (D5 error states)', () => {
   it('records the rejection and keeps the card (no decision is replayed)', async () => {
     const { permission, getState } = buildHarness();

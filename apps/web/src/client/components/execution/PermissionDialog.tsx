@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import type { PermissionRequest } from '@accomplish_ai/agent-core/common';
 import { isAssistanceRequest, formatWaitAge } from '../../lib/assistance-requests';
+import { isCredentialFlaggedRequest } from '../../lib/credential-guard';
+import { isCredentialUnsafeAnswer } from '@accomplish_ai/agent-core/common';
 import { isDeleteOperation, getDisplayFilePaths } from './permission-utils';
 import { PermissionDialogFile } from './PermissionDialogFile';
 import { PermissionDialogQuestion } from './PermissionDialogQuestion';
@@ -93,9 +95,22 @@ export function PermissionDialog({
 
   const isAssistance = isAssistanceRequest(permissionRequest);
 
+  // SEC-1: a question whose ask text matches credential-request language
+  // (detection is header-independent) shows a warning + manual-auth guidance
+  // and blocks secret-shaped answers, while Cancel/Decline stays available.
+  const isCredentialFlagged =
+    permissionRequest.type === 'question' && isCredentialFlaggedRequest(permissionRequest);
+
   const handleRespond = (allowed: boolean) => {
     const isQuestion = permissionRequest.type === 'question';
     const hasCustomText = isQuestion && customResponse.trim();
+    // SEC-1 belt-and-braces: never transmit a secret-shaped reply via Submit.
+    // (The adapter enforces the same rule daemon-side for every surface.)
+    if (isQuestion && allowed && hasCustomText && isCredentialFlagged) {
+      if (isCredentialUnsafeAnswer(customResponse.trim(), true)) {
+        return;
+      }
+    }
     onRespond(
       allowed,
       isQuestion ? (hasCustomText ? [] : selectedOptions) : undefined,
@@ -191,6 +206,12 @@ export function PermissionDialog({
                     customResponse={customResponse}
                     setCustomResponse={setCustomResponse}
                     onSubmit={() => handleRespond(true)}
+                    credentialFlagged={isCredentialFlagged}
+                    answerBlocked={
+                      isCredentialFlagged &&
+                      !!customResponse.trim() &&
+                      isCredentialUnsafeAnswer(customResponse.trim(), true)
+                    }
                   />
                 )}
                 {permissionRequest.type === 'tool' && (
@@ -219,9 +240,10 @@ export function PermissionDialog({
                 className={cn('flex-1', isDelete && 'bg-red-600 hover:bg-red-700 text-white')}
                 data-testid="permission-allow-button"
                 disabled={
-                  permissionRequest.type === 'question' &&
-                  selectedOptions.length === 0 &&
-                  !customResponse.trim()
+                  (permissionRequest.type === 'question' &&
+                    selectedOptions.length === 0 &&
+                    !customResponse.trim()) ||
+                  (isCredentialFlagged && isCredentialUnsafeAnswer(customResponse.trim(), true))
                 }
               >
                 {isDelete

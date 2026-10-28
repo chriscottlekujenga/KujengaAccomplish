@@ -201,6 +201,94 @@ describe('toTaskMessage', () => {
     expect(result!.attachments).toBeUndefined();
   });
 
+  // --- SEC-1 persist-layer scrub (question tool rows) --------------------------------
+
+  it('SEC-1: scrubs the embedded ANSWER text from a completed question tool row (flagged ask)', () => {
+    const message: OpenCodeMessage = {
+      type: 'tool_use',
+      part: {
+        id: 'q-part-1',
+        sessionID: 's1',
+        messageID: 'm-q1',
+        type: 'tool_use',
+        tool: 'question',
+        state: {
+          status: 'completed',
+          input: {
+            questions: [
+              {
+                header: 'Verify',
+                question: 'Tell me the 6-digit code from the SMS',
+                options: [{ label: 'Enter the code in the box' }],
+              },
+            ],
+          },
+          output: 'The human replied: 482913',
+        },
+      },
+    } as OpenCodeMessage;
+
+    const result = toTaskMessage(message);
+    expect(result).not.toBeNull();
+    expect(result!.toolName).toBe('question');
+    // The ask text itself is card-context (shown in the dialog) and is not
+    // secret material — it persists; strings in toolInput lose only
+    // redact-pattern secret shapes.
+    expect(result!.content).not.toContain('482913');
+    expect(result!.content).toContain('REDACTED');
+  });
+
+  it('SEC-1: scrubs redact-pattern secret shapes quoted inside a question tool row', () => {
+    const message: OpenCodeMessage = {
+      type: 'tool_use',
+      part: {
+        id: 'q-part-2',
+        sessionID: 's1',
+        messageID: 'm-q2',
+        type: 'tool_use',
+        tool: 'question',
+        state: {
+          status: 'completed',
+          input: {
+            questions: [
+              {
+                question: 'Is the key you showed sk-abcdefghijklmnopqrstuvwxyz123',
+              },
+            ],
+          },
+          output: 'confirmed',
+        },
+      },
+    } as OpenCodeMessage;
+
+    const result = toTaskMessage(message);
+    expect(result).not.toBeNull();
+    expect(JSON.stringify(result!.toolInput)).not.toContain('sk-abcdefghijklmnopqrstuvwxyz123');
+    expect(JSON.stringify(result!.toolInput)).toContain('REDACTED');
+  });
+
+  it('SEC-1: leaves other tools untouched (regression guard on bash/browser rows)', () => {
+    const message: OpenCodeMessage = {
+      type: 'tool_use',
+      part: {
+        id: 'bash-part-1',
+        sessionID: 's1',
+        messageID: 'm-b1',
+        type: 'tool_use',
+        tool: 'bash',
+        state: {
+          status: 'completed',
+          input: { command: 'count rows with code 482913' },
+          output: '482913 rows',
+        },
+      },
+    } as OpenCodeMessage;
+
+    const result = toTaskMessage(message);
+    expect(result).not.toBeNull();
+    expect(result!.content).toContain('482913');
+  });
+
   // --- New behaviours from commercial PR #720 (OpenCode SDK cutover) -----------------
 
   it('emits a tool message in running state (previously dropped in OSS)', () => {

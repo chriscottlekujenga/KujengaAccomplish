@@ -104,6 +104,20 @@ function buildPermissionPending(requestId: string): PendingRequestRecord {
   return { kind: 'permission', requestId, createdAt: FIXED_CREATED_AT };
 }
 
+/** SEC-1: an ask whose text matches credential-request language. */
+function buildCredentialPending(requestId: string): PendingRequestRecord {
+  return agentCore.createPendingRequestRecord({
+    id: requestId,
+    taskId: TASK_ID,
+    type: 'question',
+    question: 'I cannot continue without the 6-digit code from your SMS',
+    header: 'Verify your identity',
+    options: [{ label: 'Send the code' }, { label: 'Skip this verification' }],
+    multiSelect: false,
+    createdAt: FIXED_CREATED_AT,
+  });
+}
+
 function makeResponse(overrides: Partial<PermissionResponse> = {}): PermissionResponse {
   return {
     taskId: TASK_ID,
@@ -467,6 +481,78 @@ describe('TaskService.respondToPersistedPendingRequest — reply-after-restart (
     expect(storage.getTask(TASK_ID)?.status).toBe('waiting_for_user');
     expect(storage.getTaskPendingRequest(TASK_ID)?.requestId).toBe('questionreq_nosess');
     expect(capturedTaskConfigs).toHaveLength(0);
+  });
+
+  it('SEC-1: a password-shaped answer is BLOCKED before the claim — the record stays parked', async () => {
+    if (!storage || !service) {
+      console.warn('Skipping: better-sqlite3 native module not available');
+      return;
+    }
+    park('waiting_for_user', { requestId: 'questionreq_pending_1' });
+    const before = storage.getTask(TASK_ID);
+
+    await expect(
+      service.respondToPersistedPendingRequest(
+        TASK_ID,
+        makeResponse({ selectedOptions: undefined, customText: 'password: hunter2secret' }),
+      ),
+    ).rejects.toThrowError(agentCore.CREDENTIAL_BLOCK_USER_MESSAGE);
+
+    // Untouched: status, persisted record, and NO resumption turn. The user
+    // can retry with a safe answer or cancel (D3 decline).
+    expect(storage.getTask(TASK_ID)?.status).toBe('waiting_for_user');
+    expect(JSON.stringify(storage.getTask(TASK_ID))).toBe(JSON.stringify(before));
+    expect(storage.getTaskPendingRequest(TASK_ID)?.requestId).toBe('questionreq_pending_1');
+    expect(capturedTaskConfigs).toHaveLength(0);
+  });
+
+  it('SEC-1: a bare MFA code reply to a credential-flagged ask is blocked; a manual-auth confirmation resumes', async () => {
+    if (!storage || !service) {
+      console.warn('Skipping: better-sqlite3 native module not available');
+      return;
+    }
+    storage.saveTask({
+      id: TASK_ID,
+      prompt: 'original task',
+      status: 'waiting_for_user',
+      createdAt: FIXED_CREATED_AT,
+      messages: [],
+      sessionId: 'sess_orig_1',
+      workingDirectory: '/home/chris/project',
+    } as never);
+    storage.updateTaskPendingRequest(TASK_ID, buildCredentialPending('questionreq_sec1'));
+
+    // The ask itself was credential-flagged (header-independent detection) —
+    // a bare digit code is blocked on the flagged surface.
+    await expect(
+      service.respondToPersistedPendingRequest(
+        TASK_ID,
+        makeResponse({
+          requestId: 'questionreq_sec1',
+          selectedOptions: undefined,
+          customText: '482913',
+        }),
+      ),
+    ).rejects.toThrowError(agentCore.CREDENTIAL_BLOCK_USER_MESSAGE);
+    expect(storage.getTask(TASK_ID)?.status).toBe('waiting_for_user');
+    expect(storage.getTaskPendingRequest(TASK_ID)?.requestId).toBe('questionreq_sec1');
+    expect(capturedTaskConfigs).toHaveLength(0);
+
+    // A manual-browser-auth confirmation is a SAFE answer: it resumes the
+    // SAME session with the answer embedded (redacted-but-intact).
+    await service.respondToPersistedPendingRequest(
+      TASK_ID,
+      makeResponse({
+        requestId: 'questionreq_sec1',
+        selectedOptions: ["I'll complete it — please wait"],
+        customText: 'I logged in myself in the preview browser',
+      }),
+    );
+    expect(capturedTaskConfigs).toHaveLength(1);
+    expect(capturedTaskConfigs[0].config.sessionId).toBe('sess_orig_1');
+    expect(capturedTaskConfigs[0].config.prompt).toContain(
+      'I logged in myself in the preview browser',
+    );
   });
 
   it('multi-question replies are lossless: BOTH selected options AND the free-text note reach the prompt', async () => {

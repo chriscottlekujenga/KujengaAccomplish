@@ -22,6 +22,13 @@ export interface PermissionRequest {
   header?: string;
   options?: PermissionOption[];
   multiSelect?: boolean;
+  /**
+   * SEC-1: true when the agent-authored ask text (header/question/options)
+   * matches credential-request language. Header-independent — never keyed on
+   * the M6-A assistance header. Restored (pre-SEC-1) records may omit it;
+   * UI consumers re-run detection over the text surfaces in that case.
+   */
+  credentialRisk?: boolean;
   fileOperation?: FileOperation;
   filePath?: string;
   filePaths?: string[];

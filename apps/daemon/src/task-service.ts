@@ -11,6 +11,8 @@ import {
   ASSISTANCE_DECLINE_REASON,
   buildAssistanceContinuationPrompt,
   formatAssistanceAnswer,
+  detectCredentialRequest,
+  assertCredentialSafeAnswer,
   type TaskManagerAPI,
   type TaskCallbacks,
   type TaskConfig,
@@ -568,6 +570,20 @@ export class TaskService extends EventEmitter {
       );
       return;
     }
+
+    // SEC-1: block secret-shaped answers BEFORE the single-flight claim so a
+    // refused reply leaves the persisted record parked (retryable) instead of
+    // claimed. Detection re-runs on the STORED ask text — header-independent
+    // (the canonical assistance header is not consulted).
+    const credentialFlagged = detectCredentialRequest([
+      { value: pending.question, kind: 'question' },
+      { value: pending.header, kind: 'header' },
+      ...(pending.options ?? []).flatMap((o) => [
+        { value: o.label, kind: 'option_label' as const },
+        { value: o.description, kind: 'option_description' as const },
+      ]),
+    ]).flagged;
+    assertCredentialSafeAnswer(response.customText ?? '', credentialFlagged);
 
     // Atomic single-flight claim: flips the row to 'resuming' and clears the
     // persisted request in one statement. A losing (concurrent) reply finds

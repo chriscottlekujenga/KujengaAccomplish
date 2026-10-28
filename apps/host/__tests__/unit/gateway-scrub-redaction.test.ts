@@ -641,6 +641,34 @@ describe('gateway log redaction (§5.4: tokens never reach log output)', () => {
     }
   });
 
+  it('/client-log payloads carrying credential-shaped material are redacted (SEC-1)', async () => {
+    const password = 'Sup3r-Secret-Pass!';
+    const apiKey = 'sk-proj-9a8b7c6d5e4f3g2h1i0j';
+    const res = await fetch(`http://127.0.0.1:${gateway.port}/client-log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        level: 'warn',
+        message: `user typed: password is ${password}`,
+        context: `debug reply echo: the API key is ${apiKey}, MFA code: 482913`,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const relevant = lines.filter(
+      (line) => line.text.includes('user typed') || line.text.includes('reply echo'),
+    );
+    expect(relevant.length).toBeGreaterThanOrEqual(1);
+    for (const line of relevant) {
+      expect(line.text, `log line leaked credential material: ${line.text}`).not.toContain(
+        password,
+      );
+      expect(line.text, `log line leaked credential material: ${line.text}`).not.toContain(apiKey);
+      expect(line.text, `log line leaked credential material: ${line.text}`).not.toContain(
+        '482913',
+      );
+    }
+  });
+
   it('truncation cannot strand a token fragment when the redacted span straddles the cap', async () => {
     // 4000-char message cap: the token starts at char 3992, so a
     // slice-first implementation would cut it exactly after the 9-char

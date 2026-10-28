@@ -581,6 +581,23 @@ export {
 } from './common/task-assistance.js';
 export type { PendingRequestRecord } from './common/types/task.js';
 
+// SEC-1 credential detection — see credential-detection.ts.
+export {
+  CREDENTIAL_GENRES,
+  CREDENTIAL_BLOCK_USER_MESSAGE,
+  detectCredentialRequest,
+  containsLikelySecret,
+  hasOtpLikeDigits,
+  isCredentialUnsafeAnswer,
+  assertCredentialSafeAnswer,
+  scrubCredentialText,
+} from './common/credential-detection.js';
+export type {
+  CredentialGenre,
+  CredentialTextPart,
+  CredentialDetectionResult,
+} from './common/credential-detection.js';
+
 export {
   MODEL_DISPLAY_NAMES,
   PROVIDER_PREFIXES,

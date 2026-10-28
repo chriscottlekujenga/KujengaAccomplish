@@ -7,6 +7,11 @@ import {
   sanitizeToolOutput,
   getToolDisplayName,
 } from './message-sanitization.js';
+import {
+  detectCredentialRequest,
+  scrubCredentialText,
+  type CredentialTextPart,
+} from '../common/credential-detection.js';
 
 export type { MessageAttachment } from './message-attachments.js';
 export { MESSAGE_BATCH_DELAY_MS } from './message-batcher.js';
@@ -20,6 +25,50 @@ export {
 export { extractScreenshots } from './message-attachments.js';
 
 const MAX_TOOL_OUTPUT_LENGTH = 200_000;
+
+/**
+ * SEC-1 persist-layer hygiene: a `question` tool row carries the agent's ask
+ * (toolInput) and opencode's result (content embeds the human's answers).
+ * Both get credential-scrubbed on the way to `task_messages`; the ask text
+ * also drives ask-side detection. Suffix-tolerant to match how tool
+ * classification treats MCP-suffixed tool names.
+ */
+const QUESTION_TOOL_NAME_RE = /(?:^|_)question$/;
+
+function collectStringValues(value: unknown, parts: string[]): void {
+  if (typeof value === 'string') {
+    parts.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStringValues(item, parts);
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const entry of Object.values(value as Record<string, unknown>)) {
+      collectStringValues(entry, parts);
+    }
+  }
+}
+
+function scrubStringValues(value: unknown, askFlagged: boolean): unknown {
+  if (typeof value === 'string') {
+    return scrubCredentialText(value, askFlagged);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubStringValues(item, askFlagged));
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = scrubStringValues(entry, askFlagged);
+    }
+    return out;
+  }
+  return value;
+}
 
 /**
  * Per-message model/provider context passed through by the SDK adapter.
@@ -129,7 +178,18 @@ export function toTaskMessage(
     if (displayName === null) {
       return null;
     }
-    const toolInput = toolUseMsg.part.state?.input;
+    const rawToolInput = toolUseMsg.part.state?.input;
+    const isQuestionTool = QUESTION_TOOL_NAME_RE.test(toolName);
+    let askFlagged = false;
+    let toolInput = rawToolInput;
+    if (isQuestionTool) {
+      const askTexts: string[] = [];
+      collectStringValues(rawToolInput, askTexts);
+      askFlagged = detectCredentialRequest(
+        askTexts.map((value): CredentialTextPart => ({ value, kind: 'question' })),
+      ).flagged;
+      toolInput = scrubStringValues(rawToolInput, askFlagged);
+    }
     const toolOutput = toolUseMsg.part.state?.output || '';
     const status = toolUseMsg.part.state?.status;
 
@@ -147,8 +207,14 @@ export function toTaskMessage(
           : extractScreenshots(stableOutput);
       const isError = status === 'error';
       const sanitizedText = sanitizeToolOutput(cleanedText, isError);
+      // SEC-1: on the question tool row the sanitized output can embed the
+      // human's answers — scrub before any display truncation so a secret
+      // fragment cannot survive the cap.
+      const scrubbedText = isQuestionTool
+        ? scrubCredentialText(sanitizedText, askFlagged)
+        : sanitizedText;
       const displayText =
-        sanitizedText.length > 500 ? sanitizedText.substring(0, 500) + '...' : sanitizedText;
+        scrubbedText.length > 500 ? scrubbedText.substring(0, 500) + '...' : scrubbedText;
 
       return {
         id: getStableToolUseMessageId(toolUseMsg),

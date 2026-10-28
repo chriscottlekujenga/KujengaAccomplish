@@ -85,6 +85,10 @@ g.window.accomplish = {
   onTaskUpdate: vi.fn().mockReturnValue(() => {}),
   onTaskSummary: vi.fn().mockReturnValue(() => {}),
   onTodoUpdate: vi.fn().mockReturnValue(() => {}),
+  onDaemonReconnected: vi.fn().mockReturnValue(() => {}),
+  onDaemonDisconnected: vi.fn().mockReturnValue(() => {}),
+  onDaemonReconnectFailed: vi.fn().mockReturnValue(() => {}),
+  daemonPing: vi.fn().mockResolvedValue({ status: 'ok', uptime: 0 }),
 };
 
 export {};

@@ -27,6 +27,27 @@ export { GOOGLE_FILE_PICKER_MARKER } from './common/google-picker-constants.js';
 
 // Human-assistance-question marker (Phase 3 M6-A) — see task-assistance.ts.
 export { ASSISTANCE_QUESTION_HEADER } from './common/task-assistance.js';
+
+// SEC-1 credential detection — see credential-detection.ts.
+export {
+  CREDENTIAL_GENRES,
+  CREDENTIAL_BLOCK_USER_MESSAGE,
+  detectCredentialRequest,
+  containsLikelySecret,
+  hasOtpLikeDigits,
+  isCredentialUnsafeAnswer,
+  assertCredentialSafeAnswer,
+  scrubCredentialText,
+} from './common/credential-detection.js';
+export type {
+  CredentialGenre,
+  CredentialTextPart,
+  CredentialDetectionResult,
+} from './common/credential-detection.js';
+
+// SEC-1 log hygiene: shared redactor re-exported browser-safely (host
+// gateway + desktop pipelines all funnel through this pattern set).
+export { redact } from './utils/redact.js';
 export {
   ASSISTANCE_DECLINE_REASON,
   createPendingRequestRecord,

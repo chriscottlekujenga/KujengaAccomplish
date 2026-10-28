@@ -38,6 +38,7 @@ import { pickFiles, pickFolder } from './file-picker.js';
 import { noopLogger, type HostLogger } from './logger.js';
 import { checkMethodPolicy } from './policy.js';
 import { scrubResponse } from './provider-settings-scrubber.js';
+import { scrubCredentialText } from '@accomplish_ai/agent-core/common';
 import { isDaemonServiceActive, isDaemonServiceEnabled } from './daemon-service.js';
 import {
   TokenRateLimiter,
@@ -775,9 +776,19 @@ export async function createGateway(options: GatewayOptions): Promise<GatewayHan
     // a debug dump of its own fetch config) cannot leak them into the host
     // log. Redact BEFORE truncation so a token straddling the cap cannot
     // survive as a fragment.
-    const message = redactToken(String(entry.message ?? '')).slice(0, 4000);
+    // SEC-1: additionally apply the shared credential scrubber in aggressive
+    // (flagged) mode so client-supplied content that embeds credential-shaped
+    // material (e.g. a question-dialog reply echoed into a debug dump) is
+    // masked before it reaches the host log. Over-masking a log line is
+    // harmless; under-masking leaks. Bearer-token step stays first.
+    const message = scrubCredentialText(redactToken(String(entry.message ?? '')), true).slice(
+      0,
+      4000,
+    );
     const redactedContext =
-      typeof entry.context === 'string' ? redactToken(entry.context).slice(0, 2000) : undefined;
+      typeof entry.context === 'string'
+        ? scrubCredentialText(redactToken(entry.context), true).slice(0, 2000)
+        : undefined;
     logger[level](
       `[client] ${message}`,
       redactedContext ? { context: redactedContext } : undefined,

@@ -145,7 +145,16 @@ export function createTaskPermissionActions(set: SetFn, get: GetFn) {
       void accomplish.logEvent({
         level: 'info',
         message: 'UI permission response',
-        context: { ...response },
+        // SEC-1: NEVER log the answer text itself (customText / selected
+        // options) — both desktop and gateway log pipelines are retention
+        // surfaces. Only sizes and the decision, never content.
+        context: {
+          requestId: response.requestId,
+          taskId: response.taskId,
+          decision: response.decision,
+          selectedOptionCount: response.selectedOptions?.length ?? 0,
+          customTextLength: response.customText?.length ?? 0,
+        },
       });
       try {
         await accomplish.respondToPermission(response);

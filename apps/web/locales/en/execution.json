@@ -79,6 +79,11 @@
       "decline": "Decline",
       "submit": "Submit reply"
     },
+    "credential": {
+      "warning": "This question appears to be asking for a password, code, or other authentication secret. Accomplish agents never need your secrets.",
+      "manualAuth": "Log in directly on the site instead — its own sign-in form in the automation browser or in your own browser — then reply without secrets (choose an option or say that you are done).",
+      "blocked": "Your reply looks like a password, verification code, or recovery code. It will not be sent — edit your answer or cancel."
+    },
     "expired": {
       "title": "This request can no longer be answered",
       "body": "The request belonged to a previous session (reconnect or restart). For security, pending permission decisions are never replayed. Resume the task to continue — the agent will re-request anything it still needs.",

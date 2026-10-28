@@ -114,6 +114,7 @@ vi.stubGlobal('window', {
     onTaskUpdate: mockOnTaskUpdate,
     onTodoUpdate: vi.fn(),
     onTaskSummary: vi.fn(),
+    onDaemonReconnected: vi.fn(),
   },
 });
 

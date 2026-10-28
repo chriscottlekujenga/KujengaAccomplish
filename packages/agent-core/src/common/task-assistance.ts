@@ -11,6 +11,7 @@
  * barrel.
  */
 import { redact } from '../utils/redact.js';
+import { detectCredentialRequest, scrubCredentialText } from './credential-detection.js';
 import type { PermissionOption, PermissionRequest } from './types/permission.js';
 import type { PendingRequestRecord } from './types/task.js';
 
@@ -122,6 +123,12 @@ export function formatAssistanceAnswer(input: {
  * (M6-A D5). Delivered question text ≤ PENDING_REQUEST_QUESTION_CAP chars and
  * the embedded answer ≤ ASSISTANCE_CONTINUATION_ANSWER_CAP chars — hard
  * slices, deliberately marker-free so the cap is byte-exactly testable.
+ *
+ * SEC-1: the question text also drives ask-side credential detection; the
+ * embedded answer then passes through `scrubCredentialText` with that flag so
+ * a flagged ask's answer never persists (or re-enters the session) with
+ * secret-shaped content intact. Callers must have already applied the hard
+ * block (`assertCredentialSafeAnswer`) BEFORE anything reaches this builder.
  */
 export function buildAssistanceContinuationPrompt(input: {
   question?: string;
@@ -131,7 +138,13 @@ export function buildAssistanceContinuationPrompt(input: {
   const question = input.question
     ? capText(redact(input.question), PENDING_REQUEST_QUESTION_CAP)
     : undefined;
-  const answer = capText(redact(input.answer), ASSISTANCE_CONTINUATION_ANSWER_CAP);
+  const askFlagged = question
+    ? detectCredentialRequest([{ value: question, kind: 'question' }]).flagged
+    : false;
+  const answer = capText(
+    scrubCredentialText(input.answer, askFlagged),
+    ASSISTANCE_CONTINUATION_ANSWER_CAP,
+  );
   if (question) {
     lines.push(`You had asked: ${question}`);
   }

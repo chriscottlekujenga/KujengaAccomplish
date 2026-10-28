@@ -79,6 +79,11 @@ import {
   ASSISTANCE_QUESTION_HEADER,
   ASSISTANCE_DECLINE_REASON,
 } from '../../common/task-assistance.js';
+import {
+  detectCredentialRequest,
+  assertCredentialSafeAnswer,
+  scrubCredentialText,
+} from '../../common/credential-detection.js';
 import { createConsoleLogger } from '../../utils/logging.js';
 import { ACCOMPLISH_AGENT_NAME } from '../../opencode/config-generator.js';
 import { PROVIDER_ID_TO_OPENCODE, type ProviderId } from '../../common/types/providerSettings.js';
@@ -234,6 +239,8 @@ interface PendingRequest {
   sessionId: string;
   /** M6-A D3: true for a human-assistance question (header === ASSISTANCE_QUESTION_HEADER). */
   assistance?: boolean;
+  /** SEC-1: ask text matched credential-request language (header-agnostic detection). */
+  credentialFlagged?: boolean;
 }
 
 /**
@@ -657,14 +664,29 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       );
       this.pendingRequest = null;
     } else {
+      // SEC-1: block credential-shaped answers BEFORE anything crosses into
+      // the opencode session. A blocked answer means the model context, the
+      // question-tool row echo, and the assistant continuation all stay
+      // secret-free; the ask stays parked (no reply transmitted) and the
+      // caller surfaces the blocking message on the card. Cancel/decline
+      // (no answer payload) is unaffected.
+      const credentialFlagged = pending.credentialFlagged === true;
+      if (response.customText) {
+        assertCredentialSafeAnswer(response.customText, credentialFlagged);
+      }
       // Question reply. Build the `answers` payload from selectedOptions +
       // customText. If both are empty and decision is 'deny', use reject.
+      // Every transmitted text runs through the credential scrubber (always
+      // redacts known secret shapes; masked scrubbing when the ask was
+      // flagged) so a reply that reaches the session carries no secret.
       const answers: string[][] = [];
       if (response.selectedOptions && response.selectedOptions.length > 0) {
-        answers.push(response.selectedOptions);
+        answers.push(
+          response.selectedOptions.map((option) => scrubCredentialText(option, credentialFlagged)),
+        );
       }
       if (response.customText) {
-        answers.push([response.customText]);
+        answers.push([scrubCredentialText(response.customText, credentialFlagged)]);
       }
       const isCancel = response.decision === 'deny' && answers.length === 0;
       if (isCancel) {
@@ -1347,12 +1369,24 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private handleQuestionAsked(sdkReq: OpenCodeSdkQuestionRequest): void {
     const requestId = this.generateRequestId('question');
     const first = sdkReq.questions?.[0];
+    // SEC-1: scan the ACTUAL ask text surfaces (header + question + option
+    // labels/descriptions). Deliberately header-independent — a credential
+    // request can arrive under any header (A7 observed "GitHub login").
+    const credentialFlagged = detectCredentialRequest([
+      { value: first?.header, kind: 'header' },
+      { value: first?.question, kind: 'question' },
+      ...(first?.options ?? []).flatMap((o) => [
+        { value: o.label, kind: 'option_label' as const },
+        { value: o.description, kind: 'option_description' as const },
+      ]),
+    ]).flagged;
     this.pendingRequest = {
       kind: 'question',
       requestId,
       sdkRequestId: sdkReq.id,
       sessionId: sdkReq.sessionID,
       assistance: first?.header === ASSISTANCE_QUESTION_HEADER,
+      credentialFlagged,
     };
     const req: PermissionRequest = {
       id: requestId,
@@ -1365,6 +1399,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         description: o.description,
       })),
       multiSelect: first?.multiple,
+      credentialRisk: credentialFlagged,
       createdAt: new Date().toISOString(),
     };
     this.emit('permission-request', req);

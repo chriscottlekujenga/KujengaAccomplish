@@ -1189,5 +1189,35 @@ describe('ConfigGenerator', () => {
         'Only use for: rate limits, site errors, missing permissions',
       );
     });
+
+    it('SEC-1: forbids requesting authentication secrets and prescribes manual browser auth', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'builtin' } as BrowserConfig,
+      });
+      expect(result.systemPrompt).toContain('NEVER REQUEST AUTHENTICATION SECRETS (SEC-1)');
+      expect(result.systemPrompt).toContain(
+        'Never author question options that invite credential entry',
+      );
+      expect(result.systemPrompt).toContain(
+        'You CANNOT receive authentication secrets for any reason',
+      );
+      expect(result.systemPrompt).toContain(
+        'I reached the GitHub login page. Please log in yourself',
+      );
+    });
+
+    it('SEC-1: browser instructions carry the credential-request prohibition too', () => {
+      const result = generateConfig({
+        ...basePromptOptions(),
+        browser: { mode: 'builtin' } as BrowserConfig,
+      });
+      expect(result.systemPrompt).toContain(
+        'NEVER request, collect, repeat, or transcribe passwords, MFA/2FA codes, one-time codes, API keys, tokens, or recovery codes',
+      );
+      expect(result.systemPrompt).toContain(
+        "the HUMAN must authenticate directly on the site's own form",
+      );
+    });
   });
 });

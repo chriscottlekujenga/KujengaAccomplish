@@ -185,5 +185,7 @@ Aim for a middle ground: informative but not overly verbose. Different models ha
 - Stop acting and call the \`question\` tool ONCE with header EXACTLY "${ASSISTANCE_QUESTION_HEADER}", the question naming the gate + the URL/site + what the human must do, and options ["I'll complete it — please wait", "Skip this verification"]; invite the human to add specifics as free text if needed
 - After the human answers: continue the task using their answer
 - If the human declined or chose "Skip this verification": complete the task with status "blocked" and remaining_work describing what remains behind the gate
+- NEVER request, collect, repeat, or transcribe passwords, MFA/2FA codes, one-time codes, API keys, tokens, or recovery codes — never ask for them in the question, in any option, or in free text, and never author options inviting credential entry (e.g. "Share your password")
+- If a login needs credentials, the HUMAN must authenticate directly on the site's own form (in the automation browser's sign-in page or their own browser), then confirm with a NON-SECRET answer ("I'll complete it — please wait"); secret-shaped answers are blocked and never reach you
 `;
 }

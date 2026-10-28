@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { AlertTriangle } from 'lucide-react';
 import type { PermissionRequest } from '@accomplish_ai/agent-core';
 import { cn } from '@/lib/utils';
 
@@ -9,8 +11,18 @@ interface PermissionDialogQuestionProps {
   customResponse: string;
   setCustomResponse: (v: string) => void;
   onSubmit: () => void;
+  /** SEC-1: ask text matched credential-request language. */
+  credentialFlagged?: boolean;
+  /** SEC-1: composed answer matches a high-confidence secret shape. */
+  answerBlocked?: boolean;
 }
 
+/**
+ * SEC-1: when the ask invites credential entry, the card shows a standing
+ * warning + manual-browser-authentication alternative; a secret-shaped
+ * answer is blocked from submission (the block re-enables as soon as the
+ * answer is edited to a safe one). Cancel/Decline is never blocked.
+ */
 export function PermissionDialogQuestion({
   permissionRequest,
   selectedOptions,
@@ -18,7 +30,10 @@ export function PermissionDialogQuestion({
   customResponse,
   setCustomResponse,
   onSubmit,
+  credentialFlagged,
+  answerBlocked,
 }: PermissionDialogQuestionProps) {
+  const { t } = useTranslation('execution');
   useEffect(() => {
     setSelectedOptions([]);
     setCustomResponse('');
@@ -27,6 +42,31 @@ export function PermissionDialogQuestion({
   return (
     <>
       <p className="text-sm text-foreground mb-4">{permissionRequest.question}</p>
+
+      {credentialFlagged && (
+        <div
+          data-testid="credential-warning"
+          className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5"
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+            <div className="text-xs">
+              <p className="font-medium text-red-600 dark:text-red-400">
+                {t('permission.credential.warning')}
+              </p>
+              <p className="text-muted-foreground mt-1">{t('permission.credential.manualAuth')}</p>
+              {answerBlocked && (
+                <p
+                  data-testid="credential-blocked"
+                  className="mt-1.5 font-medium text-red-600 dark:text-red-400"
+                >
+                  {t('permission.credential.blocked')}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {permissionRequest.options && permissionRequest.options.length > 0 && (
         <div className="mb-4 space-y-2">

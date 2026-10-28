@@ -170,4 +170,24 @@ describe('buildAssistanceContinuationPrompt (M6-A D5)', () => {
     expect(prompt).not.toContain('You had asked:');
     expect(prompt).toContain('The human replied: Skip it');
   });
+
+  it('SEC-1: masks secret-shaped content in the answer when the question text is credential-flagged', () => {
+    const prompt = buildAssistanceContinuationPrompt({
+      question: 'Tell me the 6-digit code from the email',
+      answer: 'the code is 482913',
+    });
+    const replyLine = prompt.split('\n').find((line) => line.startsWith('The human replied:'))!;
+    expect(replyLine).not.toContain('482913');
+    expect(replyLine).toContain('REDACTED');
+  });
+
+  it('SEC-1: applies the shared redactor even on an unflagged continuation', () => {
+    const prompt = buildAssistanceContinuationPrompt({
+      question: 'Which format do you want?',
+      answer: 'run with key sk-abcdefghijklmnopqrstuvwxyz0123',
+    });
+    const replyLine = prompt.split('\n').find((line) => line.startsWith('The human replied:'))!;
+    expect(replyLine).toContain('REDACTED');
+    expect(replyLine).not.toContain('sk-abcdefghijklmnopqrstuvwxyz0123');
+  });
 });
