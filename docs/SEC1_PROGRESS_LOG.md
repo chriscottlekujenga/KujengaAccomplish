@@ -69,8 +69,10 @@ Baseline: M6-A T7 complete (HEAD `4306651`).
   (`DialogPrimitive.Close` + explicit onClick) — assertion aligned with the adjacent
   Escape-test convention (test-only, idempotent call).
 
-### Remaining session tasks
+### Completed after this log was written
 
-- Milestone commit (conventional message; NO push/merge).
-- T8 readiness assessment (plan/checklist only — NO implementation).
-- Morning report (11 items; commit hash; verification results; limitations; T8 handover).
+- Milestone commit executed: **`cf87104`** `feat(security): SEC-1 — block credential
+collection via agent question dialogs` (35 files; tree clean after commit; nothing
+  pushed/merged).
+- T8 readiness assessment delivered: `docs/T8_CLOSEOUT_PLAN.md` — verdict READY; T8
+  execution awaits the user's go (per operating rules: T8 not started this session).
