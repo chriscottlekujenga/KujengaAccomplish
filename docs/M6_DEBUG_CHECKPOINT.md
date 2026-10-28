@@ -379,3 +379,23 @@ Full item-by-item evidence lives in `docs/PHASE_3_M6A_MANUAL_CHECKLIST.md` (comm
 7. **Agent-accuracy tracker (documented, non-blocking):** ACC-1 intermittent heading misreport (1/4 same-model same-page runs; product mechanism = the snapshot history-line rendering the page TITLE as a markdown H1, `dev-browser-mcp/src/index.ts:1604` + `snapshot/manager.ts:112` — IANA's title is "About us"); ACC-2 bare-`return` evaluate flaws, self-recovered via graceful state capture.
 8. **SEC-1 (CLOSED — post-T7 hardening):** the follow-up was implemented per `docs/SEC1_CREDENTIAL_HARDENING_DESIGN.md` — header-independent ask detection, answer hard-block before session cross (`sendResponse` + daemon restart path), UI warning + Submit block on flagged dialogs (manual browser auth preserved), question-row/continuation persist scrubs, prompt rule, and upgraded host `/client-log` credential redaction. Full suite evidence + detection limitations recorded in checklist §5 "SEC-1 closure" (automated tests only; the document-only status above applies to the T7 timeline, before implementation).
 9. **T7 closeout:** all user confirmations verbatim recorded; invalid A5 pair + artifact removal recorded with exact evidence; policy/isolation surfaces byte-untouched throughout (§6.7 cross-window checks remain in force); nothing pushed, nothing merged, T8 not started.
+
+## §8 — M6-A T8 closeout: final state (2026-10-27)
+
+- **Closeout battery at docs-commit HEAD** (autonomous T8, user-directed): typecheck 5/5 ·
+  eslint 0 errors / 3 documented warnings · prettier clean · agent-core 881+1skip (68) ·
+  daemon 392 (30) · host 341 (16) · web unit 557 (35) · desktop 522 (23) · web integration
+  371 pass / 14 fail (385 tests — 5 suites previously could not LOAD; now all run after
+  infrastructure-only mock-stub fixes, no assertion weakened; residual 14 root-caused in
+  checkpoint §24.4 of DEVELOPMENT_CHECKPOINT.md) · parity audit re-run at close HEAD:
+  allowlist 99 · blocklist 7 · registered 138 · declared 250 · shim implemented 142 ·
+  self-checks PASS — identical to T6, zero policy deltas across M6-A + SEC-1.
+- **Cross-window checks extended over the SEC-1 commit `cf87104`:** `policy.ts`
+  blocklist/permission-policy objects, browser isolation (cdp/sidecar), watchdog/presence
+  gate byte-untouched; allowlist file delta remains T4's +1 only (T6 numbers re-proven by
+  the parity self-checks at close HEAD).
+- **SEC-1 closure record:** checklist §5 "SEC-1 closure" + `docs/SEC1_CREDENTIAL_HARDENING_DESIGN.md`
+  (limitations §7.7) + `docs/SEC1_PROGRESS_LOG.md` (verification battery + the prose-form
+  redaction gap caught and fixed during the session).
+- **M6-A status — COMPLETE (T0–T7 + SEC-1 + T8).** Hard stop: user approval required for
+  M6-B (plan §10). Nothing pushed/merged.

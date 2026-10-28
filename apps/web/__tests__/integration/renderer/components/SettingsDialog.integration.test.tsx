@@ -28,6 +28,7 @@ function translateSettingsKey(key: string, options?: Record<string, unknown>): s
 
 const mockAccomplish = {
   getOllamaConfig: vi.fn().mockResolvedValue(null),
+  getBuildCapabilities: vi.fn().mockResolvedValue({ hasFreeMode: false, hasAnalytics: false }),
   isE2EMode: vi.fn().mockResolvedValue(false),
   getProviderSettings: vi.fn().mockResolvedValue({
     activeProviderId: 'anthropic',

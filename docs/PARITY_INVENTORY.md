@@ -1,7 +1,7 @@
 # API Parity Inventory — Firefox migration (Phase 3)
 
 > **Generated file — do not hand-edit.** Regenerate with `node apps/host/scripts/parity-audit.mjs` from the repo root (deterministic; same sources → same bytes).
-> Generated: 2026-10-23 (run date)
+> Generated: 2026-10-27 (run date)
 
 Sources parsed at generation time:
 

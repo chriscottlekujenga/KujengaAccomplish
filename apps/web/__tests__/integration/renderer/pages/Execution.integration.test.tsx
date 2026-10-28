@@ -66,6 +66,11 @@ const mockAccomplish = {
   onTaskUpdateBatch: mockOnTaskUpdateBatch.mockReturnValue(() => {}),
   onPermissionRequest: mockOnPermissionRequest.mockReturnValue(() => {}),
   onTaskStatusChange: mockOnTaskStatusChange.mockReturnValue(() => {}),
+  onDaemonReconnected: vi.fn().mockReturnValue(() => {}),
+  onDaemonDisconnected: vi.fn().mockReturnValue(() => {}),
+  onDaemonReconnectFailed: vi.fn().mockReturnValue(() => {}),
+  daemonPing: vi.fn().mockResolvedValue({ status: 'ok', uptime: 0 }),
+  onWorkspaceChanged: vi.fn().mockReturnValue(() => {}),
   onDebugLog: vi.fn().mockReturnValue(() => {}),
   onDebugModeChange: vi.fn().mockReturnValue(() => {}),
   getSelectedModel: vi.fn().mockResolvedValue({ provider: 'anthropic', id: 'claude-3-opus' }),
@@ -134,6 +139,10 @@ let mockStoreState: {
   updateTaskStatus: typeof mockUpdateTaskStatus;
   setPermissionRequest: typeof mockSetPermissionRequest;
   permissionRequests: Record<string, PermissionRequest>;
+  refetchPendingRequest: ReturnType<typeof vi.fn>;
+  restoredRequestIds: Record<string, boolean>;
+  permissionRequestErrors: Record<string, string | null>;
+  clearPermissionRequestError: ReturnType<typeof vi.fn>;
   respondToPermission: typeof mockRespondToPermission;
   sendFollowUp: typeof mockSendFollowUp;
   cancelTask: typeof mockCancelTask;
@@ -154,6 +163,10 @@ let mockStoreState: {
   updateTaskStatus: mockUpdateTaskStatus,
   setPermissionRequest: mockSetPermissionRequest,
   permissionRequests: {},
+  refetchPendingRequest: vi.fn().mockResolvedValue(undefined),
+  restoredRequestIds: {},
+  permissionRequestErrors: {},
+  clearPermissionRequestError: vi.fn(),
   respondToPermission: mockRespondToPermission,
   sendFollowUp: mockSendFollowUp,
   cancelTask: mockCancelTask,
@@ -164,6 +177,8 @@ let mockStoreState: {
   setupProgress: null,
   setupProgressTaskId: null,
   setupDownloadStep: 1,
+  startupStage: null,
+  startupStageTaskId: null,
 };
 
 // Mock the task store - needs both hook usage and .getState() for direct calls
@@ -275,6 +290,10 @@ describe('Execution Page Integration', () => {
       updateTaskStatus: mockUpdateTaskStatus,
       setPermissionRequest: mockSetPermissionRequest,
       permissionRequests: {},
+      refetchPendingRequest: vi.fn().mockResolvedValue(undefined),
+      restoredRequestIds: {},
+      permissionRequestErrors: {},
+      clearPermissionRequestError: vi.fn(),
       respondToPermission: mockRespondToPermission,
       sendFollowUp: mockSendFollowUp,
       cancelTask: mockCancelTask,
@@ -285,6 +304,8 @@ describe('Execution Page Integration', () => {
       setupProgress: null,
       setupProgressTaskId: null,
       setupDownloadStep: 1,
+      startupStage: null,
+      startupStageTaskId: null,
     };
   });
 

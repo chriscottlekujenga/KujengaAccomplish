@@ -601,3 +601,87 @@ Approved basis: Phase 3 plan §8 + `docs/PHASE_3_M5_PLAN.md` Rev. 1 (`a959ce7`) 
 ### 23.8 Next gate
 
 **M5 is closed. M6 requires the user's separate approval** (plan §13). Deferred-designs disposition + a concrete next-milestone proposal (M6-A human-assistance loop v1 / M6-B remaining parity): `docs/PHASE_3_M5_DEFERRED_DESIGNS_RECOMMENDATIONS.md`. STOP after M5 — no M6/M7 work has started; nothing pushed/merged.
+
+## 24. Phase 3 — M6-A Human Assistance Loop v1 closeout (2026-10-27, COMPLETE, T8 — code cf87104, docs 682e719 + this commit)
+
+Scope record: task T0–T7 details and per-task evidence live in `docs/M6_DEBUG_CHECKPOINT.md`
+(§1–§7) and `docs/PHASE_3_M6A_MANUAL_CHECKLIST.md`. This section records the M6-A closeout
+state, including the post-T7 SEC-1 hardening session. Nothing pushed/merged; M6-B not
+started; T8 executed autonomously per the user's directive (docs-only closeout).
+
+### 24.1 What was delivered at M6-A close
+
+- T0–T6: assistance-loop implementation (UI assistance mode, host route, Firefox interface
+  connection, preview-seam identity fix, E2E coverage + restart soak, full battery) —
+  evidence per task in `docs/M6_DEBUG_CHECKPOINT.md`.
+- T7: manual Firefox acceptance WITH the user — H·A1–A7 PASS, O2 skipped: the A7 unscripted
+  sample surfaced **SEC-1** (agent-authored options inviting credential entry via the
+  custom answer field), recorded document-only.
+- **SEC-1 hardening (post-T7, commit `cf87104`)**: 7-layer defense-in-depth closing the
+  credential-collection surface — never-request-credentials prompt rule (L1);
+  header-independent credential detection module, browser-safe ask+answer detection and
+  masked scrubbing (L2); adapter answers hard-blocked BEFORE `question.reply` with task
+  parked + options/customText scrubbed (L3); UI warning + manual-browser-auth guidance +
+  Submit hard-block on flagged dialogs, Cancel/Decline unaffected (L4); question-row /
+  summary / restart-continuation persist scrubs (L5); daemon restart reply path re-detects
+  from the STORED ask and blocks before the single-flight claim (L6); host `/client-log`
+  upgraded to aggressive credential masking (L7). Manual browser authentication explicitly
+  preserved on every path. Design + limitations: `docs/SEC1_CREDENTIAL_HARDENING_DESIGN.md`
+  (§7.7 = no-complete-protection statement); verification log: `docs/SEC1_PROGRESS_LOG.md`.
+
+### 24.2 Suite counts at M6-A close (at docs-commit HEAD; recorded 2026-10-27)
+
+| Suite           | Result                                                                                                                                 | Δ vs M5 §23.2                                       |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| typecheck       | 5/5 workspaces                                                                                                                         | unchanged                                           |
+| lint:eslint     | 0 errors + exactly the 3 pre-existing `useExecutionEffects.ts` warnings                                                                | unchanged                                           |
+| format:check    | clean                                                                                                                                  | unchanged                                           |
+| agent-core      | **881 pass + 1 skip** (68 files)                                                                                                       | 807+1skip → +74 pass (M6-A assistance + SEC-1)      |
+| daemon unit     | **392/392** (30 files)                                                                                                                 | 345 → +47 (assistance recovery, restart, SEC-1)     |
+| host unit       | **341/341** (16 files)                                                                                                                 | 332 → +9 (T4 route, pending-request, log redaction) |
+| web unit        | **557/557** (35 files)                                                                                                                 | 491 → +66 (assistance UI, T3, SEC-1 dialog suites)  |
+| desktop unit    | **522/522** (23 files)                                                                                                                 | unchanged                                           |
+| web integration | **371 pass / 14 fail** (12 files, 385 tests) — see 24.5 for the re-comparison + root-caused residual                                   | was 158/61 of 219 (5 suites could not LOAD)         |
+| gateway E2E     | **18/18 standing** (T6, two consecutive full runs; serial Playwright)                                                                  | 14 → +4 assistance/restart specs                    |
+| parity audit    | **allowlist 99 · blocklist 7 · daemon registered 138 · declared 250 · shim implemented 142 · self-checks PASS** (re-run at close HEAD) | unchanged from T6 — zero policy deltas              |
+
+### 24.3 SEC-1 regression evidence (automated only)
+
+New suites: agent-core credential-detection (16) + adapter SEC-1 describe + question-row
+persist-scrub + continuation-scrub + prompt-rule suites; daemon SEC-1 restart-block +
+restart-after-manual-auth; host `/client-log` credential-redaction; web
+`PermissionDialogCredential` (flagged ask warn / Submit block / re-enable / bare-MFA block /
+cancel-never-blocked / manual-auth copy / unflagged byte-identical) + store SEC-1 log
+hygiene (answer text never reaches logs). One real gap caught by new tests during the
+session (generic `redact()` missed "password is X" prose forms) — fixed, suite green.
+
+### 24.4 Limitations disposition update (M5 §23.5 rows affected)
+
+- Row 1 (preview blank): RESOLVED by M6-A (T5 + T7 user verification) — standing.
+- Row 4 (web integration 61): RE-COMPARED — the 61-test failing set at T7 was partial:
+  five integration suites (App, Execution, SettingsDialog, Sidebar-adjacent) could not even
+  LOAD (missing `window.accomplish` daemon-reconnect stubs / store-derived fields in
+  per-file mocks; ~166 of their tests never executed). Infrastructure-only stub fixes
+  (shared `__tests__/setup.ts` daemon family, per-file `useAccomplish` +
+  store-field additions) brought the suite to 371 pass / 14 fail with NO assertion
+  weakened. The residual 14 are root-caused and remain OPEN upstream debt: 3 ×
+  stop-button-while-loading (TaskInputBar/Home) vs current `TaskInputToolbar`
+  disabled-during-loading behavior; 5 × Home provider-ready-gate family; 3 × SettingsDialog
+  (Slack card DOM ×2, provider-ready regression); 3 × Execution UI-staleness (Continue
+  button no longer present, duplicated "Cancelled" text, Slack resume button). Fixing them
+  requires product-behavior decisions or UI-test maintenance and was explicitly left out
+  of M6-A scope (upstream M5 §23.5#4 directive).
+- Rows 2/3/5–9: unchanged (see M6 plan §9).
+
+### 24.5 Security posture statement (at close)
+
+M1/M2 policy surfaces byte-untouched across the entire M6-A + SEC-1 window (`parity audit`
+= T6 numbers at close HEAD; no allowlist/blocklist change). SEC-1 ADDs hardening only:
+the block paths are deny-by-default on flagged/secret-shaped content, Cancel/decline and
+permission flows unchanged, no auto-approve introduced. `/client-log` redaction strictly
+strengthened. E2E assistance/redaction specs green (standing 18/18 record).
+
+### 24.6 Next gate
+
+**M6-A (incl. SEC-1 and T8 closeout) is closed. M6-B requires the user's explicit
+approval** (plan §10). STOP.

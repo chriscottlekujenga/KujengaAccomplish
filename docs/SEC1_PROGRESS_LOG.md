@@ -58,21 +58,34 @@ Baseline: M6-A T7 complete (HEAD `4306651`).
   daemon-reconnect stubs (`onDaemonReconnected`/`onDaemonDisconnected`/
   `onDaemonReconnectFailed`/`daemonPing`). FIXED in shared `__tests__/setup.ts`
   (+ per-file stub in taskStore.integration) → net +86 passing integration tests.
-- Root cause 2 (8 remaining failures, surfaced only now that files load): stop-button
-  while loading — 3 suites assert the Stop button stays ENABLED during loading, while
-  `TaskInputToolbar` disables it (`isButtonDisabled`); and App.integration's per-file mock
-  lacks `useAccomplish` (CloseConfirmDialog). Left untouched: fixing requires either a
-  product-behavior change or test-assertion weakening — both outside SEC-1 scope.
-  Files/owners for the team: App/Home/TaskInputBar/Sidebar/SettingsDialog/Execution
-  integration suites.
+- Root cause 2 (14 remaining failures at T8 re-compare, surfaced as previously-masked
+  suites now load): stop-button-while-loading ×3 (TaskInputBar, Home — assertions vs
+  current `TaskInputToolbar` disabled-during-loading behavior); Home provider-ready-gate
+  family ×5; SettingsDialog Slack-card/regression ×3; Execution UI-staleness ×3 (Continue
+  button gone, duplicate "Cancelled" text, Slack resume button). Left untouched: fixing
+  requires either a product-behavior change or test-assertion maintenance — both outside
+  scope (M5 §23.5#4 upstream directive).
 - One benign pre-existing close-button double-call in TaskLauncher
   (`DialogPrimitive.Close` + explicit onClick) — assertion aligned with the adjacent
   Escape-test convention (test-only, idempotent call).
 
 ### Completed after this log was written
 
-- Milestone commit executed: **`cf87104`** `feat(security): SEC-1 — block credential
-collection via agent question dialogs` (35 files; tree clean after commit; nothing
-  pushed/merged).
-- T8 readiness assessment delivered: `docs/T8_CLOSEOUT_PLAN.md` — verdict READY; T8
-  execution awaits the user's go (per operating rules: T8 not started this session).
+- The previously-masked integration suites were brought to RUNNABLE state with
+  infrastructure-only mock fixes: `App.integration` (+`useAccomplish` export),
+  `SettingsDialog` (+`getBuildCapabilities`), `Execution` (+ store-derived fields
+  refetchPendingRequest / restoredRequestIds / permissionRequestErrors /
+  clearPermissionRequestError / startup fields + daemon-family stubs), `Home`
+  (+getBuildCapabilities/getEnabledSkills/resyncSkills + daemon family). Net: integration
+  went from "8 fail / 244 pass of 252" to **371 pass / 14 fail of 385** — no test assertion
+  weakened; residual 14 root-caused and recorded for the team (see root cause 2 below).
+- Gap-fix recorded earlier: `/client-log` prose-form redaction ("password is X") —
+  scrubber + gateway hardened; host 23/23.
+- T8 closeout executed (user-directed autonomous): checkpoint §24
+  (`docs/DEVELOPMENT_CHECKPOINT.md`), debug-checkpoint §8 final state, plan §5 status +
+  §9 row-4 re-compare, checklist §5 numbers refreshed. Closeout battery + parity re-run at
+  docs HEAD: typecheck 5/5 · lint 0E/3W (pre-existing) · format clean · agent-core
+  881+1skip · daemon 392 · host 341 · web unit 557 · desktop 522 · integration 371/14 ·
+  parity 99/7/138 self-checks PASS.
+- Milestone commit + T8 docs commit: **`cf87104`** / **`682e719`** / this docs commit.
+- **STOP reached: M6-B awaits explicit user approval.**
