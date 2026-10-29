@@ -5,7 +5,7 @@ echo "[pre-push] Running pre-push checks (skip with: git push --no-verify)"
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # shellcheck disable=SC1090
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use
-if command -v nvm &>/dev/null && [ -f ".nvmrc" ]; then
+if command -v nvm >/dev/null 2>&1 && [ -f ".nvmrc" ]; then
   nvm use --silent 2>/dev/null || exit 1
 fi
 
