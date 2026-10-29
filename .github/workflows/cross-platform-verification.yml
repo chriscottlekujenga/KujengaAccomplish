@@ -12,8 +12,15 @@ name: Cross-Platform Build Verification
 # Artifacts are upload-only (7-day retention, per-run names). Release
 # semantics live in release.yml only — do not turn this file into a
 # release path.
+#
+# Triggers: pushes to feature/cross-platform only (exact branch, no
+# wildcards — lets GitHub verify packaging on branch pushes before the
+# workflow file reaches main) plus manual workflow_dispatch on any ref.
 
 on:
+  push:
+    branches:
+      - feature/cross-platform
   workflow_dispatch:
     inputs:
       platforms:
