@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'apps/desktop/**'
+      - 'apps/web/**'
+      - 'apps/host/**'
+      - 'apps/daemon/**'
       - 'packages/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/ci.yml'
@@ -12,6 +15,9 @@ on:
     branches: [main]
     paths:
       - 'apps/desktop/**'
+      - 'apps/web/**'
+      - 'apps/host/**'
+      - 'apps/daemon/**'
       - 'packages/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/ci.yml'
@@ -61,6 +67,93 @@ jobs:
           # reports green.
           REQUIRE_SQLITE_TESTS: '1'
         run: pnpm -F @accomplish_ai/agent-core test
+
+  # Web UI unit tests (Vitest, jsdom).
+  # The apps/web integration suite is not run in CI: it has a known upstream
+  # baseline of 14 root-caused failures (DEVELOPMENT_CHECKPOINT.md §24.4).
+  # No workspace build is needed — the unit vitest aliases resolve to package
+  # sources directly.
+  web-tests:
+    name: Web Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.15.0'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run web unit tests
+        run: pnpm -F @accomplish/web test:unit
+
+  # Daemon tests (task execution, RPC routes, permission gate, storage,
+  # scheduler, side services). Vitest aliases agent-core sources, so no
+  # build step is required.
+  daemon-tests:
+    name: Daemon Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.15.0'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3 --recursive
+
+      - name: Run daemon tests
+        run: pnpm -F @accomplish/daemon test
+
+  # Host gateway unit tests (auth, RPC policy allowlist/blocklist, presence
+  # reporting, secret scrubbers, rate limiting, connectors). The gateway
+  # Playwright E2E suite is not run in CI because its task fixtures require a
+  # local ollama server (see apps/host/e2e); it stays a local verification gate.
+  host-tests:
+    name: Host Gateway Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.15.0'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3 --recursive
+
+      - name: Run host unit tests
+        run: pnpm -F @accomplish/host test:unit
 
   # Run unit and integration tests in parallel
   unit-tests:
@@ -223,7 +316,8 @@ jobs:
             apps/desktop/e2e/html-report/
           retention-days: 7
 
-  # Windows CI (unit tests + typecheck only, integration tests have macOS-specific paths)
+  # Windows CI (desktop unit + daemon tests + typecheck; daemon coverage
+  # here exercises the Windows named-pipe transport and win32 spawn paths)
   windows-ci:
     name: Windows CI
     runs-on: windows-latest
@@ -260,6 +354,9 @@ jobs:
 
       - name: Run unit tests
         run: pnpm -F @accomplish/desktop test:unit
+
+      - name: Run daemon tests
+        run: pnpm -F @accomplish/daemon test
 
       - name: Run typecheck
         run: pnpm typecheck

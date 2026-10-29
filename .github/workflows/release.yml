@@ -263,19 +263,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download Node.js binaries
-        run: pnpm -F @accomplish/desktop download:nodejs
-
-      - name: Build desktop app
-        run: pnpm -F @accomplish/desktop build
-
-      - name: Package (unsigned)
-        run: node scripts/package.cjs --mac --arm64 --publish never
-        working-directory: apps/desktop
+      # Full packaging chain (bundled Node download -> web/electron build ->
+      # daemon build -> per-arch daemon native deps staging -> packaged-mode
+      # MCP bundling -> electron-builder), reused from apps/desktop scripts
+      # so CI artifacts match local `pnpm package:*` output byte-for-byte.
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:mac:arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHON: python
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          APP_BUNDLE=$(find apps/desktop/release -maxdepth 2 -name 'Accomplish.app' | head -1)
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "Accomplish.app not found under apps/desktop/release" >&2
+            find apps/desktop/release -maxdepth 2 | head -20 >&2 || true
+            exit 1
+          fi
+          echo "App bundle: $APP_BUNDLE"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$APP_BUNDLE/Contents/Resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$APP_BUNDLE" --expected-version=1.14.18
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -314,19 +323,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download Node.js binaries
-        run: pnpm -F @accomplish/desktop download:nodejs
-
-      - name: Build desktop app
-        run: pnpm -F @accomplish/desktop build
-
-      - name: Package (unsigned)
-        run: node scripts/package.cjs --mac --x64 --publish never
-        working-directory: apps/desktop
+      # Full packaging chain reused from apps/desktop scripts (see mac-arm64 job).
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:mac:x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHON: python
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          APP_BUNDLE=$(find apps/desktop/release -maxdepth 2 -name 'Accomplish.app' | head -1)
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "Accomplish.app not found under apps/desktop/release" >&2
+            find apps/desktop/release -maxdepth 2 | head -20 >&2 || true
+            exit 1
+          fi
+          echo "App bundle: $APP_BUNDLE"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$APP_BUNDLE/Contents/Resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$APP_BUNDLE" --expected-version=1.14.18
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -366,18 +381,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download Node.js binaries
-        run: pnpm -F @accomplish/desktop download:nodejs
-
-      - name: Build desktop app
-        run: pnpm -F @accomplish/desktop build
-
-      - name: Package (unsigned)
-        run: node scripts/package.cjs --linux --arm64 --publish never
-        working-directory: apps/desktop
+      # Full packaging chain reused from apps/desktop scripts (see mac-arm64 job).
+      # ACCOMPLISH_BUNDLED_MCP=1 + staged daemon deps are set inside the script.
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:linux:arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           USE_SYSTEM_FPM: 'true'
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          UNPACKED=$(find apps/desktop/release -maxdepth 1 -type d -name 'linux*-unpacked' | head -1)
+          if [ -z "$UNPACKED" ]; then
+            echo "linux unpacked dir not found under apps/desktop/release" >&2
+            ls apps/desktop/release >&2 || true
+            exit 1
+          fi
+          echo "Unpacked dir: $UNPACKED"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$UNPACKED/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$UNPACKED" --expected-version=1.14.18
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -414,17 +436,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download Node.js binaries
-        run: pnpm -F @accomplish/desktop download:nodejs
-
-      - name: Build desktop app
-        run: pnpm -F @accomplish/desktop build
-
-      - name: Package (unsigned)
-        run: node scripts/package.cjs --linux --x64 --publish never
-        working-directory: apps/desktop
+      # Full packaging chain reused from apps/desktop scripts (see mac-arm64 job).
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:linux:x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          UNPACKED=$(find apps/desktop/release -maxdepth 1 -type d -name 'linux*-unpacked' | head -1)
+          if [ -z "$UNPACKED" ]; then
+            echo "linux unpacked dir not found under apps/desktop/release" >&2
+            ls apps/desktop/release >&2 || true
+            exit 1
+          fi
+          echo "Unpacked dir: $UNPACKED"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$UNPACKED/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$UNPACKED" --expected-version=1.14.18
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -458,18 +486,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download Node.js binaries
-        run: pnpm -F @accomplish/desktop download:nodejs --platform=win32-x64
-
-      - name: Build desktop app
-        run: pnpm -F @accomplish/desktop build
-
-      - name: Package (unsigned)
-        run: node scripts/package.cjs --win --x64 --publish never
-        working-directory: apps/desktop
+      # Full packaging chain reused from apps/desktop scripts (see mac-arm64 job).
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaging invariants and smoke OpenCode
+        shell: pwsh
+        run: |
+          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-unpacked' | Select-Object -First 1
+          if (-not $unpacked) {
+            Write-Host "win-unpacked not found under apps/desktop/release" -ForegroundColor Red
+            Get-ChildItem apps/desktop/release | Out-Host
+            exit 1
+          }
+          Write-Host "Unpacked dir: $($unpacked.FullName)"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$($unpacked.FullName)/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs "--artifact-dir=$($unpacked.FullName)" --expected-version=1.14.18
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
