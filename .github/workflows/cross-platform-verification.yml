@@ -1,0 +1,310 @@
+name: Cross-Platform Build Verification
+
+# Verification-only packaging gate for M-CX (cross-platform work).
+#
+# Mirrors the five platform build jobs in release.yml step-for-step, but
+# structurally cannot publish:
+#   - permissions are contents: read (no tag, release, PR, or branch writes)
+#   - contains no version bump, tag, release, PR, Slack, or deploy steps
+#   - packaging scripts pass `--publish never` (electron-builder kill-switch)
+#   - dispatching this workflow cannot trigger release.yml (no events emitted)
+#
+# Artifacts are upload-only (7-day retention, per-run names). Release
+# semantics live in release.yml only — do not turn this file into a
+# release path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to verify'
+        required: true
+        type: choice
+        options:
+          - all
+          - macos-only
+          - linux-only
+          - windows-only
+        default: all
+
+run-name: Cross-platform build verification (${{ inputs.platforms || 'all' }})
+
+permissions:
+  contents: read
+
+# Packaging runs are long; don't cancel a started run, don't overlap runs.
+concurrency:
+  group: cross-platform-verification
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.15.0'
+
+jobs:
+  build-mac-arm64:
+    name: Verify macOS (Apple Silicon)
+    if: inputs.platforms == 'all' || inputs.platforms == 'macos-only'
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Full packaging chain (bundled Node download -> web/electron build ->
+      # daemon build -> per-arch daemon native deps staging -> packaged-mode
+      # MCP bundling -> electron-builder with --publish never).
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:mac:arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON: python
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          APP_BUNDLE=$(find apps/desktop/release -maxdepth 2 -name 'Accomplish.app' | head -1)
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "Accomplish.app not found under apps/desktop/release" >&2
+            find apps/desktop/release -maxdepth 2 | head -20 >&2 || true
+            exit 1
+          fi
+          echo "App bundle: $APP_BUNDLE"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$APP_BUNDLE/Contents/Resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$APP_BUNDLE" --expected-version=1.14.18
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Verify-macOS-arm64
+          path: |
+            apps/desktop/release/*-arm64.dmg
+            apps/desktop/release/*-arm64.zip
+          retention-days: 7
+
+  build-mac-x64:
+    name: Verify macOS (Intel)
+    if: inputs.platforms == 'all' || inputs.platforms == 'macos-only'
+    # release.yml uses macos-15-large, but larger runners require Team/
+    # Enterprise org plans. macos-15-intel is the standard (free on public
+    # repos) Intel runner, matching the x64 packaging target.
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:mac:x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON: python
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          APP_BUNDLE=$(find apps/desktop/release -maxdepth 2 -name 'Accomplish.app' | head -1)
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "Accomplish.app not found under apps/desktop/release" >&2
+            find apps/desktop/release -maxdepth 2 | head -20 >&2 || true
+            exit 1
+          fi
+          echo "App bundle: $APP_BUNDLE"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$APP_BUNDLE/Contents/Resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$APP_BUNDLE" --expected-version=1.14.18
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Verify-macOS-x64
+          path: |
+            apps/desktop/release/*-x64.dmg
+            apps/desktop/release/*-x64.zip
+          retention-days: 7
+
+  build-linux-arm64:
+    name: Verify Linux (ARM64)
+    if: inputs.platforms == 'all' || inputs.platforms == 'linux-only'
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      # fpm's bundled binary is x64-only, so ARM64 packaging needs a system
+      # fpm (plus the toolchain it requires) via USE_SYSTEM_FPM.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libxtst6 xvfb ruby ruby-dev rubygems build-essential
+          sudo gem install --no-document fpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ACCOMPLISH_BUNDLED_MCP=1 + staged daemon deps are set inside the script.
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:linux:arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USE_SYSTEM_FPM: 'true'
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          UNPACKED=$(find apps/desktop/release -maxdepth 1 -type d -name 'linux*-unpacked' | head -1)
+          if [ -z "$UNPACKED" ]; then
+            echo "linux unpacked dir not found under apps/desktop/release" >&2
+            ls apps/desktop/release >&2 || true
+            exit 1
+          fi
+          echo "Unpacked dir: $UNPACKED"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$UNPACKED/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$UNPACKED" --expected-version=1.14.18
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Verify-Linux-arm64
+          path: |
+            apps/desktop/release/*-arm64.AppImage
+            apps/desktop/release/*-arm64.deb
+          retention-days: 7
+
+  build-linux-x64:
+    name: Verify Linux (x64)
+    if: inputs.platforms == 'all' || inputs.platforms == 'linux-only'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libxtst6 xvfb
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:linux:x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify packaging invariants and smoke OpenCode
+        run: |
+          UNPACKED=$(find apps/desktop/release -maxdepth 1 -type d -name 'linux*-unpacked' | head -1)
+          if [ -z "$UNPACKED" ]; then
+            echo "linux unpacked dir not found under apps/desktop/release" >&2
+            ls apps/desktop/release >&2 || true
+            exit 1
+          fi
+          echo "Unpacked dir: $UNPACKED"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$UNPACKED/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs --artifact-dir="$UNPACKED" --expected-version=1.14.18
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Verify-Linux-x64
+          path: |
+            apps/desktop/release/*-x64.AppImage
+            apps/desktop/release/*-x64.deb
+          retention-days: 7
+
+  build-windows-x64:
+    name: Verify Windows (x64)
+    if: inputs.platforms == 'all' || inputs.platforms == 'windows-only'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaging invariants and smoke OpenCode
+        shell: pwsh
+        run: |
+          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-unpacked' | Select-Object -First 1
+          if (-not $unpacked) {
+            Write-Host "win-unpacked not found under apps/desktop/release" -ForegroundColor Red
+            Get-ChildItem apps/desktop/release | Out-Host
+            exit 1
+          }
+          Write-Host "Unpacked dir: $($unpacked.FullName)"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$($unpacked.FullName)/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs "--artifact-dir=$($unpacked.FullName)" --expected-version=1.14.18
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Verify-Windows-x64
+          path: apps/desktop/release/*.exe
+          retention-days: 7
