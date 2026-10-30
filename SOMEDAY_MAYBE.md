@@ -33,3 +33,14 @@ The initial WhatsApp human-oversight phase remains planned **after** adaptive ro
 - **Numbered replies** for request-specific decisions and approvals.
 - Remote destructive-operation approvals can be supported with risk-appropriate detailed confirmation and stronger phone-accessible verification, rather than a blanket desktop-only restriction.
 - Never treat these design notes as permission to start implementing WhatsApp before the current phase is tested and approved.
+
+## 3. Lightweight cloud-hosted Accomplish
+
+- **Status:** Someday / Maybe — future product concept, not approved for development.
+- **Goal:** Offer a simpler, less resource-intensive Accomplish experience hosted in the cloud for tasks that do not require an individual's computer to be powered on or accessible.
+- **Initial scope to explore:** Reminders, scheduled communications, straightforward cloud-connected workflows, basic research or information processing, and other explicitly authorized tasks that do not depend on local files, desktop interaction, or local applications.
+- **Progressive capability:** Begin with a deliberately limited feature set and modest infrastructure cost; expand over time toward more capable cloud agents and workflows as reliability, demand, permissions, and economics justify it.
+- **Relationship to desktop:** Complement rather than replace full desktop Accomplish. Clearly label cloud-capable versus device-dependent actions; hand off or queue device-dependent work until the relevant computer reconnects, with user notification.
+- **Potential shared infrastructure:** Evaluate reuse of the future cloud scheduling/communications service, while keeping accounts, tenants, credentials, budgets, and task permissions isolated.
+- **Guardrails to design later:** Explicit task authorization, user and organization access controls, model-cost limits and approvals, secrets handling, execution sandboxing, auditability, data retention, and operational costs.
+- **Activation:** Requires separate product scoping, security architecture, cost analysis, and explicit approval. No implementation implied.
