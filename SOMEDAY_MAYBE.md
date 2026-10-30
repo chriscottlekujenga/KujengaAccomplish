@@ -19,6 +19,7 @@ Deferred feature ideas only. **Listing an idea here does not authorize implement
 - **Future architecture:** A centrally hosted, authenticated service connecting users' Accomplish installations, storing schedules and delivering communications even when an employee's computer is offline.
 - **Cloud-executable jobs:** Only specifically supported cloud-side tasks may execute while the local computer is off.
 - **Local-computer jobs:** If the computer is off, queue or mark the job pending; resume only when it reconnects and its existing authorization remains valid. Do not claim local work ran while offline.
+- **User notification:** Explicitly tell the user when a scheduled task cannot run because their computer is offline, that it is waiting for reconnection, and whether it will resume automatically or require renewed approval. Distinguish this from cloud-executable tasks that can run while the computer is off; notify the user when delayed work actually completes.
 - **Explore later:** Multi-tenant isolation, opt-in and consent, per-user time zones, scheduling reliability, duplicate suppression, encrypted data storage, retention, billing, delivery failures, and secure WhatsApp provider integration.
 - **Boundary:** Scheduled messages must not create an unrestricted remote command channel or bypass model-spending and permission approvals.
 
