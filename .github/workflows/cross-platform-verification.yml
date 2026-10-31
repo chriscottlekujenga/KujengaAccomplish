@@ -52,7 +52,7 @@ jobs:
   build-mac-arm64:
     name: Verify macOS (Apple Silicon)
     if: (inputs.platforms || 'all') == 'all' || (inputs.platforms || 'all') == 'macos-only'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - name: Checkout code
@@ -362,9 +362,9 @@ jobs:
             Write-Host "OK (ARM64): $path"
           }
 
-          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-unpacked' | Select-Object -First 1
+          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-arm64-unpacked' | Select-Object -First 1
           if (-not $unpacked) {
-            Write-Host "win-unpacked not found under apps/desktop/release" -ForegroundColor Red
+            Write-Host "win-arm64-unpacked not found under apps/desktop/release" -ForegroundColor Red
             Get-ChildItem apps/desktop/release | Out-Host
             exit 1
           }
@@ -376,9 +376,9 @@ jobs:
       - name: Verify packaging invariants and smoke OpenCode
         shell: pwsh
         run: |
-          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-unpacked' | Select-Object -First 1
+          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-arm64-unpacked' | Select-Object -First 1
           if (-not $unpacked) {
-            Write-Host "win-unpacked not found under apps/desktop/release" -ForegroundColor Red
+            Write-Host "win-arm64-unpacked not found under apps/desktop/release" -ForegroundColor Red
             Get-ChildItem apps/desktop/release | Out-Host
             exit 1
           }
