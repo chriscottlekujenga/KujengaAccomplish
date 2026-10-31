@@ -33,28 +33,20 @@ export function isOpenCodeCliAvailable(): boolean {
 }
 
 export function getBundledOpenCodeVersion(): string | null {
-  try {
-    getOpenCodeCliPath();
-  } catch {
-    return null;
-  }
   if (app.isPackaged) {
     try {
-      const packageName = process.platform === 'win32' ? 'opencode-windows-x64' : 'opencode-ai';
-      const packageJsonPath = path.join(
-        process.resourcesPath,
-        'app.asar.unpacked',
-        'node_modules',
-        packageName,
-        'package.json',
-      );
-
+      const { command } = getOpenCodeCliPath();
+      // Packaged layout: <resourcesPath>/app.asar.unpacked/node_modules/<pkg>/bin/opencode(.exe)
+      // The package.json sits two levels above the binary. Deriving it from
+      // the resolved path keeps this arch-agnostic (windows x64/arm64, darwin,
+      // linux each ship a different package name).
+      const packageJsonPath = path.join(path.dirname(path.dirname(command)), 'package.json');
       if (fs.existsSync(packageJsonPath)) {
         const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
         return pkg.version;
       }
     } catch {
-      // intentionally empty
+      // intentionally empty — fall through to the CLI probe below
     }
   }
 

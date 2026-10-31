@@ -51,6 +51,12 @@ const PLATFORMS = [
     extract: 'zip',
     sha256: 'cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62',
   },
+  {
+    name: 'win32-arm64',
+    file: `node-v${NODE_VERSION}-win-arm64.zip`,
+    extract: 'zip',
+    sha256: 'c9eb7402eda26e2ba7e44b6727fc85a8de56c5095b1f71ebd3062892211aa116',
+  },
 ];
 
 module.exports = { NODE_VERSION, PLATFORMS };

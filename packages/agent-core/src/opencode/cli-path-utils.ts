@@ -13,6 +13,7 @@ import type { ResolvedCliPaths } from '../types.js';
 
 const log = createConsoleLogger({ prefix: 'CLIResolver' });
 
+const WINDOWS_OPENCODE_ARM64_PACKAGE = 'opencode-windows-arm64';
 const WINDOWS_OPENCODE_X64_PACKAGE = 'opencode-windows-x64';
 const WINDOWS_OPENCODE_X64_BASELINE_PACKAGE = 'opencode-windows-x64-baseline';
 const LINUX_OPENCODE_X64_PACKAGE = 'opencode-linux-x64';
@@ -57,6 +58,14 @@ export function detectWindowsAvx2Support(): boolean {
 }
 
 export function getWindowsPackageNames(): string[] {
+  if (process.arch === 'arm64') {
+    // Windows ARM64 requires the native arm64 engine: upstream publishes no
+    // baseline/AVX2 variants, and silently falling back to the x64 package
+    // would only run under OS-level binary emulation. Return early so the
+    // x64 AVX2 probe below never runs.
+    return [WINDOWS_OPENCODE_ARM64_PACKAGE];
+  }
+
   if (cachedWindowsPackageNames) {
     return cachedWindowsPackageNames;
   }

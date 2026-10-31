@@ -10,6 +10,14 @@ import {
 
 const itIfWindows = process.platform === 'win32' ? it : it.skip;
 
+const originalPlatform = process.platform;
+const originalArch = process.arch;
+
+function setProcessTarget(platform: NodeJS.Platform, arch: string): void {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  Object.defineProperty(process, 'arch', { value: arch, configurable: true });
+}
+
 describe('CLI Resolver', () => {
   let testDir: string;
   const originalAppRoot = process.env.APP_ROOT;
@@ -51,6 +59,7 @@ describe('CLI Resolver', () => {
     } else {
       process.env.APP_ROOT = originalAppRoot;
     }
+    setProcessTarget(originalPlatform, originalArch);
     vi.restoreAllMocks();
   });
 
@@ -131,6 +140,134 @@ describe('CLI Resolver', () => {
       });
 
       expect(result).toBeNull();
+    });
+
+    describe('Windows ARM64 resolution (native package, no x64 fallback)', () => {
+      function createPackagedFixture(resourcesPath: string, packageName: string, binName: string) {
+        const cliDir = path.join(
+          resourcesPath,
+          'app.asar.unpacked',
+          'node_modules',
+          packageName,
+          'bin',
+        );
+        fs.mkdirSync(cliDir, { recursive: true });
+        const cliPath = path.join(cliDir, binName);
+        fs.writeFileSync(cliPath, 'binary');
+        return cliPath;
+      }
+
+      it('resolves the packaged arm64 opencode.exe on windows-arm64', () => {
+        setProcessTarget('win32', 'arm64');
+        const cliPath = createPackagedFixture(
+          path.join(testDir, 'resources'),
+          'opencode-windows-arm64',
+          'opencode.exe',
+        );
+
+        const result = resolveCliPath({
+          isPackaged: true,
+          resourcesPath: path.join(testDir, 'resources'),
+        });
+
+        expect(result).not.toBeNull();
+        expect(result?.source).toBe('bundled');
+        expect(result?.cliPath).toBe(cliPath);
+      });
+
+      it('returns null on windows-arm64 when only the x64 package is packaged', () => {
+        // Regression guard: on Windows ARM64 the resolver must never silently
+        // fall back to the x64 engine (which would only run under OS-level
+        // binary emulation). The x64 binary being present must not change that.
+        setProcessTarget('win32', 'arm64');
+        createPackagedFixture(
+          path.join(testDir, 'resources'),
+          'opencode-windows-x64',
+          'opencode.exe',
+        );
+        createPackagedFixture(
+          path.join(testDir, 'resources'),
+          'opencode-windows-x64-baseline',
+          'opencode.exe',
+        );
+
+        const result = resolveCliPath({
+          isPackaged: true,
+          resourcesPath: path.join(testDir, 'resources'),
+        });
+
+        expect(result).toBeNull();
+      });
+
+      it('resolves the native arm64 package in development mode on windows-arm64', () => {
+        setProcessTarget('win32', 'arm64');
+        const appRoot = path.join(testDir, 'app');
+        const cliDir = path.join(appRoot, 'node_modules', 'opencode-windows-arm64', 'bin');
+        fs.mkdirSync(cliDir, { recursive: true });
+        fs.writeFileSync(path.join(cliDir, 'opencode.exe'), 'binary');
+
+        const result = resolveCliPath({
+          isPackaged: false,
+          appPath: appRoot,
+        });
+
+        expect(result).not.toBeNull();
+        expect(result?.source).toBe('local');
+        expect(result?.cliPath).toContain('opencode-windows-arm64');
+      });
+
+      it('returns null in development mode on windows-arm64 when only x64 is installed', () => {
+        setProcessTarget('win32', 'arm64');
+        const appRoot = path.join(testDir, 'app');
+        const cliDir = path.join(appRoot, 'node_modules', 'opencode-windows-x64', 'bin');
+        fs.mkdirSync(cliDir, { recursive: true });
+        fs.writeFileSync(path.join(cliDir, 'opencode.exe'), 'binary');
+
+        const result = resolveCliPath({
+          isPackaged: false,
+          appPath: appRoot,
+        });
+
+        expect(result).toBeNull();
+      });
+
+      it('still resolves the x64 package on windows-x64', () => {
+        setProcessTarget('win32', 'x64');
+        createPackagedFixture(
+          path.join(testDir, 'resources'),
+          'opencode-windows-x64',
+          'opencode.exe',
+        );
+        // Baseline ordering depends on the local AVX2 probe result, so both
+        // candidates are provided to keep the assertion arch-outcome-agnostic.
+        createPackagedFixture(
+          path.join(testDir, 'resources'),
+          'opencode-windows-x64-baseline',
+          'opencode.exe',
+        );
+
+        const result = resolveCliPath({
+          isPackaged: true,
+          resourcesPath: path.join(testDir, 'resources'),
+        });
+
+        expect(result).not.toBeNull();
+        expect(result?.cliPath).toContain('opencode-windows-x64');
+      });
+
+      it('resolves the launcher package on darwin arm64 (regression)', () => {
+        setProcessTarget('darwin', 'arm64');
+        createPackagedFixture(path.join(testDir, 'resources'), 'opencode-ai', 'opencode');
+
+        const result = resolveCliPath({
+          isPackaged: true,
+          resourcesPath: path.join(testDir, 'resources'),
+        });
+
+        expect(result).not.toBeNull();
+        expect(result?.source).toBe('bundled');
+        expect(result?.cliPath).toContain('opencode-ai');
+      });
     });
 
     itIfWindows('resolves development CLI via opencode-ai launcher realpath in pnpm layout', () => {
