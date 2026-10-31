@@ -2,8 +2,9 @@ name: Cross-Platform Build Verification
 
 # Verification-only packaging gate for M-CX (cross-platform work).
 #
-# Mirrors the five platform build jobs in release.yml step-for-step, but
-# structurally cannot publish:
+# Mirrors the platform build jobs in release.yml step-for-step, plus a native
+# Windows ARM64 verification job (M-CX2 M2; release.yml does not yet publish
+# win-arm64 installers). This workflow structurally cannot publish:
 #   - permissions are contents: read (no tag, release, PR, or branch writes)
 #   - contains no version bump, tag, release, PR, Slack, or deploy steps
 #   - packaging scripts pass `--publish never` (electron-builder kill-switch)
@@ -314,4 +315,80 @@ jobs:
         with:
           name: Verify-Windows-x64
           path: apps/desktop/release/*.exe
+          retention-days: 7
+
+  build-windows-arm64:
+    name: Verify Windows (ARM64)
+    if: (inputs.platforms || 'all') == 'all' || (inputs.platforms || 'all') == 'windows-only'
+    # Native win-arm64 hosted runner (free on public repos). The packaged
+    # chain must never rely on Windows binary emulation: resolving or staging
+    # an x64 OpenCode/Node/better-sqlite3 binary on this runner fails the
+    # ARM64 checks below rather than "working" via emulation.
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package (unsigned)
+        run: pnpm -F @accomplish/desktop package:win:arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify bundled OpenCode, Node.js and better-sqlite3 are ARM64
+        shell: pwsh
+        run: |
+          function Assert-Test-PEARM64($path) {
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) {
+              Write-Host "FAIL: $path is not ARM64 (PE machine=0x$($machine.ToString('X4')))" -ForegroundColor Red
+              exit 1
+            }
+            Write-Host "OK (ARM64): $path"
+          }
+
+          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-unpacked' | Select-Object -First 1
+          if (-not $unpacked) {
+            Write-Host "win-unpacked not found under apps/desktop/release" -ForegroundColor Red
+            Get-ChildItem apps/desktop/release | Out-Host
+            exit 1
+          }
+          Write-Host "Unpacked dir: $($unpacked.FullName)"
+          Assert-Test-PEARM64 (Join-Path $unpacked.FullName 'resources/app.asar.unpacked/node_modules/opencode-windows-arm64/bin/opencode.exe')
+          Assert-Test-PEARM64 (Join-Path $unpacked.FullName 'resources/nodejs/win32-arm64/node.exe')
+          Assert-Test-PEARM64 (Join-Path $unpacked.FullName 'resources/daemon/node_modules/better-sqlite3/build/Release/better_sqlite3.node')
+
+      - name: Verify packaging invariants and smoke OpenCode
+        shell: pwsh
+        run: |
+          $unpacked = Get-ChildItem apps/desktop/release -Directory -Filter 'win-unpacked' | Select-Object -First 1
+          if (-not $unpacked) {
+            Write-Host "win-unpacked not found under apps/desktop/release" -ForegroundColor Red
+            Get-ChildItem apps/desktop/release | Out-Host
+            exit 1
+          }
+          Write-Host "Unpacked dir: $($unpacked.FullName)"
+          node apps/desktop/scripts/assert-packaging-invariants.cjs --app-root "$($unpacked.FullName)/resources"
+          node apps/desktop/scripts/smoke-packaged-opencode.cjs "--artifact-dir=$($unpacked.FullName)" --expected-version=1.14.18
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Verify-Windows-arm64
+          path: apps/desktop/release/*-arm64.exe
           retention-days: 7
