@@ -24,8 +24,30 @@ Provides Electron app launch fixture with E2E configuration:
 
 Environment variables automatically set:
 
+- `ACCOMPLISH_PROFILE=accomplish-e2e` - Isolated data profile: all app state
+  (SQLite, secure storage, daemon socket, logs) lives in
+  `<appData>/Accomplish-accomplish-e2e`, never in the production
+  `Accomplish` directory (see `src/main/config/profile.ts`)
 - `E2E_SKIP_AUTH=1` - Skip onboarding flow
 - `E2E_MOCK_TASK_EVENTS=1` - Mock task execution events
+- `CLEAN_START=1` - Wipe the isolated profile between tests (allowed only
+  for override profiles and non-packaged dev runs; packaged apps refuse
+  destructive cleanup of the production profile)
+
+## Test profiles
+
+`ACCOMPLISH_PROFILE=<name>` selects an alternate data profile. Validation is
+strict (1-48 chars `[a-z0-9._-]`, no path separators/traversal/absolute
+paths, reserved Windows device names rejected, `accomplish` itself
+rejected); an invalid value aborts the app (exit code 2) rather than
+falling back to the production profile.
+
+- Selecting: set `ACCOMPLISH_PROFILE=acceptance-smoke` (or any valid name)
+  before launching the app. Data is stored in
+  `<appData>/Accomplish-<name>`.
+- Removing: delete `<appData>/Accomplish-<name>` (or run the app with
+  ACCOMPLISH_PROFILE + CLEAN_START=1, which wipes exactly that directory).
+  The production `Accomplish` directory is never affected either way.
 
 ## Page Objects
 

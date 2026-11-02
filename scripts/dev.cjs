@@ -12,7 +12,12 @@ const isClean = args.has('--clean') || process.env.CLEAN_START === '1';
 const isCheck = args.has('--check');
 const env = { ...process.env };
 if (isClean) {
+  // CLEAN_START only ever wipes an explicitly selected override profile
+  // (src/main/config/profile.ts); the default Accomplish directory is
+  // protected in every mode. `--clean` therefore runs a fresh dev session
+  // on the dedicated Accomplish-dev profile.
   env.CLEAN_START = '1';
+  env.ACCOMPLISH_PROFILE = 'dev';
 }
 
 const clearedPortCount = clearPort(5173);

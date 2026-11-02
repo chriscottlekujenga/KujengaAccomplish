@@ -4,8 +4,28 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 
-const APP_DATA_NAME = 'Accomplish';
-app.setPath('userData', path.join(app.getPath('appData'), APP_DATA_NAME));
+import {
+  resolveAccomplishProfile,
+  resolveProfileDataDir,
+  resolveCleanStartDecision,
+} from './config/profile';
+
+// Profile resolution is fail-closed and MUST happen before `setPath` (and
+// before any module below reads `app.getPath('userData')`): an invalid
+// override must abort the process rather than silently start the app on the
+// user's production data directory.
+let accomplishedProfileName: string | null;
+try {
+  accomplishedProfileName = resolveAccomplishProfile(process.env.ACCOMPLISH_PROFILE);
+} catch (profileError) {
+  // No dialog is possible this early (app not ready) — stderr + non-zero exit
+  // so launchers and CI surface it.
+  console.error(`[Accomplish] FATAL: ${String(profileError)}`);
+  process.exit(2);
+}
+
+const ACCOMPLISH_PROFILE_NAME = accomplishedProfileName;
+app.setPath('userData', resolveProfileDataDir(app.getPath('appData'), ACCOMPLISH_PROFILE_NAME));
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('ai.accomplish.desktop');
@@ -199,51 +219,64 @@ async function stopDetachedDaemonForCleanStart(
 }
 
 if (process.env.CLEAN_START === '1') {
-  const userDataPath = app.getPath('userData');
-  logMain('INFO', `[Clean Mode] Clearing userData directory: ${userDataPath}`);
-  // Top-level await (ESM module) — blocks the rest of main-process
-  // startup until the detached daemon has had a chance to exit. This
-  // runs before `app.whenReady()` fires, so there's no window yet and
-  // no user-facing hang.
-  const shutdownState = await stopDetachedDaemonForCleanStart(userDataPath);
+  const cleanStartDecision = resolveCleanStartDecision({ profileName: ACCOMPLISH_PROFILE_NAME });
+  if (cleanStartDecision === 'refuse') {
+    // Destructive cleanup can never delete the default Accomplish profile —
+    // not in packaged, dev, CI, or local-E2E runs. Any flow that needs a
+    // wipe must set ACCOMPLISH_PROFILE to a dedicated, validated name; the
+    // app keeps booting on its existing data.
+    logMain(
+      'ERROR',
+      '[Clean Mode] CLEAN_START=1 refused: the default Accomplish profile is protected. ' +
+        'Set ACCOMPLISH_PROFILE to a dedicated test-profile name for destructive cleanup.',
+    );
+  } else {
+    const userDataPath = app.getPath('userData');
+    logMain('INFO', `[Clean Mode] Clearing userData directory: ${userDataPath}`);
+    // Top-level await (ESM module) — blocks the rest of main-process
+    // startup until the detached daemon has had a chance to exit. This
+    // runs before `app.whenReady()` fires, so there's no window yet and
+    // no user-facing hang.
+    const shutdownState = await stopDetachedDaemonForCleanStart(userDataPath);
 
-  if (shutdownState === 'still-alive') {
-    // Round-4 review finding P1.G: we confirmed via socket identity
-    // that an Accomplish daemon owns this profile and it didn't exit
-    // inside the daemon's own 40s drain window. Deleting under it
-    // would corrupt SQLite/secure-storage state. Abort with a clear
-    // error directed at the user — the daemon will finish its active
-    // tasks and exit on its own, after which CLEAN_START can retry.
-    const abortMsg =
-      '[CLEAN_START] Aborted: an Accomplish daemon is still active on this profile and did ' +
-      `not exit within ${CLEAN_START_SHUTDOWN_TIMEOUT_MS / 1000}s. Deleting userData under a ` +
-      'live owner would corrupt SQLite and secure-storage state.\n\n' +
-      'Fully quit the app (check the system tray for a running daemon) and retry ' +
-      'CLEAN_START, or wait for active tasks to finish and let the daemon exit naturally.';
-    logMain('ERROR', abortMsg);
-    // Before app.whenReady(), Electron's dialog/app.quit paths are
-    // unreliable. A process.exit(1) is the cleanest signal to the
-    // launcher (pnpm run script / CI) that CLEAN_START refused to
-    // proceed. Use code 1 so shell pipelines flag the failure.
-    console.error(`\n${abortMsg}\n`);
-    process.exit(1);
-  }
-
-  try {
-    if (fs.existsSync(userDataPath)) {
-      fs.rmSync(userDataPath, { recursive: true, force: true });
-      logMain('INFO', '[Clean Mode] Successfully cleared userData');
+    if (shutdownState === 'still-alive') {
+      // Round-4 review finding P1.G: we confirmed via socket identity
+      // that an Accomplish daemon owns this profile and it didn't exit
+      // inside the daemon's own 40s drain window. Deleting under it
+      // would corrupt SQLite/secure-storage state. Abort with a clear
+      // error directed at the user — the daemon will finish its active
+      // tasks and exit on its own, after which CLEAN_START can retry.
+      const abortMsg =
+        '[CLEAN_START] Aborted: an Accomplish daemon is still active on this profile and did ' +
+        `not exit within ${CLEAN_START_SHUTDOWN_TIMEOUT_MS / 1000}s. Deleting userData under a ` +
+        'live owner would corrupt SQLite and secure-storage state.\n\n' +
+        'Fully quit the app (check the system tray for a running daemon) and retry ' +
+        'CLEAN_START, or wait for active tasks to finish and let the daemon exit naturally.';
+      logMain('ERROR', abortMsg);
+      // Before app.whenReady(), Electron's dialog/app.quit paths are
+      // unreliable. A process.exit(1) is the cleanest signal to the
+      // launcher (pnpm run script / CI) that CLEAN_START refused to
+      // proceed. Use code 1 so shell pipelines flag the failure.
+      console.error(`\n${abortMsg}\n`);
+      process.exit(1);
     }
-  } catch (err) {
-    logMain('ERROR', '[Clean Mode] Failed to clear userData', { err: String(err) });
+
+    try {
+      if (fs.existsSync(userDataPath)) {
+        fs.rmSync(userDataPath, { recursive: true, force: true });
+        logMain('INFO', '[Clean Mode] Successfully cleared userData');
+      }
+    } catch (err) {
+      logMain('ERROR', '[Clean Mode] Failed to clear userData', { err: String(err) });
+    }
+    // Milestone 5: `resetStorageSingleton()` is gone along with the
+    // desktop-side DB handle. `clearSecureStorage()` is now a no-op
+    // (kept for signature compat — see store/secureStorage.ts). The
+    // `fs.rmSync` above wipes the on-disk DB / secure-storage files; the
+    // daemon starts fresh on its next boot.
+    clearSecureStorage();
+    logMain('INFO', '[Clean Mode] userData wiped; daemon will reinitialize on spawn');
   }
-  // Milestone 5: `resetStorageSingleton()` is gone along with the
-  // desktop-side DB handle. `clearSecureStorage()` is now a no-op
-  // (kept for signature compat — see store/secureStorage.ts). The
-  // `fs.rmSync` above wipes the on-disk DB / secure-storage files; the
-  // daemon starts fresh on its next boot.
-  clearSecureStorage();
-  logMain('INFO', '[Clean Mode] userData wiped; daemon will reinitialize on spawn');
 }
 
 app.setName('Accomplish');
@@ -322,6 +355,7 @@ if (!gotTheLock) {
     platform: process.platform,
     arch: process.arch,
     nodeVersion: process.version,
+    profile: ACCOMPLISH_PROFILE_NAME ?? 'production',
   });
 
   app.on('second-instance', (_event, commandLine) => {

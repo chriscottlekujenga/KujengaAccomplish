@@ -50,6 +50,7 @@ fi
 
 # Run the container (detached so we can extract results after it exits)
 CONTAINER_ID=$(docker run -d \
+  -e ACCOMPLISH_PROFILE=accomplish-e2e \
   -e E2E_SKIP_AUTH=1 \
   -e E2E_MOCK_TASK_EVENTS=1 \
   -e NODE_ENV=test \

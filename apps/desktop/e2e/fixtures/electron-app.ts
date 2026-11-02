@@ -35,6 +35,11 @@ export const test = base.extend<ElectronFixtures>({
       ],
       env: {
         ...process.env,
+        // Isolated data profile: app state lives in
+        // <appData>/ Accomplish-accomplish-e2e (see src/main/config/profile.ts),
+        // never in the production Accomplish directory. CLEAN_START may
+        // delete this profile wholesale between tests.
+        ACCOMPLISH_PROFILE: 'accomplish-e2e',
         E2E_SKIP_AUTH: '1',
         E2E_MOCK_TASK_EVENTS: '1',
         CLEAN_START: '1',
